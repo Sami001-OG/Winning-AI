@@ -4,6 +4,7 @@ import {
   Search, ActivitySquare, Clock, Target, Crosshair, LayoutGrid, Square, X
 } from 'lucide-react';
 import { LightweightChart } from './LightweightChart';
+import { TopTradesTable } from './components/TopTradesTable';
 import { analyzeChart } from './analysis';
 import { Candle, AnalysisResult, Trade } from './types';
 import { clsx, type ClassValue } from 'clsx';
@@ -624,6 +625,9 @@ export default function App() {
               )}
             </div>
           </section>
+
+          {/* Bottom Panel: Top Trades */}
+          <TopTradesTable />
         </div>
       </main>
 

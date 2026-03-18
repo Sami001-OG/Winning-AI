@@ -37,4 +37,10 @@ export interface AnalysisResult {
   };
   tp?: number;
   sl?: number;
+  layers?: {
+    marketCondition: number;
+    trend: number;
+    entry: number;
+    confirmation: number;
+  };
 }

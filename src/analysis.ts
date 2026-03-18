@@ -294,6 +294,12 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
       neutral: indicators.filter(i => i.signal === 'neutral').map(i => i.name)
     },
     tp,
-    sl
+    sl,
+    layers: {
+      marketCondition: layer1Score,
+      trend: layer2Score,
+      entry: layer3Score,
+      confirmation: layer4Score
+    }
   };
 };
