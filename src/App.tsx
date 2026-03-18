@@ -293,26 +293,6 @@ export default function App() {
             )}
           </form>
 
-          {/* Timeframes */}
-          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
-            {timeframes.map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setInterval(tf)}
-                className={cn(
-                  "px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all",
-                  interval === tf 
-                    ? "bg-white/10 text-emerald-400" 
-                    : "text-white/40 hover:text-white/80 hover:bg-white/5"
-                )}
-              >
-                {tf}
-              </button>
-            ))}
-          </div>
-
-          <div className="h-4 w-px bg-white/10 mx-2" />
-
           {/* Layout Toggle */}
           <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
             <button
