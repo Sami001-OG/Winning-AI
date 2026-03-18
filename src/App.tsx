@@ -3,6 +3,7 @@ import {
   Activity, ShieldCheck, AlertTriangle, Info, TrendingUp, TrendingDown, Minus,
   Search, ActivitySquare, Clock, Target, Crosshair, LayoutGrid, Square, X
 } from 'lucide-react';
+import { fetchWithRetry } from './utils/api';
 import { LightweightChart } from './LightweightChart';
 import { TopTradesTable } from './components/TopTradesTable';
 import { analyzeChart } from './analysis';
@@ -71,7 +72,7 @@ export default function App() {
       setError(null);
       setData([]); // Clear old data immediately
       setAnalysis(null); // Clear old analysis
-      const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval}&limit=300`);
+      const response = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval}&limit=300`);
       if (!response.ok) {
         throw new Error('Failed to fetch data from Binance');
       }
@@ -99,7 +100,7 @@ export default function App() {
     
     await Promise.all(tfs.map(async (tf) => {
       try {
-        const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=300`);
+        const response = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=300`);
         if (response.ok) {
           const data = await response.json();
           const candles: Candle[] = data.map((k: any) => ({

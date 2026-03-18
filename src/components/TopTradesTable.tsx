@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { analyzeChart } from '../analysis';
 import { Candle, AnalysisResult } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
+import { fetchWithRetry } from '../utils/api';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -25,7 +26,7 @@ export const TopTradesTable: React.FC = () => {
 
   const fetchTopSymbols = async () => {
     try {
-      const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
+      const res = await fetchWithRetry('https://api.binance.com/api/v3/ticker/24hr');
       const data = await res.json();
       const usdtPairs = data
         .filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume) > 0)
@@ -41,7 +42,7 @@ export const TopTradesTable: React.FC = () => {
   };
 
   const fetchKlines = async (symbol: string, tf: string) => {
-    const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=250`);
+    const res = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=250`);
     const data = await res.json();
     return data.map((d: any) => ({
       time: new Date(d[0]).toISOString(),
