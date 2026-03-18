@@ -68,6 +68,8 @@ export default function App() {
   const fetchData = async (targetSymbol: string, targetInterval: string) => {
     try {
       setError(null);
+      setData([]); // Clear old data immediately
+      setAnalysis(null); // Clear old analysis
       const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval}&limit=300`);
       if (!response.ok) {
         throw new Error('Failed to fetch data from Binance');
@@ -90,6 +92,7 @@ export default function App() {
   };
 
   const fetchMultiTimeframeData = async (targetSymbol: string) => {
+    setMultiAnalysis({}); // Clear old multi-timeframe analysis immediately
     const tfs = ['5m', '15m', '1h', '4h'];
     const results: Record<string, AnalysisResult> = {};
     
@@ -117,6 +120,10 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     fetchData(symbol, interval);
     fetchMultiTimeframeData(symbol);
     return () => {

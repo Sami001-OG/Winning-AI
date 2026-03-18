@@ -89,6 +89,15 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
 
     let isMounted = true;
 
+    // Close existing websocket immediately to prevent race conditions
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // Clear existing data immediately to prevent showing old symbol/interval data
+    seriesRef.current.setData([]);
+
     const fetchData = async () => {
       try {
         setError(null);
