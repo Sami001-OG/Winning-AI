@@ -247,7 +247,7 @@ export default function App() {
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 text-emerald-500">
             <ActivitySquare size={20} />
-            <span className="font-bold tracking-widest uppercase text-sm text-white">Nexus<span className="text-emerald-500">Trade</span></span>
+            <span className="font-bold tracking-widest uppercase text-sm text-white">ENDELLION<span className="text-emerald-500">-TRADE</span></span>
           </div>
 
           <div className="h-4 w-px bg-white/10" />
@@ -398,12 +398,12 @@ export default function App() {
             )}
           </section>
 
-          {/* Middle Panel: Neural Matrix */}
+          {/* Middle Panel: ENDELLION-TRADE */}
           <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl">
             <div className="p-4 border-b border-white/10 bg-white/[0.02] flex flex-col xl:flex-row xl:items-center justify-between gap-4">
               <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                 <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest flex items-center gap-2">
-                  Neural Matrix <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">[{analysisTf}]</span>
+                  ENDELLION-TRADE <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">[{analysisTf}]</span>
                 </h2>
                 <div className="hidden sm:block h-4 w-px bg-white/10" />
                 <div className="flex items-center gap-1.5">

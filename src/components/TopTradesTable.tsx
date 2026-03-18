@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeChart } from '../analysis';
 import { Candle, AnalysisResult } from '../types';
-import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -9,6 +9,7 @@ interface TradeSignal {
   symbol: string;
   analysis: AnalysisResult;
   lastPrice: number;
+  entryDirection: 'up' | 'down' | 'none';
 }
 
 export const TopTradesTable: React.FC = () => {
@@ -16,9 +17,11 @@ export const TopTradesTable: React.FC = () => {
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [frozenEntries, setFrozenEntries] = useState<Record<string, number>>({});
   
   const klinesDataRef = useRef<Record<string, Candle[]>>({});
   const wsRef = useRef<WebSocket | null>(null);
+  const prevEntriesRef = useRef<Record<string, number>>({});
 
   const fetchTopSymbols = async () => {
     try {
@@ -56,10 +59,24 @@ export const TopTradesTable: React.FC = () => {
     for (const [symbol, data] of Object.entries(klinesDataRef.current) as [string, Candle[]][]) {
       if (data.length > 0) {
         const analysis = analyzeChart(data);
+        const currentEntry = analysis.suggestedEntry;
+        const prevEntry = prevEntriesRef.current[symbol];
+        
+        let entryDirection: 'up' | 'down' | 'none' = 'none';
+        if (currentEntry && prevEntry) {
+          if (currentEntry > prevEntry) entryDirection = 'up';
+          else if (currentEntry < prevEntry) entryDirection = 'down';
+        }
+        
+        if (currentEntry) {
+          prevEntriesRef.current[symbol] = currentEntry;
+        }
+
         newSignals.push({
           symbol,
           analysis,
-          lastPrice: data[data.length - 1].close
+          lastPrice: data[data.length - 1].close,
+          entryDirection
         });
       }
     }
@@ -68,6 +85,18 @@ export const TopTradesTable: React.FC = () => {
     newSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
     setSignals(newSignals.slice(0, 10));
     setLastUpdate(new Date());
+  };
+
+  const toggleFreeze = (symbol: string, entry: number) => {
+    setFrozenEntries(prev => {
+      const newFrozen = { ...prev };
+      if (newFrozen[symbol]) {
+        delete newFrozen[symbol];
+      } else {
+        newFrozen[symbol] = entry;
+      }
+      return newFrozen;
+    });
   };
 
   useEffect(() => {
@@ -210,6 +239,7 @@ export const TopTradesTable: React.FC = () => {
               <th className="p-4 font-normal text-center">Trend</th>
               <th className="p-4 font-normal text-center">Entry</th>
               <th className="p-4 font-normal text-center">Confirm</th>
+              <th className="p-4 font-normal text-right">Target Entry</th>
               <th className="p-4 font-normal text-right">Price</th>
               <th className="p-4 font-normal text-right">TP / SL</th>
             </tr>
@@ -217,7 +247,7 @@ export const TopTradesTable: React.FC = () => {
           <tbody className="font-mono text-sm">
             {loading && signals.length === 0 ? (
               <tr>
-                <td colSpan={9} className="p-8 text-center text-white/40 text-xs">
+                <td colSpan={10} className="p-8 text-center text-white/40 text-xs">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <RefreshCw size={24} className="animate-spin text-emerald-500/50" />
                     <span>Analyzing top 30 pairs...</span>
@@ -226,7 +256,7 @@ export const TopTradesTable: React.FC = () => {
               </tr>
             ) : signals.length === 0 ? (
               <tr>
-                <td colSpan={9} className="p-8 text-center text-white/40 text-xs">No active signals found.</td>
+                <td colSpan={10} className="p-8 text-center text-white/40 text-xs">No active signals found.</td>
               </tr>
             ) : (
               signals.map((s) => (
@@ -265,6 +295,35 @@ export const TopTradesTable: React.FC = () => {
                   </td>
                   <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.confirmation)}`}>
                     {s.analysis.layers?.confirmation.toFixed(2) || '-'}
+                  </td>
+                  <td className="p-4 text-right">
+                    {s.analysis.signal !== 'NO TRADE' && (frozenEntries[s.symbol] || s.analysis.suggestedEntry) ? (
+                      <div className="flex items-center justify-end gap-2">
+                        {frozenEntries[s.symbol] ? (
+                          <Lock 
+                            size={12} 
+                            className="text-emerald-400 cursor-pointer" 
+                            onClick={() => toggleFreeze(s.symbol, s.analysis.suggestedEntry!)}
+                          />
+                        ) : (
+                          <Unlock 
+                            size={12} 
+                            className="text-white/20 hover:text-white/60 cursor-pointer transition-colors" 
+                            onClick={() => toggleFreeze(s.symbol, s.analysis.suggestedEntry!)}
+                          />
+                        )}
+                        <div className="flex items-center gap-1">
+                          <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white"}>
+                            {(frozenEntries[s.symbol] || s.analysis.suggestedEntry!).toFixed(4)}
+                          </span>
+                          {!frozenEntries[s.symbol] && s.entryDirection === 'up' && <ArrowUp size={12} className="text-emerald-400" />}
+                          {!frozenEntries[s.symbol] && s.entryDirection === 'down' && <ArrowDown size={12} className="text-rose-400" />}
+                          {!frozenEntries[s.symbol] && s.entryDirection === 'none' && <span className="w-3" />}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-white/20">-</span>
+                    )}
                   </td>
                   <td className="p-4 text-right text-white/80">{s.lastPrice.toFixed(4)}</td>
                   <td className="p-4 text-right">

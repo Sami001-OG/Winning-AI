@@ -258,6 +258,29 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
   }
 
   // ==========================================
+  // DYNAMIC ENTRY CALCULATION
+  // ==========================================
+  let suggestedEntry: number | undefined;
+  
+  if (signal === 'LONG' && layer4Score > 0) {
+    if (isTrending) {
+      // In a trending market, look for a pullback to EMA20
+      suggestedEntry = lastEma20;
+    } else {
+      // In a sideways market, look for entry near the lower Bollinger Band
+      suggestedEntry = lastBB?.lower;
+    }
+  } else if (signal === 'SHORT' && layer4Score < 0) {
+    if (isTrending) {
+      // In a trending market, look for a pullback to EMA20 resistance
+      suggestedEntry = lastEma20;
+    } else {
+      // In a sideways market, look for entry near the upper Bollinger Band
+      suggestedEntry = lastBB?.upper;
+    }
+  }
+
+  // ==========================================
   // CONFLUENCE MAPPING FOR UI
   // ==========================================
   const dominantSignal = finalScore > 0 ? 'bullish' : 'bearish';
@@ -295,6 +318,7 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
     },
     tp,
     sl,
+    suggestedEntry,
     layers: {
       marketCondition: layer1Score,
       trend: layer2Score,
