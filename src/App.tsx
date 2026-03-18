@@ -43,12 +43,19 @@ export default function App() {
   const fetchData = async (targetSymbol: string, targetInterval: string) => {
     try {
       setError(null);
-      const response = await fetch(`/api/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval}&limit=300`);
+      const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval}&limit=300`);
       if (!response.ok) {
-        const errData = await response.json().catch(() => null);
-        throw new Error(errData?.error || 'Failed to fetch data');
+        throw new Error('Failed to fetch data from Binance');
       }
-      const candles: Candle[] = await response.json();
+      const data = await response.json();
+      const candles: Candle[] = data.map((k: any) => ({
+        time: new Date(k[0]).toISOString(),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
       setData(candles);
       connectWebSocket(targetSymbol.toUpperCase(), targetInterval);
     } catch (error: any) {
@@ -63,9 +70,17 @@ export default function App() {
     
     await Promise.all(tfs.map(async (tf) => {
       try {
-        const response = await fetch(`/api/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=300`);
+        const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=300`);
         if (response.ok) {
-          const candles = await response.json();
+          const data = await response.json();
+          const candles: Candle[] = data.map((k: any) => ({
+            time: new Date(k[0]).toISOString(),
+            open: parseFloat(k[1]),
+            high: parseFloat(k[2]),
+            low: parseFloat(k[3]),
+            close: parseFloat(k[4]),
+            volume: parseFloat(k[5])
+          }));
           results[tf] = analyzeChart(candles);
         }
       } catch (e) {
@@ -103,28 +118,40 @@ export default function App() {
       wsRef.current.close();
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+    const wsUrl = `wss://stream.binance.com:9443/ws/${targetSymbol.toLowerCase()}@kline_${targetInterval}`;
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
       setIsConnected(true);
-      ws.send(JSON.stringify({ type: 'SUBSCRIBE', symbol: targetSymbol, interval: targetInterval }));
     };
 
     ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === 'KLINE_UPDATE') {
-        const newCandle: Candle = message.candle;
-        setData(prevData => {
-          if (prevData.length === 0) return [newCandle];
-          const lastCandle = prevData[prevData.length - 1];
-          if (lastCandle.time === newCandle.time) {
-            return [...prevData.slice(0, -1), newCandle];
-          } else {
-            return [...prevData, newCandle].slice(-300);
-          }
-        });
+      try {
+        const message = JSON.parse(event.data);
+        if (message.k) {
+          const k = message.k;
+          const newCandle: Candle = {
+            time: new Date(k.t).toISOString(),
+            open: parseFloat(k.o),
+            high: parseFloat(k.h),
+            low: parseFloat(k.l),
+            close: parseFloat(k.c),
+            volume: parseFloat(k.v)
+          };
+          
+          setData(prevData => {
+            if (prevData.length === 0) return [newCandle];
+            const lastCandle = prevData[prevData.length - 1];
+            if (lastCandle.time === newCandle.time) {
+              return [...prevData.slice(0, -1), newCandle];
+            } else {
+              return [...prevData, newCandle].slice(-300);
+            }
+          });
+        }
+      } catch (e) {
+        console.error("Error parsing Binance message:", e);
       }
     };
 
