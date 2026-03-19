@@ -484,6 +484,18 @@ export default function App() {
                     {activeAnalysis?.signal || 'WAIT'}
                   </div>
 
+                  {data.length > 0 && (
+                    <div className="flex flex-col items-end ml-1 sm:ml-2 border-l border-white/10 pl-2 sm:pl-3">
+                      <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">Price</span>
+                      <span className={cn(
+                        "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
+                        data[data.length - 1].close >= data[data.length - 1].open ? "text-emerald-400" : "text-rose-400"
+                      )}>
+                        {data[data.length - 1].close.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
                   {activeAnalysis?.signal && activeAnalysis.signal !== 'NO TRADE' && (
                     <button
                       onClick={() => setShowConfirmDialog(true)}
