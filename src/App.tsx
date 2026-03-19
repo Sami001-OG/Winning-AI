@@ -61,9 +61,23 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [layout, setLayout] = useState<'single' | 'multi'>('single');
   const [error, setError] = useState<string | null>(null);
-  const [trades, setTrades] = useState<Trade[]>([]);
+  const [trades, setTrades] = useState<Trade[]>(() => {
+    const saved = localStorage.getItem('demo_trades');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('demo_trades', JSON.stringify(trades));
+  }, [trades]);
 
   const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -191,7 +205,7 @@ export default function App() {
       timestamp: Date.now()
     };
 
-    setTrades(prev => [newTrade, ...prev].slice(0, 10));
+    setTrades(prev => [newTrade, ...prev].slice(0, 100));
     setShowConfirmDialog(false);
   };
 
@@ -572,8 +586,14 @@ export default function App() {
 
           {/* Bottom Panel: Trades */}
           <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl mb-8">
-            <div className="p-4 border-b border-white/10 bg-white/[0.02]">
+            <div className="p-4 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
               <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Recent Trades</h2>
+              {trades.length > 0 && (
+                <div className="text-[10px] font-mono text-white/40 uppercase tracking-widest flex gap-4">
+                  <span>Total: {trades.length}</span>
+                  <span>Win Rate: {trades.filter(t => t.status === 'SUCCESS' || t.status === 'FAILED').length > 0 ? ((trades.filter(t => t.status === 'SUCCESS').length / trades.filter(t => t.status === 'SUCCESS' || t.status === 'FAILED').length) * 100).toFixed(1) : '0.0'}%</span>
+                </div>
+              )}
             </div>
             <div className="p-0">
               {trades.length === 0 ? (
@@ -590,6 +610,7 @@ export default function App() {
                         <th className="p-4 font-normal">Target (TP)</th>
                         <th className="p-4 font-normal">Stop (SL)</th>
                         <th className="p-4 font-normal text-right">Status</th>
+                        <th className="p-4 font-normal text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody className="font-mono text-sm">
@@ -617,6 +638,15 @@ export default function App() {
                             )}>
                               {trade.status}
                             </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <button
+                              onClick={() => setTrades(prev => prev.filter(t => t.id !== trade.id))}
+                              className="text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-500/10 transition-colors"
+                              title="Delete Trade"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
                           </td>
                         </tr>
                       ))}

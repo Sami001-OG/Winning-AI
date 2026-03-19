@@ -119,8 +119,12 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
           close: parseFloat(k[4]),
         }));
 
-        if (isMounted && seriesRef.current) {
+        if (isMounted && seriesRef.current && chartRef.current) {
           seriesRef.current.setData(candles);
+          chartRef.current.timeScale().setVisibleLogicalRange({
+            from: candles.length - 100,
+            to: candles.length - 1,
+          });
         }
 
         // Connect WebSocket
