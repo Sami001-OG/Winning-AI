@@ -161,7 +161,6 @@ export default function App() {
 
   useEffect(() => {
     if (data.length === 0) return;
-    const currentCandle = data[data.length - 1];
     
     setTrades(prevTrades => {
       let changed = false;
@@ -170,12 +169,28 @@ export default function App() {
         if (trade.symbol !== symbol) return trade;
 
         let newStatus = trade.status;
-        if (trade.type === 'LONG') {
-          if (currentCandle.high >= trade.tp) newStatus = 'SUCCESS';
-          else if (currentCandle.low <= trade.sl) newStatus = 'FAILED';
-        } else if (trade.type === 'SHORT') {
-          if (currentCandle.low <= trade.tp) newStatus = 'SUCCESS';
-          else if (currentCandle.high >= trade.sl) newStatus = 'FAILED';
+        
+        for (let i = 0; i < data.length; i++) {
+          const candle = data[i];
+          const candleTime = new Date(candle.time).getTime();
+          
+          if (candleTime > trade.timestamp) {
+            if (trade.type === 'LONG') {
+              if (candle.high >= trade.tp) { newStatus = 'SUCCESS'; break; }
+              if (candle.low <= trade.sl) { newStatus = 'FAILED'; break; }
+            } else {
+              if (candle.low <= trade.tp) { newStatus = 'SUCCESS'; break; }
+              if (candle.high >= trade.sl) { newStatus = 'FAILED'; break; }
+            }
+          } else if (candleTime <= trade.timestamp && (i === data.length - 1 || new Date(data[i+1].time).getTime() > trade.timestamp)) {
+            if (trade.type === 'LONG') {
+              if (candle.close >= trade.tp) { newStatus = 'SUCCESS'; break; }
+              if (candle.close <= trade.sl) { newStatus = 'FAILED'; break; }
+            } else {
+              if (candle.close <= trade.tp) { newStatus = 'SUCCESS'; break; }
+              if (candle.close >= trade.sl) { newStatus = 'FAILED'; break; }
+            }
+          }
         }
         
         if (newStatus !== trade.status) changed = true;
@@ -383,7 +398,7 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <MemoizedChart symbol={symbol} interval={interval} activeTrade={activeTrade} />
+                <MemoizedChart key={`${symbol}-${interval}`} symbol={symbol} interval={interval} activeTrade={activeTrade} />
               </div>
             ) : (
               <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-px bg-white/10">
@@ -406,7 +421,7 @@ export default function App() {
                     >
                       {tf}
                     </button>
-                    <MemoizedChart symbol={symbol} interval={tf} activeTrade={activeTrade} />
+                    <MemoizedChart key={`${symbol}-${tf}`} symbol={symbol} interval={tf} activeTrade={activeTrade} />
                   </div>
                 ))}
               </div>

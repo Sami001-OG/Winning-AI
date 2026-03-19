@@ -170,42 +170,54 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
   useEffect(() => {
     if (!seriesRef.current) return;
 
-    // Clear existing lines
-    if (tpLineRef.current) seriesRef.current.removePriceLine(tpLineRef.current);
-    if (slLineRef.current) seriesRef.current.removePriceLine(slLineRef.current);
-    if (entryLineRef.current) seriesRef.current.removePriceLine(entryLineRef.current);
+    // Clear existing lines safely
+    try {
+      if (tpLineRef.current) seriesRef.current.removePriceLine(tpLineRef.current);
+    } catch (e) { console.warn(e); }
+    
+    try {
+      if (slLineRef.current) seriesRef.current.removePriceLine(slLineRef.current);
+    } catch (e) { console.warn(e); }
+    
+    try {
+      if (entryLineRef.current) seriesRef.current.removePriceLine(entryLineRef.current);
+    } catch (e) { console.warn(e); }
 
     tpLineRef.current = null;
     slLineRef.current = null;
     entryLineRef.current = null;
 
     if (activeTrade && activeTrade.status === 'PENDING') {
-      tpLineRef.current = seriesRef.current.createPriceLine({
-        price: activeTrade.tp,
-        color: '#10b981',
-        lineWidth: 2,
-        lineStyle: 2, // Dashed
-        axisLabelVisible: true,
-        title: 'TP',
-      });
+      try {
+        tpLineRef.current = seriesRef.current.createPriceLine({
+          price: activeTrade.tp,
+          color: '#10b981',
+          lineWidth: 2,
+          lineStyle: 2, // Dashed
+          axisLabelVisible: true,
+          title: 'TP',
+        });
 
-      slLineRef.current = seriesRef.current.createPriceLine({
-        price: activeTrade.sl,
-        color: '#f43f5e',
-        lineWidth: 2,
-        lineStyle: 2, // Dashed
-        axisLabelVisible: true,
-        title: 'SL',
-      });
+        slLineRef.current = seriesRef.current.createPriceLine({
+          price: activeTrade.sl,
+          color: '#f43f5e',
+          lineWidth: 2,
+          lineStyle: 2, // Dashed
+          axisLabelVisible: true,
+          title: 'SL',
+        });
 
-      entryLineRef.current = seriesRef.current.createPriceLine({
-        price: activeTrade.entry,
-        color: '#3b82f6',
-        lineWidth: 1,
-        lineStyle: 3, // Dotted
-        axisLabelVisible: true,
-        title: 'ENTRY',
-      });
+        entryLineRef.current = seriesRef.current.createPriceLine({
+          price: activeTrade.entry,
+          color: '#3b82f6',
+          lineWidth: 2,
+          lineStyle: 3, // Dotted
+          axisLabelVisible: true,
+          title: 'ENTRY',
+        });
+      } catch (e) {
+        console.error("Failed to create price lines:", e);
+      }
     }
   }, [activeTrade]);
 
