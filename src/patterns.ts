@@ -6,14 +6,6 @@ export interface Pattern {
   strength: number; // 0 to 1
 }
 
-import { Candle } from './types';
-
-export interface Pattern {
-  name: string;
-  type: 'bullish' | 'bearish' | 'neutral';
-  strength: number; // 0 to 1
-}
-
 export const detectPatterns = (data: Candle[]): Pattern[] => {
   const patterns: Pattern[] = [];
   if (data.length < 50) return patterns;
@@ -68,4 +60,3 @@ export const detectPatterns = (data: Candle[]): Pattern[] => {
 
   return patterns;
 };
-

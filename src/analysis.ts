@@ -12,6 +12,15 @@ import {
 } from 'technicalindicators';
 import { Candle, AnalysisResult, IndicatorResult, Trade } from './types';
 import { detectPatterns } from './patterns';
+import { 
+  detectBOS, 
+  detectLiquidityGrab, 
+  detectFakeout, 
+  detectVolumeSpike, 
+  detectAtrExpansion, 
+  calculateOrderFlow 
+} from './structure';
+import { calculateVolumeProfile } from './volumeProfile';
 
 // Pattern Detection Helpers
 const isDoji = (c: Candle) => Math.abs(c.close - c.open) <= (c.high - c.low) * 0.1;
@@ -117,6 +126,21 @@ export const analyzeChart = (
   const volSma = SMA.calculate({ values: volumes, period: 20 });
   const lastVolSma = volSma[volSma.length - 1];
   const lastVol = volumes[volumes.length - 1];
+
+  // ==========================================
+  // CALCULATE NEW INDICATORS
+  // ==========================================
+  const bos = detectBOS(data);
+  const liquidityGrab = detectLiquidityGrab(data);
+  const fakeout = detectFakeout(data);
+  const volumeSpike = detectVolumeSpike(data);
+  const atrExpansion = detectAtrExpansion(data, atr);
+  const orderFlow = calculateOrderFlow(data);
+  const volProfile = calculateVolumeProfile(data);
+  // Using existing ema20, ema50, bb variables
+  const lastEma20Val = lastEma20;
+  const lastEma50Val = lastEma50;
+  const lastBBVal = lastBB;
 
   // ==========================================
   // LAYER 1: MARKET CONDITION DETECTION
@@ -252,32 +276,58 @@ export const analyzeChart = (
   // ==========================================
   // ADAPTIVE WEIGHTS & FINAL SCORE
   // ==========================================
-  let w1 = 0.25; // Market Condition
-  let w2 = 0.25; // Trend
-  let w3 = 0.25; // Entry
-  let w4 = 0.25; // Confirmation
+  let w1 = 0.05; // Market Condition (Lagging)
+  let w2 = 0.05; // Trend (Lagging)
+  let w3 = 0.20; // Entry (Leading)
+  let w4 = 0.05; // Confirmation (Lagging)
+  let w5 = 0.35; // Structure (Leading)
+  let w6 = 0.30; // Volume/Volatility (Leading/Mixed)
+
+  // Dynamic adjustment based on market state
+  if (isTrending) {
+    w2 = Math.min(0.5, w2 + 0.20);
+    w5 = Math.min(0.5, w5 + 0.10);
+    w3 = Math.max(0.05, w3 - 0.10);
+  } else if (isSideways) {
+    w3 = Math.min(0.5, w3 + 0.20);
+    w6 = Math.min(0.5, w6 + 0.10);
+    w2 = Math.max(0.05, w2 - 0.20);
+  }
+  
+  if (isHighVolatility) {
+    w1 = Math.min(0.5, w1 + 0.10);
+    w6 = Math.min(0.5, w6 + 0.10);
+    w3 = Math.max(0.05, w3 - 0.10);
+  }
 
   const trendStrength = Math.abs(layer1Score); // 0 to 1
 
-  // Trend is more important when trendStrength is high
-  w2 = 0.15 + (trendStrength * 0.50); // 0.15 to 0.65
-  // Entry is more important when trendStrength is low (sideways)
-  w3 = 0.15 + ((1 - trendStrength) * 0.50); // 0.15 to 0.65
-  
-  // Confirmation is important in high volatility
-  if (isHighVolatility) {
-    w4 = 0.35;
-    w1 = 0.15;
-  }
+  // Structure Score
+  let structureScore = 0;
+  if (bos === 'bullish') structureScore += 0.5;
+  else if (bos === 'bearish') structureScore -= 0.5;
+  if (liquidityGrab === 'bullish') structureScore += 0.3;
+  else if (liquidityGrab === 'bearish') structureScore -= 0.3;
+  if (fakeout === 'bullish') structureScore += 0.2;
+  else if (fakeout === 'bearish') structureScore -= 0.2;
+
+  // Volume/Volatility Score
+  let volVolScore = 0;
+  if (volumeSpike > 1.5) volVolScore += 0.4;
+  if (atrExpansion > 1.2) volVolScore += 0.3;
+  if (orderFlow > 0) volVolScore += 0.3;
+  else if (orderFlow < 0) volVolScore -= 0.3;
 
   // Normalize weights to sum to 1
-  const total = w1 + w2 + w3 + w4;
+  const total = w1 + w2 + w3 + w4 + w5 + w6;
   w1 /= total;
   w2 /= total;
   w3 /= total;
   w4 /= total;
+  w5 /= total;
+  w6 /= total;
 
-  const finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4);
+  const finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
   let confidence = Math.abs(finalScore) * 100;
   
@@ -471,6 +521,30 @@ export const analyzeChart = (
     value: lastRsi?.toFixed(2) || 'N/A',
     signal: lastRsi < 30 ? 'bullish' : lastRsi > 70 ? 'bearish' : 'neutral',
     description: 'Momentum Oscillator'
+  });
+  indicators.push({
+    name: 'EMA 20',
+    value: lastEma20Val.toFixed(2),
+    signal: lastClose > lastEma20Val ? 'bullish' : 'bearish',
+    description: 'Short-term Trend'
+  });
+  indicators.push({
+    name: 'EMA 50',
+    value: lastEma50Val.toFixed(2),
+    signal: lastClose > lastEma50Val ? 'bullish' : 'bearish',
+    description: 'Medium-term Trend'
+  });
+  indicators.push({
+    name: 'Bollinger Bands (20, 2)',
+    value: `Upper: ${lastBBVal.upper.toFixed(2)}, Lower: ${lastBBVal.lower.toFixed(2)}`,
+    signal: lastClose < lastBBVal.lower ? 'bullish' : lastClose > lastBBVal.upper ? 'bearish' : 'neutral',
+    description: 'Volatility/Mean Reversion'
+  });
+  indicators.push({
+    name: 'Volume Profile (POC)',
+    value: volProfile.pocPrice.toFixed(2),
+    signal: lastClose > volProfile.vaHigh ? 'bullish' : lastClose < volProfile.vaLow ? 'bearish' : 'neutral',
+    description: `VA: ${volProfile.vaLow.toFixed(2)} - ${volProfile.vaHigh.toFixed(2)}`
   });
   indicators.push({
     name: 'MACD',
