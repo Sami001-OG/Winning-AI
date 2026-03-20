@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeChart } from '../analysis';
 import { Candle, AnalysisResult, Trade } from '../types';
+import { sendTelegramAlert } from '../services/telegramService';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 
@@ -78,6 +79,26 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         
         if (currentEntry) {
           prevEntriesRef.current[symbol] = currentEntry;
+        }
+
+        // Telegram Alert Logic
+        if (analysis.confidence > 80) {
+          const l1 = analysis.layers?.marketCondition || 0;
+          const l2 = analysis.layers?.trend || 0;
+          const l3 = analysis.layers?.entry || 0;
+          const l4 = analysis.layers?.confirmation || 0;
+
+          if (analysis.signal === 'LONG' && l1 > 0 && l2 > 0 && l3 > 0 && l4 > 0) {
+            if (lastSentSignalsRef.current[symbol] !== `LONG_${interval}`) {
+              sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${data[data.length - 1].close.toFixed(4)}`);
+              lastSentSignalsRef.current[symbol] = `LONG_${interval}`;
+            }
+          } else if (analysis.signal === 'SHORT' && l1 < 0 && l2 < 0 && l3 < 0 && l4 < 0) {
+            if (lastSentSignalsRef.current[symbol] !== `SHORT_${interval}`) {
+              sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${data[data.length - 1].close.toFixed(4)}`);
+              lastSentSignalsRef.current[symbol] = `SHORT_${interval}`;
+            }
+          }
         }
 
         newSignals.push({
@@ -242,15 +263,15 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           <thead>
             <tr className="border-b border-white/5 bg-white/[0.02] text-[10px] font-mono text-white/40 uppercase tracking-widest">
               <th className="p-4 font-normal">Symbol</th>
-              <th className="p-4 font-normal">Signal</th>
-              <th className="p-4 font-normal">Confidence</th>
-              <th className="p-4 font-normal text-center">Market</th>
-              <th className="p-4 font-normal text-center">Trend</th>
-              <th className="p-4 font-normal text-center">Entry</th>
-              <th className="p-4 font-normal text-center">Confirm</th>
-              <th className="p-4 font-normal text-right">Target Entry</th>
-              <th className="p-4 font-normal text-right">Price</th>
-              <th className="p-4 font-normal text-right">TP / SL</th>
+              <th className="p-4 font-normal">Trade Signal</th>
+              <th className="p-4 font-normal">Confidence Score</th>
+              <th className="p-4 font-normal text-center">Market Condition</th>
+              <th className="p-4 font-normal text-center">Trend Alignment</th>
+              <th className="p-4 font-normal text-center">Entry Timing</th>
+              <th className="p-4 font-normal text-center">Volume Confirmation</th>
+              <th className="p-4 font-normal text-right">Target Entry Price</th>
+              <th className="p-4 font-normal text-right">Current Price</th>
+              <th className="p-4 font-normal text-right">Take Profit / Stop Loss</th>
             </tr>
           </thead>
           <tbody className="font-mono text-sm">
