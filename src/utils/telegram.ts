@@ -38,8 +38,13 @@ export const sendTelegramMessage = async (botToken: string, chatId: string, mess
     });
     
     if (!response.ok) {
-      const errorData = await response.text();
-      console.error('Telegram API Error via proxy:', response.status, errorData);
+      try {
+        const errorData = await response.json();
+        console.error('Telegram API Error via proxy:', response.status, errorData.error || errorData);
+      } catch (e) {
+        const textData = await response.text();
+        console.error('Telegram API Error via proxy:', response.status, textData);
+      }
     }
     
     return response.ok;

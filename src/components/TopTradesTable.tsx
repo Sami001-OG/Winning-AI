@@ -243,6 +243,39 @@ export const TopTradesTable: React.FC = () => {
         </div>
         
         <div className="flex items-center gap-4">
+          <button 
+            onClick={async () => {
+              const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
+              const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
+              if (botToken && chatId) {
+                try {
+                  const response = await fetch('/api/telegram/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      botToken,
+                      chatId,
+                      message: "<b>Test Message</b>\nThis is a test message from Endellion Trade to verify your Telegram setup."
+                    }),
+                  });
+                  
+                  if (response.ok) {
+                    alert("Test message sent successfully! Check your Telegram channel.");
+                  } else {
+                    const errorData = await response.json();
+                    alert(`Failed to send message:\n\n${errorData.error || 'Unknown error'}`);
+                  }
+                } catch (e) {
+                  alert("Network error while trying to send test message.");
+                }
+              } else {
+                alert("Please configure VITE_TELEGRAM_BOT_TOKEN and VITE_TELEGRAM_CHAT_ID in AI Studio Secrets.");
+              }
+            }}
+            className="px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
+          >
+            Test Telegram
+          </button>
           <div className="text-[10px] font-mono text-white/40 flex items-center gap-1">
             <RefreshCw size={10} className={loading ? "animate-spin" : ""} />
             {loading ? "Scanning Market..." : `Updated: ${lastUpdate.toLocaleTimeString()}`}
