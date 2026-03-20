@@ -246,6 +246,35 @@ export const TopTradesTable: React.FC = () => {
           <button 
             onClick={async () => {
               const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
+              if (!botToken) {
+                alert("Please configure VITE_TELEGRAM_BOT_TOKEN in AI Studio Secrets first.");
+                return;
+              }
+              
+              try {
+                const response = await fetch(`/api/telegram/debug?botToken=${encodeURIComponent(botToken)}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                  if (data.foundChats && data.foundChats.length > 0) {
+                    alert(`Found these recent chats:\n\n${data.foundChats.join('\n')}\n\nUse one of these IDs as your VITE_TELEGRAM_CHAT_ID.`);
+                  } else {
+                    alert("No recent chats found. Please send a message in your channel/group first, then try again.");
+                  }
+                } else {
+                  alert(`Failed to fetch debug info:\n\n${data.error || 'Unknown error'}\n${data.details || ''}`);
+                }
+              } catch (e: any) {
+                alert(`Network error: ${e.message || e}`);
+              }
+            }}
+            className="px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all bg-purple-500/20 text-purple-400 border border-purple-500/30 hover:bg-purple-500/30"
+          >
+            Find Chat ID
+          </button>
+          <button 
+            onClick={async () => {
+              const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
               const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
               if (botToken && chatId) {
                 try {
@@ -262,11 +291,17 @@ export const TopTradesTable: React.FC = () => {
                   if (response.ok) {
                     alert("Test message sent successfully! Check your Telegram channel.");
                   } else {
-                    const errorData = await response.json();
-                    alert(`Failed to send message:\n\n${errorData.error || 'Unknown error'}`);
+                    let errorText = "Unknown error";
+                    try {
+                      const errorData = await response.json();
+                      errorText = errorData.error || JSON.stringify(errorData);
+                    } catch (e) {
+                      errorText = await response.text();
+                    }
+                    alert(`Failed to send message:\n\n${errorText}`);
                   }
-                } catch (e) {
-                  alert("Network error while trying to send test message.");
+                } catch (e: any) {
+                  alert(`Network error while trying to send test message: ${e.message || e}`);
                 }
               } else {
                 alert("Please configure VITE_TELEGRAM_BOT_TOKEN and VITE_TELEGRAM_CHAT_ID in AI Studio Secrets.");
