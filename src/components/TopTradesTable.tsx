@@ -259,10 +259,10 @@ export const TopTradesTable: React.FC = () => {
                 });
                 
                 let data;
+                const text = await response.text();
                 try {
-                  data = await response.json();
+                  data = JSON.parse(text);
                 } catch (e) {
-                  const text = await response.text();
                   alert(`Server returned an unexpected response (not JSON):\n\n${text.substring(0, 150)}...`);
                   return;
                 }
@@ -304,11 +304,12 @@ export const TopTradesTable: React.FC = () => {
                     alert("Test message sent successfully! Check your Telegram channel.");
                   } else {
                     let errorText = "Unknown error";
+                    const text = await response.text();
                     try {
-                      const errorData = await response.json();
-                      errorText = errorData.error || JSON.stringify(errorData);
+                      const errorData = JSON.parse(text);
+                      errorText = errorData.error || text;
                     } catch (e) {
-                      errorText = await response.text();
+                      errorText = text;
                     }
                     alert(`Failed to send message:\n\n${errorText}`);
                   }
