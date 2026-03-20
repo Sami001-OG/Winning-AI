@@ -4,7 +4,7 @@ import path from "path";
 import { analyzeChart } from "./src/analysis";
 import { Candle, Trade } from "./src/types";
 
-const DEFAULT_RELIABILITY = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 };
 
 async function sendTelegramSignal(botToken: string, chatId: string, message: string) {
   const cleanToken = botToken.replace(/^["']|["']$/g, '').trim();
@@ -181,38 +181,45 @@ async function startServer() {
       if (!isNYSession()) return; // Only send during NY session
 
       const symbols = await fetchTopSymbols();
+      const timeframes = ['15m', '1h', '4h', '1d'];
+
       for (const symbol of symbols) {
-        try {
-          const klines = await fetchKlines(symbol, '15m');
-          const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
-          
-          if (analysis.signal !== 'NO TRADE' && analysis.confidence > 75) {
-            const now = Date.now();
-            const lastSent = lastSentSignals[symbol];
+        for (const tf of timeframes) {
+          try {
+            const klines = await fetchKlines(symbol, tf);
+            const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
             
-            // Check if we should send:
-            // 1. Never sent before
-            // 2. Direction changed
-            // 3. Cooldown period passed
-            if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-              lastSentSignals[symbol] = {
-                direction: analysis.signal,
-                timestamp: now
-              };
+            if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 85) {
+              const now = Date.now();
+              const signalKey = `${symbol}-${tf}`;
+              const lastSent = lastSentSignals[signalKey];
               
-              const message = `
-<b>Symbol :</b> ${symbol}
-<b>Trade Direction :</b> ${analysis.signal === 'LONG' ? 'Long' : 'Short'}
-<b>TP :</b> ${analysis.tp?.toFixed(4)}
-<b>SL :</b> ${analysis.sl?.toFixed(4)}
-<b>Confidence :</b> ${analysis.confidence.toFixed(1)}%
-<b>Time Frame :</b> 15m
-              `.trim();
-              await sendTelegramSignal(botToken, chatId, message);
+              // Check if we should send:
+              // 1. Never sent before
+              // 2. Direction changed
+              // 3. Cooldown period passed
+              if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+                lastSentSignals[signalKey] = {
+                  direction: analysis.signal,
+                  timestamp: now
+                };
+                
+                const entryPrice = analysis.suggestedEntry || klines[klines.length - 1].close;
+
+                const message = `Symbol : ${symbol}
+Trade Direction : ${analysis.signal === 'LONG' ? 'Long' : 'Short'}
+Entry : ${entryPrice.toFixed(4)}
+TP : ${analysis.tp?.toFixed(4)}
+SL : ${analysis.sl?.toFixed(4)}
+Confidence : ${analysis.confidence.toFixed(1)}%
+Time Frame : ${tf}`;
+
+                await sendTelegramSignal(botToken, chatId, message);
+              }
             }
+          } catch (err) {
+            console.error(`Error processing symbol ${symbol} on ${tf} in background loop:`, err);
           }
-        } catch (err) {
-          console.error(`Error processing symbol ${symbol} in background loop:`, err);
         }
       }
     } catch (err) {

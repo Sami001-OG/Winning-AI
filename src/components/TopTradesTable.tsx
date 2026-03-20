@@ -13,7 +13,7 @@ interface TradeSignal {
   entryDirection: 'up' | 'down' | 'none';
 }
 
-const DEFAULT_RELIABILITY = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 };
 
 interface TopTradesTableProps {
   trades: Trade[];
@@ -192,8 +192,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   }, [interval]);
 
   const getConfidenceColor = (confidence: number) => {
-    if (confidence > 75) return 'text-emerald-400';
-    if (confidence >= 60) return 'text-yellow-400';
+    if (confidence >= 85) return 'text-emerald-400';
+    if (confidence >= 70) return 'text-yellow-400';
     return 'text-white/60';
   };
 
@@ -287,7 +287,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                       </span>
                       <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
                         <div 
-                          className={`h-full rounded-full ${s.analysis.confidence > 75 ? 'bg-emerald-500' : s.analysis.confidence >= 60 ? 'bg-yellow-500' : 'bg-white/20'}`}
+                          className={`h-full rounded-full ${s.analysis.confidence >= 85 ? 'bg-emerald-500' : s.analysis.confidence >= 70 ? 'bg-yellow-500' : 'bg-white/20'}`}
                           style={{ width: `${s.analysis.confidence}%` }}
                         />
                       </div>

@@ -25,7 +25,7 @@ const isEngulfingBearish = (p: Candle, c: Candle) => p.close > p.open && c.close
 
 export const analyzeChart = (
   data: Candle[], 
-  indicatorReliability: Record<string, number> = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 },
+  indicatorReliability: Record<string, number> = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 },
   trades: Trade[] = [],
   symbol: string
 ): AnalysisResult => {
@@ -277,13 +277,13 @@ export const analyzeChart = (
     signal = 'NO TRADE';
     confidence *= 0.3; // Reduce confidence heavily instead of 0
     reason = 'Signal conflict: Trend vs Momentum.';
-  } else if (confidence > 75) {
+  } else if (confidence >= 85) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Strong ${signal} setup. High confluence.`;
-  } else if (confidence >= 60) {
+  } else if (confidence >= 70) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Moderate ${signal} setup. Acceptable risk.`;
-  } else if (confidence >= 50) {
+  } else if (confidence >= 60) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Weak ${signal} setup. Proceed with caution.`;
   } else {
@@ -296,6 +296,45 @@ export const analyzeChart = (
     signal = 'NO TRADE';
     confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
+  }
+
+  // ==========================================
+  // EXCEPTION STRATEGIES (High Win Rate Overrides)
+  // ==========================================
+  let exceptionTriggered = false;
+  let exceptionName = '';
+
+  const lastCandle = data[data.length - 1];
+  const prevCandle = data[data.length - 2];
+
+  // 1. Flash Crash Buyer (3% drop in 1h)
+  const isFlashCrash = (lastCandle.open - lastCandle.close) / lastCandle.open > 0.03;
+  
+  // 4. EMA 200 Rubber Band (5% below EMA 200)
+  const isEmaRubberBand = lastEma200 ? (lastClose - lastEma200) / lastEma200 < -0.05 : false;
+
+  // 6. Extreme Mean Reversion (RSI < 30 + Close < Lower BB)
+  const isExtremeMeanReversion = lastRsi < 30 && lastBB && lastClose < lastBB.lower;
+
+  if (isFlashCrash) {
+    exceptionTriggered = true;
+    exceptionName = 'Flash Crash Buyer';
+  } else if (isEmaRubberBand) {
+    exceptionTriggered = true;
+    exceptionName = 'EMA 200 Rubber Band';
+  } else if (isExtremeMeanReversion) {
+    exceptionTriggered = true;
+    exceptionName = 'Extreme Mean Reversion';
+  }
+
+  const exceptionWeight = indicatorReliability.exception || 2.0;
+
+  if (exceptionTriggered) {
+    signal = 'LONG';
+    const boost = 20 * exceptionWeight;
+    const minConf = Math.min(95, 80 + (exceptionWeight * 5));
+    confidence = Math.min(100, Math.max(confidence + boost, minConf));
+    reason = `EXCEPTION STRATEGY: ${exceptionName} triggered.`;
   }
 
   indicators.push({
@@ -311,7 +350,19 @@ export const analyzeChart = (
   let tp: number | undefined;
   let sl: number | undefined;
 
-  if (signal === 'LONG') {
+  if (exceptionTriggered) {
+    // Custom TP/SL for exception strategies based on backtest
+    if (exceptionName === 'Flash Crash Buyer') {
+      tp = lastClose * 1.015; // 1.5% TP
+      sl = lastClose * 0.95;  // 5% SL
+    } else if (exceptionName === 'EMA 200 Rubber Band') {
+      tp = lastClose * 1.02;  // 2% TP
+      sl = lastClose * 0.95;  // 5% SL
+    } else if (exceptionName === 'Extreme Mean Reversion') {
+      tp = lastClose * 1.02;  // 2% TP
+      sl = lastClose * 0.97;  // 3% SL
+    }
+  } else if (signal === 'LONG') {
     sl = lastClose - (lastAtr * 2); // 2 ATR Stop Loss
     const risk = lastClose - sl;
     tp = lastClose + (risk * 2);    // 1:2 Risk/Reward
@@ -326,7 +377,9 @@ export const analyzeChart = (
   // ==========================================
   let suggestedEntry: number | undefined;
   
-  if (signal === 'LONG' && layer4Score > 0) {
+  if (exceptionTriggered) {
+    suggestedEntry = lastClose; // Market execution for extreme setups
+  } else if (signal === 'LONG' && layer4Score > 0) {
     if (isTrending) {
       // In a trending market, look for a pullback to EMA20
       suggestedEntry = lastEma20;
@@ -347,8 +400,6 @@ export const analyzeChart = (
   // ==========================================
   // PATTERN DETECTION
   // ==========================================
-  const lastCandle = data[data.length - 1];
-  const prevCandle = data[data.length - 2];
   const patterns: string[] = [];
 
   if (lastCandle) {

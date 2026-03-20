@@ -50,7 +50,7 @@ const MemoizedChart = memo(({ symbol, interval, activeTrade }: { symbol: string,
          prevProps.activeTrade?.status === nextProps.activeTrade?.status;
 });
 
-const DEFAULT_RELIABILITY = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 };
 
 export default function App() {
   const [data, setData] = useState<Candle[]>([]);
@@ -484,8 +484,8 @@ export default function App() {
                     <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">Confidence</span>
                     <div className={cn(
                       "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
-                      activeAnalysis?.confidence && activeAnalysis.confidence > 75 ? "text-emerald-400" :
-                      activeAnalysis?.confidence && activeAnalysis.confidence < 40 ? "text-rose-400" : "text-white"
+                      activeAnalysis?.confidence && activeAnalysis.confidence >= 85 ? "text-emerald-400" :
+                      activeAnalysis?.confidence && activeAnalysis.confidence < 60 ? "text-rose-400" : "text-white"
                     )}>
                       {typeof activeAnalysis?.confidence === 'number' && !isNaN(activeAnalysis.confidence) ? (
                         <AnimatedNumber value={activeAnalysis.confidence} />
