@@ -10,11 +10,13 @@ export const isNYSession = (): boolean => {
 
   const hour = parseInt(nyTimeStr, 10);
   
+  // TEMPORARILY DISABLED FOR TESTING - ALWAYS RETURN TRUE
   // 08:00 to 17:00 (5 PM)
-  if (!isNaN(hour) && hour >= 8 && hour < 17) {
-    return true;
-  }
-  return false;
+  // if (!isNaN(hour) && hour >= 8 && hour < 17) {
+  //   return true;
+  // }
+  // return false;
+  return true;
 };
 
 export const sendTelegramMessage = async (botToken: string, chatId: string, message: string) => {
