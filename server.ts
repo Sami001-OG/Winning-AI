@@ -100,9 +100,9 @@ async function startServer() {
     }
   });
 
-  app.get("/api/telegram/debug", async (req, res) => {
+  app.post("/api/telegram/debug", async (req, res) => {
     try {
-      const botToken = req.query.botToken as string;
+      const { botToken } = req.body;
       if (!botToken) {
         return res.status(400).json({ error: "Missing botToken" });
       }

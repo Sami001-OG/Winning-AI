@@ -252,8 +252,20 @@ export const TopTradesTable: React.FC = () => {
               }
               
               try {
-                const response = await fetch(`/api/telegram/debug?botToken=${encodeURIComponent(botToken)}`);
-                const data = await response.json();
+                const response = await fetch('/api/telegram/debug', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ botToken })
+                });
+                
+                let data;
+                try {
+                  data = await response.json();
+                } catch (e) {
+                  const text = await response.text();
+                  alert(`Server returned an unexpected response (not JSON):\n\n${text.substring(0, 150)}...`);
+                  return;
+                }
                 
                 if (response.ok) {
                   if (data.foundChats && data.foundChats.length > 0) {
