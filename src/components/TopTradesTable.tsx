@@ -3,7 +3,6 @@ import { analyzeChart } from '../analysis';
 import { Candle, AnalysisResult, Trade } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
-import { isNYSession, sendTelegramMessage } from '../utils/telegram';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -95,38 +94,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     const top10 = newSignals.slice(0, 10);
     setSignals(top10);
     setLastUpdate(new Date());
-
-    // Telegram Bot Logic
-    const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
-    const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
-    
-    if (botToken && chatId && top10.length > 0) {
-      const highestProbTrade = top10[0];
-      if (highestProbTrade.analysis.signal !== 'NO TRADE' && highestProbTrade.analysis.tp && highestProbTrade.analysis.sl) {
-        if (isNYSession()) {
-          const now = new Date();
-          const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
-          
-          const lastSentDate = lastSentSignalsRef.current[highestProbTrade.symbol] || '';
-          
-          // Only send if not sent today
-          if (lastSentDate !== today) {
-            lastSentSignalsRef.current[highestProbTrade.symbol] = today;
-            
-            const message = `
-<b>Symbol :</b> ${highestProbTrade.symbol}
-<b>Trade Direction :</b> ${highestProbTrade.analysis.signal === 'LONG' ? 'Long' : 'Short'}
-<b>TP :</b> ${highestProbTrade.analysis.tp.toFixed(4)}
-<b>SL :</b> ${highestProbTrade.analysis.sl.toFixed(4)}
-<b>Confidence :</b> ${highestProbTrade.analysis.confidence.toFixed(1)}%
-<b>Time Frame :</b> ${interval}
-            `.trim();
-            
-            sendTelegramMessage(botToken, chatId, message);
-          }
-        }
-      }
-    }
   };
 
   const toggleFreeze = (symbol: string, entry: number) => {

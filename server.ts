@@ -67,6 +67,18 @@ async function fetchKlines(symbol: string, tf: string) {
   }));
 }
 
+function isNYSession(): boolean {
+  const now = new Date();
+  const nyTimeStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    hour12: false,
+  }).format(now);
+
+  const hour = parseInt(nyTimeStr, 10);
+  return !isNaN(hour) && hour >= 8 && hour < 17;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -157,27 +169,54 @@ async function startServer() {
   });
 
   // Background loop
+  const lastSentSignals: Record<string, { direction: string, timestamp: number }> = {};
+  const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
+
   setInterval(async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
     const chatId = process.env.VITE_TELEGRAM_CHAT_ID;
     if (!botToken || !chatId) return;
 
-    const symbols = await fetchTopSymbols();
-    for (const symbol of symbols) {
-      const klines = await fetchKlines(symbol, '15m');
-      const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
-      
-      if (analysis.signal !== 'NO TRADE' && analysis.confidence > 75) {
-        const message = `
+    try {
+      if (!isNYSession()) return; // Only send during NY session
+
+      const symbols = await fetchTopSymbols();
+      for (const symbol of symbols) {
+        try {
+          const klines = await fetchKlines(symbol, '15m');
+          const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
+          
+          if (analysis.signal !== 'NO TRADE' && analysis.confidence > 75) {
+            const now = Date.now();
+            const lastSent = lastSentSignals[symbol];
+            
+            // Check if we should send:
+            // 1. Never sent before
+            // 2. Direction changed
+            // 3. Cooldown period passed
+            if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+              lastSentSignals[symbol] = {
+                direction: analysis.signal,
+                timestamp: now
+              };
+              
+              const message = `
 <b>Symbol :</b> ${symbol}
 <b>Trade Direction :</b> ${analysis.signal === 'LONG' ? 'Long' : 'Short'}
 <b>TP :</b> ${analysis.tp?.toFixed(4)}
 <b>SL :</b> ${analysis.sl?.toFixed(4)}
 <b>Confidence :</b> ${analysis.confidence.toFixed(1)}%
 <b>Time Frame :</b> 15m
-        `.trim();
-        await sendTelegramSignal(botToken, chatId, message);
+              `.trim();
+              await sendTelegramSignal(botToken, chatId, message);
+            }
+          }
+        } catch (err) {
+          console.error(`Error processing symbol ${symbol} in background loop:`, err);
+        }
       }
+    } catch (err) {
+      console.error('Error in background loop:', err);
     }
   }, 60000); // Check every minute
 
