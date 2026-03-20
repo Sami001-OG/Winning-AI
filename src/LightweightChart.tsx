@@ -84,14 +84,24 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
     };
   }, []);
 
+  const lastDataLength = useRef(0);
+
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
-    seriesRef.current.setData(data);
-    if (data.length > 0) {
-      chartRef.current.timeScale().setVisibleLogicalRange({
-        from: data.length - 100,
-        to: data.length - 1,
-      });
+    
+    // If data length is significantly different, or it's the first load, use setData
+    if (data.length !== lastDataLength.current) {
+      seriesRef.current.setData(data);
+      if (data.length > 0) {
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: data.length - 100,
+          to: data.length - 1,
+        });
+      }
+      lastDataLength.current = data.length;
+    } else {
+      // Otherwise, just update the last candle
+      seriesRef.current.update(data[data.length - 1]);
     }
   }, [data]);
 
