@@ -3,6 +3,7 @@ import { analyzeChart } from '../analysis';
 import { Candle, AnalysisResult } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
+import { isNYSession, sendTelegramMessage } from '../utils/telegram';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -23,6 +24,8 @@ export const TopTradesTable: React.FC = () => {
   const klinesDataRef = useRef<Record<string, Candle[]>>({});
   const wsRef = useRef<WebSocket | null>(null);
   const prevEntriesRef = useRef<Record<string, number>>({});
+  const lastSentSignalsRef = useRef<Record<string, number>>({});
+  const lastGlobalSendRef = useRef<number>(0);
 
   const fetchTopSymbols = async () => {
     try {
@@ -84,8 +87,41 @@ export const TopTradesTable: React.FC = () => {
     
     // Sort by confidence
     newSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
-    setSignals(newSignals.slice(0, 10));
+    const top10 = newSignals.slice(0, 10);
+    setSignals(top10);
     setLastUpdate(new Date());
+
+    // Telegram Bot Logic
+    const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
+    const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
+    
+    if (botToken && chatId && top10.length > 0) {
+      const highestProbTrade = top10[0];
+      if (highestProbTrade.analysis.signal !== 'NO TRADE' && highestProbTrade.analysis.tp && highestProbTrade.analysis.sl) {
+        if (isNYSession()) {
+          const signalKey = `${highestProbTrade.symbol}-${highestProbTrade.analysis.signal}-${interval}`;
+          const now = Date.now();
+          const lastSent = lastSentSignalsRef.current[signalKey] || 0;
+          
+          // 15 minute cooldown per unique signal, and 5 minute global cooldown
+          if (now - lastSent > 15 * 60 * 1000 && now - lastGlobalSendRef.current > 5 * 60 * 1000) {
+            lastSentSignalsRef.current[signalKey] = now;
+            lastGlobalSendRef.current = now;
+            
+            const message = `
+<b>Symbol :</b> ${highestProbTrade.symbol}
+<b>Trade Direction :</b> ${highestProbTrade.analysis.signal === 'LONG' ? 'Long' : 'Short'}
+<b>TP :</b> ${highestProbTrade.analysis.tp.toFixed(4)}
+<b>SL :</b> ${highestProbTrade.analysis.sl.toFixed(4)}
+<b>Confidence :</b> ${highestProbTrade.analysis.confidence.toFixed(1)}%
+<b>Time Frame :</b> ${interval}
+            `.trim();
+            
+            sendTelegramMessage(botToken, chatId, message);
+          }
+        }
+      }
+    }
   };
 
   const toggleFreeze = (symbol: string, entry: number) => {
