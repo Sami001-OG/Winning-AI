@@ -58,3 +58,31 @@ export const calculateOrderFlow = (data: Candle[]): number => {
   }
   return flow;
 };
+
+export const detectRsiDivergence = (data: Candle[], rsi: number[]): 'bullish' | 'bearish' | 'neutral' => {
+  if (data.length < 20 || rsi.length < 20) return 'neutral';
+  
+  const last = data[data.length - 1];
+  const lastRsi = rsi[rsi.length - 1];
+  
+  const recentData = data.slice(-10, -1);
+  const recentRsi = rsi.slice(-10, -1);
+  
+  const currentLow = last.low;
+  const prevLow = Math.min(...recentData.map(c => c.low));
+  
+  const currentRsiLow = lastRsi;
+  const prevRsiLow = Math.min(...recentRsi);
+  
+  if (currentLow < prevLow && currentRsiLow > prevRsiLow) return 'bullish';
+  
+  const currentHigh = last.high;
+  const prevHigh = Math.max(...recentData.map(c => c.high));
+  
+  const currentRsiHigh = lastRsi;
+  const prevRsiHigh = Math.max(...recentRsi);
+  
+  if (currentHigh > prevHigh && currentRsiHigh < prevRsiHigh) return 'bearish';
+  
+  return 'neutral';
+};

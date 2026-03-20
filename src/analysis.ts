@@ -18,7 +18,8 @@ import {
   detectFakeout, 
   detectVolumeSpike, 
   detectAtrExpansion, 
-  calculateOrderFlow 
+  calculateOrderFlow,
+  detectRsiDivergence
 } from './structure';
 import { calculateVolumeProfile } from './volumeProfile';
 
@@ -136,6 +137,7 @@ export const analyzeChart = (
   const volumeSpike = detectVolumeSpike(data);
   const atrExpansion = detectAtrExpansion(data, atr);
   const orderFlow = calculateOrderFlow(data);
+  const rsiDivergence = detectRsiDivergence(data, rsi);
   const volProfile = calculateVolumeProfile(data);
   // Using existing ema20, ema50, bb variables
   const lastEma20Val = lastEma20;
@@ -342,6 +344,33 @@ export const analyzeChart = (
   let signal: 'LONG' | 'SHORT' | 'NO TRADE' = 'NO TRADE';
   let reason = 'Awaiting high-probability setup.';
 
+  // Perfect Confirmation Logic
+  const isPerfectConfirmation = (
+    score: number,
+    l1: number,
+    l2: number,
+    l3: number,
+    l4: number,
+    sScore: number,
+    vvScore: number,
+    divergence: string
+  ): boolean => {
+    const direction = Math.sign(score);
+    if (direction === 0) return false;
+
+    // 1. Directional Confluence: All layers must align or be neutral
+    const layers = [l1, l2, l3, l4, sScore, vvScore];
+    const allAgree = layers.every(l => Math.sign(l) === direction || l === 0);
+    
+    // 2. RSI Divergence must align
+    const hasDivergence = divergence === (direction > 0 ? 'bullish' : 'bearish');
+
+    // 3. High confidence threshold
+    return allAgree && hasDivergence && Math.abs(score) > 0.3;
+  };
+
+  const perfect = isPerfectConfirmation(finalScore, layer1Score, layer2Score, layer3Score, layer4Score, structureScore, volVolScore, rsiDivergence);
+
   // Conflict Check: If Trend and Entry strongly disagree
   const isConflict = Math.sign(layer2Score) !== Math.sign(layer3Score) && Math.abs(layer2Score) > 0.5 && Math.abs(layer3Score) > 0.5;
 
@@ -349,7 +378,11 @@ export const analyzeChart = (
     signal = 'NO TRADE';
     confidence *= 0.3; // Reduce confidence heavily instead of 0
     reason = 'Signal conflict: Trend vs Momentum.';
-  } else if (confidence >= 100) { // Disabled standard trades to ensure perfect profit factor
+  } else if (perfect) {
+    signal = finalScore > 0 ? 'LONG' : 'SHORT';
+    confidence = Math.min(100, confidence + 20); // Boost confidence for perfect setup
+    reason = `PERFECT ${signal} setup. High confluence & divergence.`;
+  } else if (confidence >= 100) { 
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Strong ${signal} setup. High confluence.`;
   } else {
@@ -539,6 +572,12 @@ export const analyzeChart = (
     value: `Upper: ${lastBBVal.upper.toFixed(2)}, Lower: ${lastBBVal.lower.toFixed(2)}`,
     signal: lastClose < lastBBVal.lower ? 'bullish' : lastClose > lastBBVal.upper ? 'bearish' : 'neutral',
     description: 'Volatility/Mean Reversion'
+  });
+  indicators.push({
+    name: 'RSI Divergence',
+    value: rsiDivergence,
+    signal: rsiDivergence,
+    description: 'RSI Price Divergence'
   });
   indicators.push({
     name: 'Volume Profile (POC)',
