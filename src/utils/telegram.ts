@@ -23,18 +23,34 @@ export const sendTelegramMessage = async (botToken: string, chatId: string, mess
   if (!botToken || !chatId) return false;
   
   try {
-    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'HTML',
-      }),
+    // Sanitize inputs in case they contain quotes or extra spaces from env vars
+    const cleanToken = botToken.replace(/^["']|["']$/g, '').trim();
+    const cleanChatId = chatId.replace(/^["']|["']$/g, '').trim();
+    
+    // Handle case where user might have included the 'bot' prefix in their token
+    const finalToken = cleanToken.toLowerCase().startsWith('bot') 
+      ? cleanToken.substring(3) 
+      : cleanToken;
+
+    const params = new URLSearchParams({
+      chat_id: cleanChatId,
+      text: message,
+      parse_mode: 'HTML',
     });
+
+    const url = `https://api.telegram.org/bot${finalToken}/sendMessage?${params.toString()}`;
+    
+    console.log(`Attempting to send Telegram message to chat: ${cleanChatId}`);
+    
+    // Using GET request avoids CORS preflight (OPTIONS) issues that can cause "Failed to fetch"
+    const response = await fetch(url, {
+      method: 'GET',
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('Telegram API Error:', response.status, errorData);
+    }
     
     return response.ok;
   } catch (error) {
