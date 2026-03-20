@@ -35,6 +35,17 @@ export const analyzeChart = (
   const volumes = data.map(d => d.volume);
 
   const indicators: IndicatorResult[] = [];
+  
+  if (data.length === 0) {
+    return {
+      signal: 'NO TRADE',
+      confidence: 0,
+      indicators: [],
+      patterns: [],
+      confluences: { supporting: [], opposing: [], neutral: [] }
+    };
+  }
+
   const lastClose = closes[closes.length - 1];
 
   // ==========================================
@@ -322,11 +333,13 @@ export const analyzeChart = (
   const prevCandle = data[data.length - 2];
   const patterns: string[] = [];
 
-  if (isDoji(lastCandle)) patterns.push('Doji');
-  if (isHammer(lastCandle)) patterns.push('Hammer');
-  if (prevCandle) {
-    if (isEngulfingBullish(prevCandle, lastCandle)) patterns.push('Bullish Engulfing');
-    if (isEngulfingBearish(prevCandle, lastCandle)) patterns.push('Bearish Engulfing');
+  if (lastCandle) {
+    if (isDoji(lastCandle)) patterns.push('Doji');
+    if (isHammer(lastCandle)) patterns.push('Hammer');
+    if (prevCandle) {
+      if (isEngulfingBullish(prevCandle, lastCandle)) patterns.push('Bullish Engulfing');
+      if (isEngulfingBearish(prevCandle, lastCandle)) patterns.push('Bearish Engulfing');
+    }
   }
 
   // Adjust confidence based on patterns
