@@ -10,9 +10,25 @@ import {
   CCI,
   OBV
 } from 'technicalindicators';
-import { Candle, AnalysisResult, IndicatorResult } from './types';
+import { Candle, AnalysisResult, IndicatorResult, Trade } from './types';
 
-export const analyzeChart = (data: Candle[]): AnalysisResult => {
+// Pattern Detection Helpers
+const isDoji = (c: Candle) => Math.abs(c.close - c.open) <= (c.high - c.low) * 0.1;
+const isHammer = (c: Candle) => {
+    const body = Math.abs(c.close - c.open);
+    const lowerShadow = Math.min(c.open, c.close) - c.low;
+    const upperShadow = c.high - Math.max(c.open, c.close);
+    return lowerShadow > body * 2 && upperShadow < body;
+};
+const isEngulfingBullish = (p: Candle, c: Candle) => p.close < p.open && c.close > c.open && c.close > p.open && c.open < p.close;
+const isEngulfingBearish = (p: Candle, c: Candle) => p.close > p.open && c.close < c.open && c.close < p.open && c.open > p.close;
+
+export const analyzeChart = (
+  data: Candle[], 
+  indicatorReliability: Record<string, number> = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 },
+  trades: Trade[] = [],
+  symbol: string
+): AnalysisResult => {
   const closes = data.map(d => d.close);
   const highs = data.map(d => d.high);
   const lows = data.map(d => d.low);
@@ -109,7 +125,9 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
     else if (lastMacd.MACD! < lastMacd.signal!) macdScore = -0.5;
   }
 
-  const layer2Score = (emaScore + macdScore) / 2;
+  const emaRel = indicatorReliability.ema || 1;
+  const macdRel = indicatorReliability.macd || 1;
+  const layer2Score = (emaScore * emaRel + macdScore * macdRel) / (emaRel + macdRel);
 
   indicators.push({
     name: 'Trend Alignment',
@@ -145,7 +163,10 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
     else if (lastCci > 100) cciScore = -1;
   }
 
-  const layer3Score = (rsiScore + stochScore + cciScore) / 3;
+  const rsiRel = indicatorReliability.rsi || 1;
+  const stochRel = indicatorReliability.stoch || 1;
+  const cciRel = indicatorReliability.cci || 1;
+  const layer3Score = (rsiScore * rsiRel + stochScore * stochRel + cciScore * cciRel) / (rsiRel + stochRel + cciRel);
 
   indicators.push({
     name: 'Entry Timing',
@@ -166,7 +187,9 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
   if (lastObv > prevObv) obvScore = 1;
   else if (lastObv < prevObv) obvScore = -1;
 
-  const layer4Score = (volScore + obvScore) / 2;
+  const volRel = indicatorReliability.vol || 1;
+  const obvRel = indicatorReliability.obv || 1;
+  const layer4Score = (volScore * volRel + obvScore * obvRel) / (volRel + obvRel);
 
   indicators.push({
     name: 'Volume Confirm',
@@ -178,18 +201,30 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
   // ==========================================
   // ADAPTIVE WEIGHTS & FINAL SCORE
   // ==========================================
-  let w1 = 0.30; // Market Condition
-  let w2 = 0.30; // Trend
+  let w1 = 0.25; // Market Condition
+  let w2 = 0.25; // Trend
   let w3 = 0.25; // Entry
-  let w4 = 0.15; // Confirmation
+  let w4 = 0.25; // Confirmation
 
-  if (isTrending) {
-    w2 = 0.40; // Increase Trend weight
-    w3 = 0.15; // Decrease Entry weight
-  } else if (isSideways) {
-    w3 = 0.40; // Increase Entry weight
-    w2 = 0.15; // Decrease Trend weight
+  const trendStrength = Math.abs(layer1Score); // 0 to 1
+
+  // Trend is more important when trendStrength is high
+  w2 = 0.15 + (trendStrength * 0.50); // 0.15 to 0.65
+  // Entry is more important when trendStrength is low (sideways)
+  w3 = 0.15 + ((1 - trendStrength) * 0.50); // 0.15 to 0.65
+  
+  // Confirmation is important in high volatility
+  if (isHighVolatility) {
+    w4 = 0.35;
+    w1 = 0.15;
   }
+
+  // Normalize weights to sum to 1
+  const total = w1 + w2 + w3 + w4;
+  w1 /= total;
+  w2 /= total;
+  w3 /= total;
+  w4 /= total;
 
   const finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4);
   
@@ -281,6 +316,43 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
   }
 
   // ==========================================
+  // PATTERN DETECTION
+  // ==========================================
+  const lastCandle = data[data.length - 1];
+  const prevCandle = data[data.length - 2];
+  const patterns: string[] = [];
+
+  if (isDoji(lastCandle)) patterns.push('Doji');
+  if (isHammer(lastCandle)) patterns.push('Hammer');
+  if (prevCandle) {
+    if (isEngulfingBullish(prevCandle, lastCandle)) patterns.push('Bullish Engulfing');
+    if (isEngulfingBearish(prevCandle, lastCandle)) patterns.push('Bearish Engulfing');
+  }
+
+  // Adjust confidence based on patterns
+  let confidenceAdjustment = 0;
+  if (patterns.includes('Bullish Engulfing') && finalScore > 0) confidenceAdjustment = 10;
+  else if (patterns.includes('Bearish Engulfing') && finalScore < 0) confidenceAdjustment = 10;
+  else if (patterns.includes('Hammer') && finalScore > 0) confidenceAdjustment = 5;
+  
+  confidence = Math.min(100, Math.max(0, confidence + confidenceAdjustment));
+
+  // ==========================================
+  // HISTORICAL PERFORMANCE FILTER
+  // ==========================================
+  const symbolTrades = trades.filter(t => t.symbol === symbol && (t.status === 'SUCCESS' || t.status === 'FAILED'));
+  if (symbolTrades.length >= 5) {
+    const wins = symbolTrades.filter(t => t.status === 'SUCCESS').length;
+    const winRate = wins / symbolTrades.length;
+    
+    if (winRate < 0.4) {
+      confidence *= 0.5; // Heavy penalty for poor history
+    } else if (winRate < 0.6) {
+      confidence *= 0.8; // Minor penalty
+    }
+  }
+
+  // ==========================================
   // CONFLUENCE MAPPING FOR UI
   // ==========================================
   const dominantSignal = finalScore > 0 ? 'bullish' : 'bearish';
@@ -311,6 +383,7 @@ export const analyzeChart = (data: Candle[]): AnalysisResult => {
     signal,
     confidence,
     indicators,
+    patterns,
     confluences: {
       supporting: indicators.filter(i => i.signal === supportingSignal).map(i => i.name),
       opposing: indicators.filter(i => i.signal === opposingSignal).map(i => i.name),

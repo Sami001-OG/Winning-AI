@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, Time, CandlestickSeries } from 'lightweight-charts';
+import React, { useEffect, useRef } from 'react';
+import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries } from 'lightweight-charts';
 import { Trade } from './types';
+import { useBinanceData } from './hooks/useBinanceData';
 
 interface LightweightChartProps {
   symbol: string;
@@ -12,8 +13,7 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error } = useBinanceData(symbol, interval);
 
   const tpLineRef = useRef<any>(null);
   const slLineRef = useRef<any>(null);
@@ -85,87 +85,15 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
   }, []);
 
   useEffect(() => {
-    if (!seriesRef.current) return;
-
-    let isMounted = true;
-
-    // Close existing websocket immediately to prevent race conditions
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (!seriesRef.current || !chartRef.current) return;
+    seriesRef.current.setData(data);
+    if (data.length > 0) {
+      chartRef.current.timeScale().setVisibleLogicalRange({
+        from: data.length - 100,
+        to: data.length - 1,
+      });
     }
-
-    // Clear existing data immediately to prevent showing old symbol/interval data
-    seriesRef.current.setData([]);
-
-    const fetchData = async () => {
-      try {
-        setError(null);
-        // Map interval
-        const map: Record<string, string> = {
-          '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'
-        };
-        const binanceInterval = map[interval] || '15m';
-
-        const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=${binanceInterval}&limit=500`);
-        if (!response.ok) throw new Error('Failed to fetch data');
-        
-        const data = await response.json();
-        const candles = data.map((k: any) => ({
-          time: (k[0] / 1000) as Time,
-          open: parseFloat(k[1]),
-          high: parseFloat(k[2]),
-          low: parseFloat(k[3]),
-          close: parseFloat(k[4]),
-        }));
-
-        if (isMounted && seriesRef.current && chartRef.current) {
-          seriesRef.current.setData(candles);
-          chartRef.current.timeScale().setVisibleLogicalRange({
-            from: candles.length - 100,
-            to: candles.length - 1,
-          });
-        }
-
-        // Connect WebSocket
-        if (wsRef.current) wsRef.current.close();
-        
-        const wsUrl = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${binanceInterval}`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-
-        ws.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.k && isMounted && seriesRef.current) {
-              const k = message.k;
-              seriesRef.current.update({
-                time: (k.t / 1000) as Time,
-                open: parseFloat(k.o),
-                high: parseFloat(k.h),
-                low: parseFloat(k.l),
-                close: parseFloat(k.c),
-              });
-            }
-          } catch (e) {
-            console.error("Error parsing WS message", e);
-          }
-        };
-
-      } catch (err: any) {
-        if (isMounted) setError(err.message);
-      }
-    };
-
-    fetchData();
-
-    return () => {
-      isMounted = false;
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, [symbol, interval]);
+  }, [data]);
 
   useEffect(() => {
     if (!seriesRef.current) return;

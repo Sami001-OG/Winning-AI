@@ -1,6 +1,71 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import { analyzeChart } from "./src/analysis";
+import { Candle, Trade } from "./src/types";
+
+const DEFAULT_RELIABILITY = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 };
+
+async function sendTelegramSignal(botToken: string, chatId: string, message: string) {
+  const cleanToken = botToken.replace(/^["']|["']$/g, '').trim();
+  let cleanChatId = chatId.replace(/^["']|["']$/g, '').trim();
+  
+  if (cleanChatId.includes('t.me/')) {
+    cleanChatId = cleanChatId.split('t.me/')[1].split('/')[0].split('?')[0];
+  }
+  
+  if (!/^-?\d+$/.test(cleanChatId) && !cleanChatId.startsWith('@')) {
+    cleanChatId = '@' + cleanChatId;
+  }
+  
+  const finalToken = cleanToken.toLowerCase().startsWith('bot') 
+    ? cleanToken.substring(3) 
+    : cleanToken;
+
+  const url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      chat_id: cleanChatId,
+      text: message,
+      parse_mode: 'HTML',
+    }),
+  });
+  
+  return response.ok;
+}
+
+async function fetchTopSymbols() {
+  try {
+    const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
+    const data = await res.json();
+    return data
+      .filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume) > 0)
+      .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+      .slice(0, 30)
+      .map((t: any) => t.symbol);
+  } catch (e) {
+    return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
+  }
+}
+
+async function fetchKlines(symbol: string, tf: string) {
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=250`);
+  const data = await res.json();
+  return data.map((d: any) => ({
+    time: Math.floor(d[0] / 1000),
+    open: parseFloat(d[1]),
+    high: parseFloat(d[2]),
+    low: parseFloat(d[3]),
+    close: parseFloat(d[4]),
+    volume: parseFloat(d[5]),
+    isFinal: true
+  }));
+}
 
 async function startServer() {
   const app = express();
@@ -21,76 +86,10 @@ async function startServer() {
         return res.status(400).json({ error: "Missing botToken or chatId" });
       }
 
-      const cleanToken = botToken.replace(/^["']|["']$/g, '').trim();
-      let cleanChatId = chatId.replace(/^["']|["']$/g, '').trim();
+      const success = await sendTelegramSignal(botToken, chatId, message);
       
-      // Extract channel name if user pasted a t.me URL
-      if (cleanChatId.includes('t.me/')) {
-        cleanChatId = cleanChatId.split('t.me/')[1].split('/')[0].split('?')[0];
-      }
-      
-      // If the chat ID is not purely numeric and doesn't start with @ or -, it's likely a public channel missing the @ prefix
-      if (!/^-?\d+$/.test(cleanChatId) && !cleanChatId.startsWith('@')) {
-        cleanChatId = '@' + cleanChatId;
-      }
-      
-      const finalToken = cleanToken.toLowerCase().startsWith('bot') 
-        ? cleanToken.substring(3) 
-        : cleanToken;
-
-      const url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: cleanChatId,
-          text: message,
-          parse_mode: 'HTML',
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.text();
-        console.error('Telegram API Error:', response.status, errorData);
-        
-        let errorMessage = errorData;
-        if (errorData.includes("chat not found")) {
-          errorMessage = `Chat not found (${cleanChatId}). Ensure the bot is added to the channel/group as an administrator. If using a private group, ensure the ID is correct (often starts with '-100').`;
-          
-          // Try to fetch updates to see if we can find the correct chat ID
-          try {
-            const updatesUrl = `https://api.telegram.org/bot${finalToken}/getUpdates`;
-            const updatesResponse = await fetch(updatesUrl);
-            if (updatesResponse.ok) {
-              const updatesData = await updatesResponse.json();
-              if (updatesData.ok && updatesData.result.length > 0) {
-                const recentChats = new Set();
-                updatesData.result.forEach((update: any) => {
-                  if (update.message && update.message.chat) {
-                    recentChats.add(`${update.message.chat.title || update.message.chat.username || 'Unknown'}: ${update.message.chat.id}`);
-                  } else if (update.channel_post && update.channel_post.chat) {
-                    recentChats.add(`${update.channel_post.chat.title || update.channel_post.chat.username || 'Unknown'}: ${update.channel_post.chat.id}`);
-                  } else if (update.my_chat_member && update.my_chat_member.chat) {
-                    recentChats.add(`${update.my_chat_member.chat.title || update.my_chat_member.chat.username || 'Unknown'}: ${update.my_chat_member.chat.id}`);
-                  }
-                });
-                
-                if (recentChats.size > 0) {
-                  errorMessage += `\n\nI found these recent chat IDs your bot has seen:\n${Array.from(recentChats).join('\n')}\n\nTry using one of these numbers as your VITE_TELEGRAM_CHAT_ID.`;
-                } else {
-                  errorMessage += `\n\nI checked your bot's recent activity but couldn't find any chat IDs. Try sending a message in your channel, or removing and re-adding the bot, then try again.`;
-                }
-              }
-            }
-          } catch (e) {
-            console.error("Failed to fetch updates for debugging", e);
-          }
-        }
-        
-        return res.status(response.status).json({ error: errorMessage });
+      if (!success) {
+        return res.status(500).json({ error: "Failed to send message" });
       }
       
       res.json({ success: true });
@@ -100,6 +99,7 @@ async function startServer() {
     }
   });
 
+  // ... (debug endpoint remains the same)
   app.post("/api/telegram/debug", async (req, res) => {
     try {
       const { botToken } = req.body;
@@ -155,6 +155,31 @@ async function startServer() {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // Background loop
+  setInterval(async () => {
+    const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.VITE_TELEGRAM_CHAT_ID;
+    if (!botToken || !chatId) return;
+
+    const symbols = await fetchTopSymbols();
+    for (const symbol of symbols) {
+      const klines = await fetchKlines(symbol, '15m');
+      const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
+      
+      if (analysis.signal !== 'NO TRADE' && analysis.confidence > 75) {
+        const message = `
+<b>Symbol :</b> ${symbol}
+<b>Trade Direction :</b> ${analysis.signal === 'LONG' ? 'Long' : 'Short'}
+<b>TP :</b> ${analysis.tp?.toFixed(4)}
+<b>SL :</b> ${analysis.sl?.toFixed(4)}
+<b>Confidence :</b> ${analysis.confidence.toFixed(1)}%
+<b>Time Frame :</b> 15m
+        `.trim();
+        await sendTelegramSignal(botToken, chatId, message);
+      }
+    }
+  }, 60000); // Check every minute
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

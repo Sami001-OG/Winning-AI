@@ -50,6 +50,8 @@ const MemoizedChart = memo(({ symbol, interval, activeTrade }: { symbol: string,
          prevProps.activeTrade?.status === nextProps.activeTrade?.status;
 });
 
+const DEFAULT_RELIABILITY = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 };
+
 export default function App() {
   const [data, setData] = useState<Candle[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -92,7 +94,7 @@ export default function App() {
       }
       const data = await response.json();
       const candles: Candle[] = data.map((k: any) => ({
-        time: new Date(k[0]).toISOString(),
+        time: Math.floor(k[0] / 1000),
         open: parseFloat(k[1]),
         high: parseFloat(k[2]),
         low: parseFloat(k[3]),
@@ -118,14 +120,14 @@ export default function App() {
         if (response.ok) {
           const data = await response.json();
           const candles: Candle[] = data.map((k: any) => ({
-            time: new Date(k[0]).toISOString(),
+            time: Math.floor(k[0] / 1000),
             open: parseFloat(k[1]),
             high: parseFloat(k[2]),
             low: parseFloat(k[3]),
             close: parseFloat(k[4]),
             volume: parseFloat(k[5])
           }));
-          results[tf] = analyzeChart(candles);
+          results[tf] = analyzeChart(candles, DEFAULT_RELIABILITY, trades, symbol);
         }
       } catch (e) {
         console.error(`Failed to fetch ${tf}`, e);
@@ -149,9 +151,9 @@ export default function App() {
 
   useEffect(() => {
     if (data.length > 0) {
-      setAnalysis(analyzeChart(data));
+      setAnalysis(analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol));
     }
-  }, [data]);
+  }, [data, trades, symbol]);
 
   useEffect(() => {
     if (['5m', '15m', '1h', '4h'].includes(interval)) {
@@ -172,7 +174,7 @@ export default function App() {
         
         for (let i = 0; i < data.length; i++) {
           const candle = data[i];
-          const candleTime = new Date(candle.time).getTime();
+          const candleTime = candle.time * 1000;
           
           if (candleTime > trade.timestamp) {
             if (trade.type === 'LONG') {
@@ -182,7 +184,7 @@ export default function App() {
               if (candle.low <= trade.tp) { newStatus = 'SUCCESS'; break; }
               if (candle.high >= trade.sl) { newStatus = 'FAILED'; break; }
             }
-          } else if (candleTime <= trade.timestamp && (i === data.length - 1 || new Date(data[i+1].time).getTime() > trade.timestamp)) {
+          } else if (candleTime <= trade.timestamp && (i === data.length - 1 || data[i+1].time * 1000 > trade.timestamp)) {
             if (trade.type === 'LONG') {
               if (candle.close >= trade.tp) { newStatus = 'SUCCESS'; break; }
               if (candle.close <= trade.sl) { newStatus = 'FAILED'; break; }
@@ -243,7 +245,7 @@ export default function App() {
         if (message.k) {
           const k = message.k;
           const newCandle: Candle = {
-            time: new Date(k.t).toISOString(),
+            time: Math.floor(k.t / 1000),
             open: parseFloat(k.o),
             high: parseFloat(k.h),
             low: parseFloat(k.l),
@@ -685,7 +687,7 @@ export default function App() {
           </section>
 
           {/* Bottom Panel: Top Trades */}
-          <TopTradesTable />
+          <TopTradesTable trades={trades} />
         </div>
       </main>
 

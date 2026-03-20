@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeChart } from '../analysis';
-import { Candle, AnalysisResult } from '../types';
+import { Candle, AnalysisResult, Trade } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 import { isNYSession, sendTelegramMessage } from '../utils/telegram';
@@ -14,7 +14,13 @@ interface TradeSignal {
   entryDirection: 'up' | 'down' | 'none';
 }
 
-export const TopTradesTable: React.FC = () => {
+const DEFAULT_RELIABILITY = { ema: 1, macd: 1, rsi: 1, stoch: 1, cci: 1, vol: 1, obv: 1 };
+
+interface TopTradesTableProps {
+  trades: Trade[];
+}
+
+export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const [interval, setInterval] = useState('15m');
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -24,8 +30,7 @@ export const TopTradesTable: React.FC = () => {
   const klinesDataRef = useRef<Record<string, Candle[]>>({});
   const wsRef = useRef<WebSocket | null>(null);
   const prevEntriesRef = useRef<Record<string, number>>({});
-  const lastSentSignalsRef = useRef<Record<string, number>>({});
-  const lastGlobalSendRef = useRef<number>(0);
+  const lastSentSignalsRef = useRef<Record<string, string>>({});
 
   const fetchTopSymbols = async () => {
     try {
@@ -48,7 +53,7 @@ export const TopTradesTable: React.FC = () => {
     const res = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=250`);
     const data = await res.json();
     return data.map((d: any) => ({
-      time: new Date(d[0]).toISOString(),
+      time: Math.floor(d[0] / 1000),
       open: parseFloat(d[1]),
       high: parseFloat(d[2]),
       low: parseFloat(d[3]),
@@ -62,7 +67,7 @@ export const TopTradesTable: React.FC = () => {
     const newSignals: TradeSignal[] = [];
     for (const [symbol, data] of Object.entries(klinesDataRef.current) as [string, Candle[]][]) {
       if (data.length > 0) {
-        const analysis = analyzeChart(data);
+        const analysis = analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol);
         const currentEntry = analysis.suggestedEntry;
         const prevEntry = prevEntriesRef.current[symbol];
         
@@ -99,14 +104,14 @@ export const TopTradesTable: React.FC = () => {
       const highestProbTrade = top10[0];
       if (highestProbTrade.analysis.signal !== 'NO TRADE' && highestProbTrade.analysis.tp && highestProbTrade.analysis.sl) {
         if (isNYSession()) {
-          const signalKey = `${highestProbTrade.symbol}-${highestProbTrade.analysis.signal}-${interval}`;
-          const now = Date.now();
-          const lastSent = lastSentSignalsRef.current[signalKey] || 0;
+          const now = new Date();
+          const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
           
-          // 15 minute cooldown per unique signal, and 5 minute global cooldown
-          if (now - lastSent > 15 * 60 * 1000 && now - lastGlobalSendRef.current > 5 * 60 * 1000) {
-            lastSentSignalsRef.current[signalKey] = now;
-            lastGlobalSendRef.current = now;
+          const lastSentDate = lastSentSignalsRef.current[highestProbTrade.symbol] || '';
+          
+          // Only send if not sent today
+          if (lastSentDate !== today) {
+            lastSentSignalsRef.current[highestProbTrade.symbol] = today;
             
             const message = `
 <b>Symbol :</b> ${highestProbTrade.symbol}
@@ -185,7 +190,7 @@ export const TopTradesTable: React.FC = () => {
           if (klinesDataRef.current[symbol]) {
             const data = klinesDataRef.current[symbol];
             const candle: Candle = {
-              time: new Date(kline.t).toISOString(),
+              time: Math.floor(kline.t / 1000),
               open: parseFloat(kline.o),
               high: parseFloat(kline.h),
               low: parseFloat(kline.l),
@@ -195,7 +200,7 @@ export const TopTradesTable: React.FC = () => {
             };
 
             const lastCandle = data[data.length - 1];
-            if (lastCandle && new Date(lastCandle.time).getTime() === kline.t) {
+            if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
               data[data.length - 1] = candle;
             } else {
               data.push(candle);
@@ -243,87 +248,6 @@ export const TopTradesTable: React.FC = () => {
         </div>
         
         <div className="flex items-center gap-4">
-          <button 
-            onClick={async () => {
-              const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
-              if (!botToken) {
-                alert("Please configure VITE_TELEGRAM_BOT_TOKEN in AI Studio Secrets first.");
-                return;
-              }
-              
-              try {
-                const response = await fetch('/api/telegram/debug', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ botToken })
-                });
-                
-                let data;
-                const text = await response.text();
-                try {
-                  data = JSON.parse(text);
-                } catch (e) {
-                  alert(`Server returned an unexpected response (not JSON):\n\n${text.substring(0, 150)}...`);
-                  return;
-                }
-                
-                if (response.ok) {
-                  if (data.foundChats && data.foundChats.length > 0) {
-                    alert(`Found these recent chats:\n\n${data.foundChats.join('\n')}\n\nUse one of these IDs as your VITE_TELEGRAM_CHAT_ID.`);
-                  } else {
-                    alert("No recent chats found. Please send a message in your channel/group first, then try again.");
-                  }
-                } else {
-                  alert(`Failed to fetch debug info:\n\n${data.error || 'Unknown error'}\n${data.details || ''}`);
-                }
-              } catch (e: any) {
-                alert(`Network error: ${e.message || e}`);
-              }
-            }}
-            className="px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all bg-purple-500/20 text-purple-400 border border-purple-500/30 hover:bg-purple-500/30"
-          >
-            Find Chat ID
-          </button>
-          <button 
-            onClick={async () => {
-              const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
-              const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
-              if (botToken && chatId) {
-                try {
-                  const response = await fetch('/api/telegram/send', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      botToken,
-                      chatId,
-                      message: "<b>Test Message</b>\nThis is a test message from Endellion Trade to verify your Telegram setup."
-                    }),
-                  });
-                  
-                  if (response.ok) {
-                    alert("Test message sent successfully! Check your Telegram channel.");
-                  } else {
-                    let errorText = "Unknown error";
-                    const text = await response.text();
-                    try {
-                      const errorData = JSON.parse(text);
-                      errorText = errorData.error || text;
-                    } catch (e) {
-                      errorText = text;
-                    }
-                    alert(`Failed to send message:\n\n${errorText}`);
-                  }
-                } catch (e: any) {
-                  alert(`Network error while trying to send test message: ${e.message || e}`);
-                }
-              } else {
-                alert("Please configure VITE_TELEGRAM_BOT_TOKEN and VITE_TELEGRAM_CHAT_ID in AI Studio Secrets.");
-              }
-            }}
-            className="px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
-          >
-            Test Telegram
-          </button>
           <div className="text-[10px] font-mono text-white/40 flex items-center gap-1">
             <RefreshCw size={10} className={loading ? "animate-spin" : ""} />
             {loading ? "Scanning Market..." : `Updated: ${lastUpdate.toLocaleTimeString()}`}

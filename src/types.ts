@@ -1,5 +1,5 @@
 export interface Candle {
-  time: string;
+  time: number;
   open: number;
   high: number;
   low: number;
@@ -30,6 +30,7 @@ export interface AnalysisResult {
   signal: 'LONG' | 'SHORT' | 'NO TRADE';
   confidence: number;
   indicators: IndicatorResult[];
+  patterns: string[];
   confluences: {
     supporting: string[];
     opposing: string[];

@@ -1,6 +1,5 @@
 export const isNYSession = (): boolean => {
   // NY session is typically 08:00 to 17:00 EST/EDT
-  // We can use Intl.DateTimeFormat to get the current hour in New York
   const now = new Date();
   const nyTimeStr = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
@@ -10,13 +9,11 @@ export const isNYSession = (): boolean => {
 
   const hour = parseInt(nyTimeStr, 10);
   
-  // TEMPORARILY DISABLED FOR TESTING - ALWAYS RETURN TRUE
   // 08:00 to 17:00 (5 PM)
-  // if (!isNaN(hour) && hour >= 8 && hour < 17) {
-  //   return true;
-  // }
-  // return false;
-  return true;
+  if (!isNaN(hour) && hour >= 8 && hour < 17) {
+    return true;
+  }
+  return false;
 };
 
 export const sendTelegramMessage = async (botToken: string, chatId: string, message: string) => {
