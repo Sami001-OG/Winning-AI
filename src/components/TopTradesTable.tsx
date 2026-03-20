@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { analyzeChart } from '../analysis';
 import { Candle, AnalysisResult, Trade } from '../types';
 import { sendTelegramAlert } from '../services/telegramService';
-import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
@@ -14,7 +14,7 @@ interface TradeSignal {
   entryDirection: 'up' | 'down' | 'none';
 }
 
-const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 };
 
 interface TopTradesTableProps {
   trades: Trade[];
@@ -24,6 +24,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const [interval, setInterval] = useState('15m');
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [frozenEntries, setFrozenEntries] = useState<Record<string, number>>({});
   
@@ -88,14 +89,16 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           const l3 = analysis.layers?.entry || 0;
           const l4 = analysis.layers?.confirmation || 0;
 
+          const lastClose = data[data.length - 1].close;
+
           if (analysis.signal === 'LONG' && l1 > 0 && l2 > 0 && l3 > 0 && l4 > 0) {
             if (lastSentSignalsRef.current[symbol] !== `LONG_${interval}`) {
-              sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${data[data.length - 1].close.toFixed(4)}`);
+              sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`);
               lastSentSignalsRef.current[symbol] = `LONG_${interval}`;
             }
           } else if (analysis.signal === 'SHORT' && l1 < 0 && l2 < 0 && l3 < 0 && l4 < 0) {
             if (lastSentSignalsRef.current[symbol] !== `SHORT_${interval}`) {
-              sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${data[data.length - 1].close.toFixed(4)}`);
+              sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`);
               lastSentSignalsRef.current[symbol] = `SHORT_${interval}`;
             }
           }
@@ -134,69 +137,78 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     
     const init = async () => {
       setLoading(true);
+      setError(null);
       
       if (wsRef.current) {
         wsRef.current.close();
       }
 
-      const symbols = await fetchTopSymbols();
-      if (!isMounted) return;
+      try {
+        const symbols = await fetchTopSymbols();
+        if (!isMounted) return;
 
-      const batches = [];
-      for (let i = 0; i < symbols.length; i += 5) {
-        batches.push(symbols.slice(i, i + 5));
-      }
+        const batches = [];
+        for (let i = 0; i < symbols.length; i += 5) {
+          batches.push(symbols.slice(i, i + 5));
+        }
 
-      klinesDataRef.current = {};
-      
-      for (const batch of batches) {
-        await Promise.all(batch.map(async (sym) => {
-          try {
-            const klines = await fetchKlines(sym, interval);
-            klinesDataRef.current[sym] = klines;
-          } catch (e) {
-            console.error(`Error fetching klines for ${sym}`, e);
-          }
-        }));
-      }
+        klinesDataRef.current = {};
+        
+        for (const batch of batches) {
+          await Promise.all(batch.map(async (sym) => {
+            try {
+              const klines = await fetchKlines(sym, interval);
+              klinesDataRef.current[sym] = klines;
+            } catch (e) {
+              console.error(`Error fetching klines for ${sym}`, e);
+            }
+          }));
+        }
 
-      if (!isMounted) return;
-      updateSignals();
-      setLoading(false);
+        if (!isMounted) return;
+        updateSignals();
+        setLoading(false);
 
-      // Setup WS
-      const streams = symbols.map(s => `${s.toLowerCase()}@kline_${interval}`).join('/');
-      const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-      wsRef.current = ws;
+        // Setup WS
+        const streams = symbols.map(s => `${s.toLowerCase()}@kline_${interval}`).join('/');
+        const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+        wsRef.current = ws;
 
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        if (message.data && message.data.e === 'kline') {
-          const kline = message.data.k;
-          const symbol = message.data.s;
-          
-          if (klinesDataRef.current[symbol]) {
-            const data = klinesDataRef.current[symbol];
-            const candle: Candle = {
-              time: Math.floor(kline.t / 1000),
-              open: parseFloat(kline.o),
-              high: parseFloat(kline.h),
-              low: parseFloat(kline.l),
-              close: parseFloat(kline.c),
-              volume: parseFloat(kline.v),
-              isFinal: kline.x
-            };
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.data && message.data.e === 'kline') {
+            const kline = message.data.k;
+            const symbol = message.data.s;
+            
+            if (klinesDataRef.current[symbol]) {
+              const data = klinesDataRef.current[symbol];
+              const candle: Candle = {
+                time: Math.floor(kline.t / 1000),
+                open: parseFloat(kline.o),
+                high: parseFloat(kline.h),
+                low: parseFloat(kline.l),
+                close: parseFloat(kline.c),
+                volume: parseFloat(kline.v),
+                isFinal: kline.x
+              };
 
-            const lastCandle = data[data.length - 1];
-            if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
-              data[data.length - 1] = candle;
-            } else {
-              data.push(candle);
-              if (data.length > 250) data.shift();
+              const lastCandle = data[data.length - 1];
+              if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
+                data[data.length - 1] = candle;
+              } else {
+                data.push(candle);
+                if (data.length > 250) data.shift();
+              }
             }
           }
+        };
+      } catch (e: any) {
+        console.error('Init error', e);
+        if (isMounted) {
+          setError(e.message || 'Failed to initialize market scan');
+          setLoading(false);
         }
-      };
+      }
     };
 
     init();
@@ -259,6 +271,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       </div>
       
       <div className="p-0 overflow-x-auto">
+        {error && (
+          <div className="p-4 bg-rose-500/10 border-b border-rose-500/20 text-rose-400 text-xs font-mono flex items-center gap-2">
+            <AlertTriangle size={14} />
+            <span>{error}. Using fallback symbols.</span>
+          </div>
+        )}
         <table className="w-full text-left border-collapse min-w-[800px]">
           <thead>
             <tr className="border-b border-white/5 bg-white/[0.02] text-[10px] font-mono text-white/40 uppercase tracking-widest">
@@ -315,16 +333,16 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                     </div>
                   </td>
                   <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.marketCondition)}`}>
-                    {s.analysis.layers?.marketCondition.toFixed(2) || '-'}
+                    {s.analysis.layers?.marketCondition !== undefined ? s.analysis.layers.marketCondition.toFixed(2) : '-'}
                   </td>
                   <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.trend)}`}>
-                    {s.analysis.layers?.trend.toFixed(2) || '-'}
+                    {s.analysis.layers?.trend !== undefined ? s.analysis.layers.trend.toFixed(2) : '-'}
                   </td>
                   <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.entry)}`}>
-                    {s.analysis.layers?.entry.toFixed(2) || '-'}
+                    {s.analysis.layers?.entry !== undefined ? s.analysis.layers.entry.toFixed(2) : '-'}
                   </td>
                   <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.confirmation)}`}>
-                    {s.analysis.layers?.confirmation.toFixed(2) || '-'}
+                    {s.analysis.layers?.confirmation !== undefined ? s.analysis.layers.confirmation.toFixed(2) : '-'}
                   </td>
                   <td className="p-4 text-right">
                     {s.analysis.signal !== 'NO TRADE' && (frozenEntries[s.symbol] || s.analysis.suggestedEntry) ? (
@@ -344,7 +362,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                         )}
                         <div className="flex items-center gap-1">
                           <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white"}>
-                            {(frozenEntries[s.symbol] || s.analysis.suggestedEntry!).toFixed(4)}
+                            {(frozenEntries[s.symbol] || s.analysis.suggestedEntry || 0).toFixed(4)}
                           </span>
                           {!frozenEntries[s.symbol] && s.entryDirection === 'up' && <ArrowUp size={12} className="text-emerald-400" />}
                           {!frozenEntries[s.symbol] && s.entryDirection === 'down' && <ArrowDown size={12} className="text-rose-400" />}
@@ -359,8 +377,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                   <td className="p-4 text-right">
                     {s.analysis.signal !== 'NO TRADE' && s.analysis.tp && s.analysis.sl ? (
                       <div className="flex flex-col items-end text-[10px]">
-                        <span className="text-emerald-400">{s.analysis.tp.toFixed(4)}</span>
-                        <span className="text-rose-400">{s.analysis.sl.toFixed(4)}</span>
+                        <span className="text-emerald-400">{s.analysis.tp !== undefined ? s.analysis.tp.toFixed(4) : '-'}</span>
+                        <span className="text-rose-400">{s.analysis.sl !== undefined ? s.analysis.sl.toFixed(4) : '-'}</span>
                       </div>
                     ) : (
                       <span className="text-white/20">-</span>

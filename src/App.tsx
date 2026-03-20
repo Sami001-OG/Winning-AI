@@ -38,7 +38,7 @@ function AnimatedNumber({ value }: { value: number }) {
     window.requestAnimationFrame(step);
   }, [value]);
 
-  return <>{displayValue.toFixed(0)}</>;
+  return <>{(displayValue || 0).toFixed(0)}</>;
 }
 
 const MemoizedChart = memo(({ symbol, interval, activeTrade }: { symbol: string, interval: string, activeTrade?: Trade }) => {
@@ -50,7 +50,7 @@ const MemoizedChart = memo(({ symbol, interval, activeTrade }: { symbol: string,
          prevProps.activeTrade?.status === nextProps.activeTrade?.status;
 });
 
-const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 };
 
 export default function App() {
   const [data, setData] = useState<Candle[]>([]);
@@ -360,7 +360,7 @@ export default function App() {
                 "text-sm font-bold",
                 data[data.length - 1].close >= data[data.length - 1].open ? "text-emerald-400" : "text-rose-400"
               )}>
-                {data[data.length - 1].close.toFixed(2)}
+                {(data[data.length - 1].close || 0).toFixed(2)}
               </span>
             </div>
           )}
@@ -470,11 +470,11 @@ export default function App() {
                   <div className="flex items-center gap-3 sm:gap-4 border-r border-white/10 pr-3 sm:pr-4">
                     <div className="flex flex-col items-end">
                       <span className="text-[9px] font-mono text-emerald-400/50 uppercase tracking-widest">Target</span>
-                      <span className="text-xs sm:text-sm font-mono font-bold text-emerald-400">{activeTrade.tp.toFixed(2)}</span>
+                      <span className="text-xs sm:text-sm font-mono font-bold text-emerald-400">{(activeTrade.tp || 0).toFixed(2)}</span>
                     </div>
                     <div className="flex flex-col items-end">
                       <span className="text-[9px] font-mono text-rose-400/50 uppercase tracking-widest">Stop</span>
-                      <span className="text-xs sm:text-sm font-mono font-bold text-rose-400">{activeTrade.sl.toFixed(2)}</span>
+                      <span className="text-xs sm:text-sm font-mono font-bold text-rose-400">{(activeTrade.sl || 0).toFixed(2)}</span>
                     </div>
                   </div>
                 )}
@@ -508,7 +508,7 @@ export default function App() {
                         "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
                         data[data.length - 1].close >= data[data.length - 1].open ? "text-emerald-400" : "text-rose-400"
                       )}>
-                        {data[data.length - 1].close.toFixed(2)}
+                        {(data[data.length - 1].close || 0).toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -620,7 +620,7 @@ export default function App() {
               {trades.length > 0 && (
                 <div className="text-[10px] font-mono text-white/40 uppercase tracking-widest flex gap-4">
                   <span>Total: {trades.length}</span>
-                  <span>Win Rate: {trades.filter(t => t.status === 'SUCCESS' || t.status === 'FAILED').length > 0 ? ((trades.filter(t => t.status === 'SUCCESS').length / trades.filter(t => t.status === 'SUCCESS' || t.status === 'FAILED').length) * 100).toFixed(1) : '0.0'}%</span>
+                  <span>Win Rate: {trades.filter(t => t.status === 'SUCCESS' || t.status === 'FAILED').length > 0 ? (((trades.filter(t => t.status === 'SUCCESS').length / trades.filter(t => t.status === 'SUCCESS' || t.status === 'FAILED').length) * 100) || 0).toFixed(1) : '0.0'}%</span>
                 </div>
               )}
             </div>
@@ -655,9 +655,9 @@ export default function App() {
                               {trade.type}
                             </span>
                           </td>
-                          <td className="p-4 text-white/80">{trade.entry.toFixed(2)}</td>
-                          <td className="p-4 text-emerald-400">{trade.tp.toFixed(2)}</td>
-                          <td className="p-4 text-rose-400">{trade.sl.toFixed(2)}</td>
+                          <td className="p-4 text-white/80">{(trade.entry || 0).toFixed(2)}</td>
+                          <td className="p-4 text-emerald-400">{(trade.tp || 0).toFixed(2)}</td>
+                          <td className="p-4 text-rose-400">{(trade.sl || 0).toFixed(2)}</td>
                           <td className="p-4 text-right">
                             <span className={cn(
                               "px-2 py-0.5 rounded text-[10px] font-bold tracking-wider",
@@ -720,7 +720,7 @@ export default function App() {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-white/40">Entry Price</span>
-                <span className="text-white/80">{data[data.length - 1]?.close.toFixed(2)}</span>
+                <span className="text-white/80">{(data[data.length - 1]?.close || 0).toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-white/40">Take Profit</span>

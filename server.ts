@@ -204,14 +204,14 @@ async function startServer() {
                   timestamp: now
                 };
                 
-                const entryPrice = analysis.suggestedEntry || klines[klines.length - 1].close;
+                const entryPrice = analysis.suggestedEntry || (klines.length > 0 ? klines[klines.length - 1].close : 0);
 
                 const message = `Symbol : ${symbol}
 Trade Direction : ${analysis.signal === 'LONG' ? 'Long' : 'Short'}
-Entry : ${entryPrice.toFixed(4)}
-TP : ${analysis.tp?.toFixed(4)}
-SL : ${analysis.sl?.toFixed(4)}
-Confidence : ${analysis.confidence.toFixed(1)}%
+Entry : ${(entryPrice || 0).toFixed(4)}
+TP : ${analysis.tp?.toFixed(4) || 'N/A'}
+SL : ${analysis.sl?.toFixed(4) || 'N/A'}
+Confidence : ${(analysis.confidence || 0).toFixed(1)}%
 Time Frame : ${tf}`;
 
                 await sendTelegramSignal(botToken, chatId, message);

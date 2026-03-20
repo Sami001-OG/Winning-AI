@@ -36,7 +36,7 @@ const isEngulfingBearish = (p: Candle, c: Candle) => p.close > p.open && c.close
 
 export const analyzeChart = (
   data: Candle[], 
-  indicatorReliability: Record<string, number> = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 },
+  indicatorReliability: Record<string, number> = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 },
   trades: Trade[] = [],
   symbol: string
 ): AnalysisResult => {
@@ -164,7 +164,7 @@ export const analyzeChart = (
     name: 'Market State',
     value: isHighVolatility ? 'HIGH VOLATILITY' : isTrendingUp ? 'TRENDING UP' : isTrendingDown ? 'TRENDING DOWN' : 'SIDEWAYS',
     signal: isTrendingUp ? 'bullish' : isTrendingDown ? 'bearish' : 'neutral',
-    description: `ADX: ${lastAdx?.adx.toFixed(1)} | BBW: ${(bbWidth*100).toFixed(2)}%`
+    description: `ADX: ${lastAdx?.adx?.toFixed(1) || 'N/A'} | BBW: ${(bbWidth*100).toFixed(2)}%`
   });
 
   // ==========================================
@@ -387,7 +387,7 @@ export const analyzeChart = (
     reason = `Strong ${signal} setup. High confluence.`;
   } else {
     signal = 'NO TRADE';
-    reason = 'Awaiting high-probability exception setup.';
+    reason = 'Awaiting high-probability setup.';
   }
 
   // Reject trades in extreme low volatility
@@ -397,54 +397,9 @@ export const analyzeChart = (
     reason = 'Volatility too low for safe entry.';
   }
 
-  // ==========================================
-  // EXCEPTION STRATEGIES (High Win Rate Overrides)
-  // ==========================================
-  let exceptionTriggered = false;
-  let exceptionName = '';
-
-  const lastCandle = data[data.length - 1];
-  const prevCandle = data[data.length - 2];
-
-  // 1. Flash Crash Buyer (3% drop in 1h)
-  const isFlashCrash = (lastCandle.open - lastCandle.close) / lastCandle.open > 0.03;
-  
-  // 4. EMA 200 Rubber Band (5% below EMA 200)
-  const isEmaRubberBand = lastEma200 ? (lastClose - lastEma200) / lastEma200 < -0.05 : false;
-
-  // 6. Extreme Mean Reversion (RSI < 30 + Close < Lower BB)
-  const isExtremeMeanReversion = lastRsi < 30 && lastBB && lastClose < lastBB.lower;
-
-  // 7. Parabolic Short (RSI > 85 + Close > Upper BB * 1.05)
-  const isParabolicShort = lastRsi > 85 && lastBB && lastClose > lastBB.upper * 1.05;
-
-  if (isFlashCrash) {
-    exceptionTriggered = true;
-    exceptionName = 'Flash Crash Buyer';
-  } else if (isEmaRubberBand) {
-    exceptionTriggered = true;
-    exceptionName = 'EMA 200 Rubber Band';
-  } else if (isExtremeMeanReversion) {
-    exceptionTriggered = true;
-    exceptionName = 'Extreme Mean Reversion';
-  } else if (isParabolicShort) {
-    exceptionTriggered = true;
-    exceptionName = 'Parabolic Short';
-  }
-
-  const exceptionWeight = adjustedReliability.exception || 2.0;
-
-  if (exceptionTriggered) {
-    signal = exceptionName === 'Parabolic Short' ? 'SHORT' : 'LONG';
-    const boost = 20 * exceptionWeight;
-    const minConf = Math.min(95, 80 + (exceptionWeight * 5));
-    confidence = Math.min(100, Math.max(confidence + boost, minConf));
-    reason = `EXCEPTION STRATEGY: ${exceptionName} triggered.`;
-  }
-
   indicators.push({
     name: 'System Logic',
-    value: signal !== 'NO TRADE' ? `${signal} (${confidence.toFixed(1)}%)` : 'STANDBY',
+    value: signal !== 'NO TRADE' ? `${signal} (${(confidence || 0).toFixed(1)}%)` : 'STANDBY',
     signal: signal === 'LONG' ? 'bullish' : signal === 'SHORT' ? 'bearish' : 'neutral',
     description: reason
   });
@@ -455,22 +410,7 @@ export const analyzeChart = (
   let tp: number | undefined;
   let sl: number | undefined;
 
-  if (exceptionTriggered) {
-    // Custom TP/SL for exception strategies based on backtest
-    if (exceptionName === 'Flash Crash Buyer') {
-      tp = lastClose * 1.015; // 1.5% TP
-      sl = lastClose * 0.95;  // 5% SL
-    } else if (exceptionName === 'EMA 200 Rubber Band') {
-      tp = lastClose * 1.02;  // 2% TP
-      sl = lastClose * 0.95;  // 5% SL
-    } else if (exceptionName === 'Extreme Mean Reversion') {
-      tp = lastClose * 1.02;  // 2% TP
-      sl = lastClose * 0.97;  // 3% SL
-    } else if (exceptionName === 'Parabolic Short') {
-      tp = lastClose * 0.98;  // 2% TP
-      sl = lastClose * 1.03;  // 3% SL
-    }
-  } else if (signal === 'LONG') {
+  if (signal === 'LONG') {
     sl = lastClose - (lastAtr * 1.5); // Tighter 1.5 ATR Stop Loss
     const risk = lastClose - sl;
     tp = lastClose + (risk * 2.5);    // 1:2.5 Risk/Reward
@@ -485,9 +425,7 @@ export const analyzeChart = (
   // ==========================================
   let suggestedEntry: number | undefined;
   
-  if (exceptionTriggered) {
-    suggestedEntry = lastClose; // Market execution for extreme setups
-  } else if (signal === 'LONG' && layer4Score > 0) {
+  if (signal === 'LONG' && layer4Score > 0) {
     if (isTrending) {
       // In a trending market, look for a pullback to EMA20
       suggestedEntry = lastEma20;
@@ -508,6 +446,8 @@ export const analyzeChart = (
   // ==========================================
   // PATTERN DETECTION
   // ==========================================
+  const lastCandle = data[data.length - 1];
+  const prevCandle = data[data.length - 2];
   
   if (lastCandle) {
     if (isDoji(lastCandle)) patternNames.push('Doji');
@@ -557,20 +497,20 @@ export const analyzeChart = (
   });
   indicators.push({
     name: 'EMA 20',
-    value: lastEma20Val.toFixed(2),
+    value: lastEma20Val?.toFixed(2) || 'N/A',
     signal: lastClose > lastEma20Val ? 'bullish' : 'bearish',
     description: 'Short-term Trend'
   });
   indicators.push({
     name: 'EMA 50',
-    value: lastEma50Val.toFixed(2),
+    value: lastEma50Val?.toFixed(2) || 'N/A',
     signal: lastClose > lastEma50Val ? 'bullish' : 'bearish',
     description: 'Medium-term Trend'
   });
   indicators.push({
     name: 'Bollinger Bands (20, 2)',
-    value: `Upper: ${lastBBVal.upper.toFixed(2)}, Lower: ${lastBBVal.lower.toFixed(2)}`,
-    signal: lastClose < lastBBVal.lower ? 'bullish' : lastClose > lastBBVal.upper ? 'bearish' : 'neutral',
+    value: lastBBVal ? `Upper: ${lastBBVal.upper.toFixed(2)}, Lower: ${lastBBVal.lower.toFixed(2)}` : 'N/A',
+    signal: lastBBVal && lastClose < lastBBVal.lower ? 'bullish' : lastBBVal && lastClose > lastBBVal.upper ? 'bearish' : 'neutral',
     description: 'Volatility/Mean Reversion'
   });
   indicators.push({
@@ -581,14 +521,14 @@ export const analyzeChart = (
   });
   indicators.push({
     name: 'Volume Profile (POC)',
-    value: volProfile.pocPrice.toFixed(2),
+    value: volProfile.pocPrice?.toFixed(2) || 'N/A',
     signal: lastClose > volProfile.vaHigh ? 'bullish' : lastClose < volProfile.vaLow ? 'bearish' : 'neutral',
-    description: `VA: ${volProfile.vaLow.toFixed(2)} - ${volProfile.vaHigh.toFixed(2)}`
+    description: `VA: ${volProfile.vaLow?.toFixed(2) || 'N/A'} - ${volProfile.vaHigh?.toFixed(2) || 'N/A'}`
   });
   indicators.push({
     name: 'MACD',
-    value: lastMacd ? `${lastMacd.MACD?.toFixed(2)}` : 'N/A',
-    signal: lastMacd?.MACD! > lastMacd?.signal! ? 'bullish' : 'bearish',
+    value: lastMacd?.MACD !== undefined ? `${lastMacd.MACD.toFixed(2)}` : 'N/A',
+    signal: (lastMacd?.MACD || 0) > (lastMacd?.signal || 0) ? 'bullish' : 'bearish',
     description: 'Trend Oscillator'
   });
   indicators.push({
