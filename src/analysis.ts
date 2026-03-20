@@ -109,8 +109,8 @@ export const analyzeChart = (
   const isHighVolatility = bbWidth > (prevBbWidth * 1.5); // Volatility expansion
 
   let layer1Score = 0;
-  if (isTrendingUp) layer1Score = Math.min(lastAdx.adx / 50, 1);
-  else if (isTrendingDown) layer1Score = Math.max(-lastAdx.adx / 50, -1);
+  if (isTrendingUp) layer1Score = Math.min((lastAdx.adx - 15) / 25, 1); // ADX 40 = 1.0
+  else if (isTrendingDown) layer1Score = Math.max(-(lastAdx.adx - 15) / 25, -1);
 
   indicators.push({
     name: 'Market State',
@@ -148,27 +148,45 @@ export const analyzeChart = (
   });
 
   // ==========================================
-  // LAYER 3: ENTRY TIMING
+  // LAYER 3: ENTRY TIMING (Momentum & Mean Reversion)
   // ==========================================
   let rsiScore = 0;
   let stochScore = 0;
   let cciScore = 0;
 
   if (isTrendingUp) {
-    if (lastRsi < 50) rsiScore = 1; // Pullback entry
-    if (lastStoch?.k < 50) stochScore = 1;
-    if (lastCci < 0) cciScore = 1;
+    // Bullish Trend: Look for pullbacks OR strong momentum (breakouts)
+    if (lastRsi < 45) rsiScore = 1; // Deep Pullback
+    else if (lastRsi >= 55 && lastRsi <= 70) rsiScore = 1; // Strong Momentum
+    else if (lastRsi > 70) rsiScore = -0.5; // Overbought, risky entry
+
+    if (lastStoch?.k < 40) stochScore = 1; // Pullback
+    else if (lastStoch?.k >= 60 && lastStoch?.k <= 80) stochScore = 1; // Momentum
+    else if (lastStoch?.k > 80) stochScore = -0.5;
+
+    if (lastCci < -50) cciScore = 1; // Pullback
+    else if (lastCci > 50 && lastCci < 150) cciScore = 1; // Momentum
+    else if (lastCci >= 150) cciScore = -0.5;
   } else if (isTrendingDown) {
-    if (lastRsi > 50) rsiScore = -1; // Pullback entry
-    if (lastStoch?.k > 50) stochScore = -1;
-    if (lastCci > 0) cciScore = -1;
+    // Bearish Trend: Look for pullbacks (bounces) OR strong downward momentum
+    if (lastRsi > 55) rsiScore = -1; // Bounce
+    else if (lastRsi <= 45 && lastRsi >= 30) rsiScore = -1; // Strong Downward Momentum
+    else if (lastRsi < 30) rsiScore = 0.5; // Oversold, risky short
+
+    if (lastStoch?.k > 60) stochScore = -1; // Bounce
+    else if (lastStoch?.k <= 40 && lastStoch?.k >= 20) stochScore = -1; // Momentum
+    else if (lastStoch?.k < 20) stochScore = 0.5;
+
+    if (lastCci > 50) cciScore = -1; // Bounce
+    else if (lastCci < -50 && lastCci > -150) cciScore = -1; // Momentum
+    else if (lastCci <= -150) cciScore = 0.5;
   } else {
     // Sideways Mean Reversion
-    if (lastRsi < 30) rsiScore = 1;
-    else if (lastRsi > 70) rsiScore = -1;
+    if (lastRsi < 35) rsiScore = 1;
+    else if (lastRsi > 65) rsiScore = -1;
     
-    if (lastStoch?.k < 20) stochScore = 1;
-    else if (lastStoch?.k > 80) stochScore = -1;
+    if (lastStoch?.k < 25) stochScore = 1;
+    else if (lastStoch?.k > 75) stochScore = -1;
     
     if (lastCci < -100) cciScore = 1;
     else if (lastCci > 100) cciScore = -1;
@@ -253,11 +271,11 @@ export const analyzeChart = (
   let reason = 'Awaiting high-probability setup.';
 
   // Conflict Check: If Trend and Entry strongly disagree
-  const isConflict = Math.sign(layer2Score) !== Math.sign(layer3Score) && Math.abs(layer2Score) > 0.3 && Math.abs(layer3Score) > 0.3;
+  const isConflict = Math.sign(layer2Score) !== Math.sign(layer3Score) && Math.abs(layer2Score) > 0.5 && Math.abs(layer3Score) > 0.5;
 
   if (isConflict) {
     signal = 'NO TRADE';
-    confidence = 0;
+    confidence *= 0.3; // Reduce confidence heavily instead of 0
     reason = 'Signal conflict: Trend vs Momentum.';
   } else if (confidence > 75) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
@@ -274,9 +292,9 @@ export const analyzeChart = (
   }
 
   // Reject trades in extreme low volatility
-  if (lastAtr / lastClose < 0.001) {
+  if (lastAtr / lastClose < 0.0005) { // Lowered the threshold to allow more trades
     signal = 'NO TRADE';
-    confidence = 0;
+    confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
   }
 
