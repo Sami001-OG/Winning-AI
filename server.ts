@@ -67,17 +67,6 @@ async function fetchKlines(symbol: string, tf: string) {
   }));
 }
 
-function isNYSession(): boolean {
-  const now = new Date();
-  const nyTimeStr = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: 'numeric',
-    hour12: false,
-  }).format(now);
-
-  const hour = parseInt(nyTimeStr, 10);
-  return !isNaN(hour) && hour >= 8 && hour < 17;
-}
 
 async function startServer() {
   const app = express();
@@ -178,8 +167,6 @@ async function startServer() {
     if (!botToken || !chatId) return;
 
     try {
-      if (!isNYSession()) return; // Only send during NY session
-
       const symbols = await fetchTopSymbols();
       const timeframes = ['15m', '1h', '4h', '1d'];
 
