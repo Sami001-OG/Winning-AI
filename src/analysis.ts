@@ -66,9 +66,6 @@ export const analyzeChart = (
   detectedPatterns.forEach(p => {
     if (p.name === 'Double Bottom' || p.name === 'Double Top') {
       adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.5;
-      adjustedReliability.stoch = (adjustedReliability.stoch || 1) * 1.5;
-    } else if (p.name === 'Hammer' || p.name === 'Shooting Star') {
-      adjustedReliability.cci = (adjustedReliability.cci || 1) * 2.0;
     } else if (p.name === 'Bullish Engulfing' || p.name === 'Bearish Engulfing') {
       adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.8;
       adjustedReliability.vol = (adjustedReliability.vol || 1) * 1.5;
@@ -79,6 +76,7 @@ export const analyzeChart = (
   });
 
   const lastClose = closes[closes.length - 1];
+  const lastOpen = data[data.length - 1].open;
 
   // ==========================================
   // CALCULATE INDICATORS
@@ -112,12 +110,6 @@ export const analyzeChart = (
   // Momentum / Entry
   const rsi = RSI.calculate({ values: closes, period: 14 });
   const lastRsi = rsi[rsi.length - 1];
-
-  const stoch = Stochastic.calculate({ high: highs, low: lows, close: closes, period: 14, signalPeriod: 3 });
-  const lastStoch = stoch[stoch.length - 1];
-
-  const cci = CCI.calculate({ high: highs, low: lows, close: closes, period: 20 });
-  const lastCci = cci[cci.length - 1];
 
   // Volume / Confirmation
   const obv = OBV.calculate({ close: closes, volume: volumes });
@@ -156,14 +148,21 @@ export const analyzeChart = (
   const prevBbWidth = prevBB ? (prevBB.upper - prevBB.lower) / prevBB.middle : 0;
   const isHighVolatility = bbWidth > (prevBbWidth * 1.5); // Volatility expansion
 
-  let layer1Score = 0;
-  if (isTrendingUp) layer1Score = Math.min((lastAdx.adx - 15) / 25, 1); // ADX 40 = 1.0
-  else if (isTrendingDown) layer1Score = Math.max(-(lastAdx.adx - 15) / 25, -1);
+  let adxScore = 0;
+  if (isTrendingUp) adxScore = Math.min((lastAdx.adx - 15) / 25, 1); // ADX 40 = 1.0
+  else if (isTrendingDown) adxScore = Math.max(-(lastAdx.adx - 15) / 25, -1);
+
+  let structScore = 0;
+  if (bos === 'bullish') structScore = 1;
+  else if (bos === 'bearish') structScore = -1;
+
+  // Combine ADX with Structure (BOS) and Volatility for a more robust Layer 1
+  let layer1Score = (adxScore * 0.5) + (structScore * 0.5);
 
   indicators.push({
     name: 'Market State',
     value: isHighVolatility ? 'HIGH VOLATILITY' : isTrendingUp ? 'TRENDING UP' : isTrendingDown ? 'TRENDING DOWN' : 'SIDEWAYS',
-    signal: isTrendingUp ? 'bullish' : isTrendingDown ? 'bearish' : 'neutral',
+    signal: layer1Score > 0 ? 'bullish' : layer1Score < 0 ? 'bearish' : 'neutral',
     description: `ADX: ${lastAdx?.adx?.toFixed(1) || 'N/A'} | BBW: ${(bbWidth*100).toFixed(2)}%`
   });
 
@@ -185,71 +184,59 @@ export const analyzeChart = (
   }
 
   const emaRel = adjustedReliability.ema || 1;
-  const macdRel = adjustedReliability.macd || 1;
+  const macdRel = Math.min(adjustedReliability.macd || 0.2, 0.2); // Cap MACD weight at 0.2 to reduce lag
   const layer2Score = (emaScore * emaRel + macdScore * macdRel) / (emaRel + macdRel);
 
   indicators.push({
     name: 'Trend Alignment',
     value: layer2Score > 0.5 ? 'STRONG BULL' : layer2Score < -0.5 ? 'STRONG BEAR' : 'MIXED',
     signal: layer2Score > 0 ? 'bullish' : layer2Score < 0 ? 'bearish' : 'neutral',
-    description: 'EMA & MACD Confluence'
+    description: 'EMA Alignment'
   });
 
   // ==========================================
-  // LAYER 3: ENTRY TIMING (Momentum & Mean Reversion)
+  // LAYER 3: ENTRY TIMING (Momentum & Displacement)
   // ==========================================
   let rsiScore = 0;
-  let stochScore = 0;
-  let cciScore = 0;
+  let sweepScore = 0;
+  let displacementScore = 0;
 
   if (isTrendingUp) {
     // Bullish Trend: Look for pullbacks OR strong momentum (breakouts)
     if (lastRsi < 45) rsiScore = 1; // Deep Pullback
     else if (lastRsi >= 55 && lastRsi <= 70) rsiScore = 1; // Strong Momentum
     else if (lastRsi > 70) rsiScore = -0.5; // Overbought, risky entry
-
-    if (lastStoch?.k < 40) stochScore = 1; // Pullback
-    else if (lastStoch?.k >= 60 && lastStoch?.k <= 80) stochScore = 1; // Momentum
-    else if (lastStoch?.k > 80) stochScore = -0.5;
-
-    if (lastCci < -50) cciScore = 1; // Pullback
-    else if (lastCci > 50 && lastCci < 150) cciScore = 1; // Momentum
-    else if (lastCci >= 150) cciScore = -0.5;
   } else if (isTrendingDown) {
     // Bearish Trend: Look for pullbacks (bounces) OR strong downward momentum
     if (lastRsi > 55) rsiScore = -1; // Bounce
     else if (lastRsi <= 45 && lastRsi >= 30) rsiScore = -1; // Strong Downward Momentum
     else if (lastRsi < 30) rsiScore = 0.5; // Oversold, risky short
-
-    if (lastStoch?.k > 60) stochScore = -1; // Bounce
-    else if (lastStoch?.k <= 40 && lastStoch?.k >= 20) stochScore = -1; // Momentum
-    else if (lastStoch?.k < 20) stochScore = 0.5;
-
-    if (lastCci > 50) cciScore = -1; // Bounce
-    else if (lastCci < -50 && lastCci > -150) cciScore = -1; // Momentum
-    else if (lastCci <= -150) cciScore = 0.5;
   } else {
     // Sideways Mean Reversion
     if (lastRsi < 35) rsiScore = 1;
     else if (lastRsi > 65) rsiScore = -1;
-    
-    if (lastStoch?.k < 25) stochScore = 1;
-    else if (lastStoch?.k > 75) stochScore = -1;
-    
-    if (lastCci < -100) cciScore = 1;
-    else if (lastCci > 100) cciScore = -1;
   }
 
+  if (liquidityGrab === 'bullish') sweepScore = 1;
+  else if (liquidityGrab === 'bearish') sweepScore = -1;
+
+  const lastCandleBody = Math.abs(lastClose - lastOpen);
+  const isDisplacementUp = lastClose > lastOpen && lastCandleBody > (lastAtr * 0.8) && lastVol > lastVolSma;
+  const isDisplacementDown = lastClose < lastOpen && lastCandleBody > (lastAtr * 0.8) && lastVol > lastVolSma;
+
+  if (isDisplacementUp) displacementScore = 1;
+  else if (isDisplacementDown) displacementScore = -1;
+
   const rsiRel = adjustedReliability.rsi || 1;
-  const stochRel = adjustedReliability.stoch || 1;
-  const cciRel = adjustedReliability.cci || 1;
-  const layer3Score = (rsiScore * rsiRel + stochScore * stochRel + cciScore * cciRel) / (rsiRel + stochRel + cciRel);
+  const sweepRel = 1.5;
+  const dispRel = 1.0;
+  const layer3Score = (rsiScore * rsiRel + sweepScore * sweepRel + displacementScore * dispRel) / (rsiRel + sweepRel + dispRel);
 
   indicators.push({
     name: 'Entry Timing',
     value: layer3Score > 0.5 ? 'OPTIMAL LONG' : layer3Score < -0.5 ? 'OPTIMAL SHORT' : 'WAIT',
     signal: layer3Score > 0 ? 'bullish' : layer3Score < 0 ? 'bearish' : 'neutral',
-    description: 'RSI, Stoch, CCI Matrix'
+    description: 'RSI, Sweep, Displacement'
   });
 
   // ==========================================
@@ -278,30 +265,26 @@ export const analyzeChart = (
   // ==========================================
   // ADAPTIVE WEIGHTS & FINAL SCORE
   // ==========================================
-  let w1 = 0.05; // Market Condition (Lagging)
-  let w2 = 0.05; // Trend (Lagging)
-  let w3 = 0.20; // Entry (Leading)
-  let w4 = 0.05; // Confirmation (Lagging)
-  let w5 = 0.35; // Structure (Leading)
-  let w6 = 0.30; // Volume/Volatility (Leading/Mixed)
+  let w1 = 0.10; // Market Condition (10%)
+  let w2 = 0.15; // Trend (15%)
+  let w3 = 0.25; // Entry (25%)
+  let w4 = 0.15; // Confirmation (15%)
+  let w5 = 0.25; // Structure (25%)
+  let w6 = 0.10; // Volatility (10%)
 
   // Dynamic adjustment based on market state
   if (isTrending) {
-    w2 = Math.min(0.5, w2 + 0.20);
-    w5 = Math.min(0.5, w5 + 0.10);
-    w3 = Math.max(0.05, w3 - 0.10);
+    // Trending -> follow trend
+    w2 += 0.15; // Increase Trend weight
+    w1 += 0.05; // Increase Market Condition weight
+    w3 -= 0.10; // Decrease Entry (Oscillators) weight
   } else if (isSideways) {
-    w3 = Math.min(0.5, w3 + 0.20);
-    w6 = Math.min(0.5, w6 + 0.10);
-    w2 = Math.max(0.05, w2 - 0.20);
+    // Sideways -> use oscillators
+    w3 += 0.15; // Increase Entry (Oscillators) weight
+    w2 -= 0.10; // Decrease Trend weight
+    w1 -= 0.05; // Decrease Market Condition weight
   }
   
-  if (isHighVolatility) {
-    w1 = Math.min(0.5, w1 + 0.10);
-    w6 = Math.min(0.5, w6 + 0.10);
-    w3 = Math.max(0.05, w3 - 0.10);
-  }
-
   const trendStrength = Math.abs(layer1Score); // 0 to 1
 
   // Structure Score
@@ -336,6 +319,21 @@ export const analyzeChart = (
   // High Volatility Penalty
   if (isHighVolatility) {
     confidence *= 0.8; 
+  }
+
+  // Session Logic (Killzones)
+  const latestCandle = data[data.length - 1];
+  const lastCandleDate = new Date(latestCandle.time * 1000);
+  const utcHour = lastCandleDate.getUTCHours();
+  
+  // London Open: 07:00 - 10:00 UTC
+  // NY Open: 13:00 - 16:00 UTC
+  const isLondonKillzone = utcHour >= 7 && utcHour < 10;
+  const isNYKillzone = utcHour >= 13 && utcHour < 16;
+  const inKillzone = isLondonKillzone || isNYKillzone;
+
+  if (inKillzone) {
+    confidence *= 1.10; // +10% confidence boost during killzones
   }
 
   // ==========================================
@@ -396,6 +394,13 @@ export const analyzeChart = (
     confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
   }
+
+  indicators.push({
+    name: 'Session Killzone',
+    value: inKillzone ? (isLondonKillzone ? 'LONDON' : 'NEW YORK') : 'OUTSIDE',
+    signal: inKillzone ? (signal === 'LONG' ? 'bullish' : signal === 'SHORT' ? 'bearish' : 'neutral') : 'neutral',
+    description: 'London (07-10) / NY (13-16) UTC'
+  });
 
   indicators.push({
     name: 'System Logic',

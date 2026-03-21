@@ -4,7 +4,7 @@ import path from "path";
 import { analyzeChart } from "./src/analysis";
 import { Candle, Trade } from "./src/types";
 
-const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2, exception: 2.0 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.2, rsi: 1.5, vol: 1.2, obv: 1.2, exception: 2.0 };
 
 async function sendTelegramSignal(botToken: string, chatId: string, message: string) {
   const cleanToken = botToken.replace(/^["']|["']$/g, '').trim();

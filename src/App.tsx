@@ -50,7 +50,7 @@ const MemoizedChart = memo(({ symbol, interval, activeTrade }: { symbol: string,
          prevProps.activeTrade?.status === nextProps.activeTrade?.status;
 });
 
-const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.2, rsi: 1.5, vol: 1.2, obv: 1.2 };
 
 export default function App() {
   const [data, setData] = useState<Candle[]>([]);
