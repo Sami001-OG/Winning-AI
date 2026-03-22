@@ -95,7 +95,7 @@ export default async function handler(req: any, res: any) {
           const klines = await fetchKlines(symbol, tf);
           const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
           
-          if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 85) {
+          if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 75) {
             const now = new Date();
             const minutes = now.getUTCMinutes();
             const hours = now.getUTCHours();

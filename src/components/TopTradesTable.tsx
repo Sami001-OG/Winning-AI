@@ -83,20 +83,16 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         }
 
         // Telegram Alert Logic
-        if (analysis.confidence > 80) {
-          const l1 = analysis.layers?.marketCondition || 0;
-          const l2 = analysis.layers?.trend || 0;
-          const l3 = analysis.layers?.entry || 0;
-          const l4 = analysis.layers?.confirmation || 0;
-
+        if (analysis.confidence >= 75) {
+          const structure = analysis.layers?.structure || 0;
           const lastClose = data[data.length - 1].close;
 
-          if (analysis.signal === 'LONG' && l1 > 0 && l2 > 0 && l3 > 0 && l4 > 0) {
+          if (analysis.signal === 'LONG' && structure >= 0) {
             if (lastSentSignalsRef.current[symbol] !== `LONG_${interval}`) {
               sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`);
               lastSentSignalsRef.current[symbol] = `LONG_${interval}`;
             }
-          } else if (analysis.signal === 'SHORT' && l1 < 0 && l2 < 0 && l3 < 0 && l4 < 0) {
+          } else if (analysis.signal === 'SHORT' && structure <= 0) {
             if (lastSentSignalsRef.current[symbol] !== `SHORT_${interval}`) {
               sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`);
               lastSentSignalsRef.current[symbol] = `SHORT_${interval}`;

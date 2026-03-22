@@ -227,9 +227,9 @@ export const analyzeChart = (
   if (isDisplacementUp) displacementScore = 1;
   else if (isDisplacementDown) displacementScore = -1;
 
-  const rsiRel = adjustedReliability.rsi || 1;
-  const sweepRel = 1.5;
-  const dispRel = 1.0;
+  const rsiRel = 0.5; // RSI is less reliable than price action
+  const sweepRel = 2.0; // Liquidity sweeps are high conviction
+  const dispRel = 1.5; // Displacement confirms the sweep
   const layer3Score = (rsiScore * rsiRel + sweepScore * sweepRel + displacementScore * dispRel) / (rsiRel + sweepRel + dispRel);
 
   indicators.push({
@@ -251,8 +251,8 @@ export const analyzeChart = (
   if (lastObv > prevObv) obvScore = 1;
   else if (lastObv < prevObv) obvScore = -1;
 
-  const volRel = adjustedReliability.vol || 1;
-  const obvRel = adjustedReliability.obv || 1;
+  const volRel = 1.5;
+  const obvRel = 1.0;
   const layer4Score = (volScore * volRel + obvScore * obvRel) / (volRel + obvRel);
 
   indicators.push({
@@ -262,25 +262,34 @@ export const analyzeChart = (
     description: 'Volume & OBV Flow'
   });
 
+  indicators.push({
+    name: 'Order Flow',
+    value: orderFlow.signal === 'bullish' ? 'BUYING PRESSURE' : orderFlow.signal === 'bearish' ? 'SELLING PRESSURE' : 'NEUTRAL',
+    signal: orderFlow.signal,
+    description: `Net Flow: ${orderFlow.netFlow > 0 ? '+' : ''}${(orderFlow.netFlow / 1000).toFixed(1)}k`
+  });
+
   // ==========================================
   // ADAPTIVE WEIGHTS & FINAL SCORE
   // ==========================================
   let w1 = 0.10; // Market Condition (10%)
-  let w2 = 0.15; // Trend (15%)
-  let w3 = 0.25; // Entry (25%)
-  let w4 = 0.15; // Confirmation (15%)
-  let w5 = 0.25; // Structure (25%)
-  let w6 = 0.10; // Volatility (10%)
+  let w2 = 0.10; // Trend (10% - Lagging)
+  let w3 = 0.20; // Entry Timing (20% - Sweeps/Displacement)
+  let w4 = 0.10; // Confirmation (10% - Volume)
+  let w5 = 0.30; // Structure (30% - BOS/Fakeouts)
+  let w6 = 0.20; // Volatility/Order Flow (20% - Institutional Footprint)
 
   // Dynamic adjustment based on market state
   if (isTrending) {
-    // Trending -> follow trend
-    w2 += 0.15; // Increase Trend weight
-    w1 += 0.05; // Increase Market Condition weight
-    w3 -= 0.10; // Decrease Entry (Oscillators) weight
+    // Trending -> follow trend & structure
+    w2 += 0.10; // Increase Trend weight
+    w5 += 0.05; // Increase Structure weight
+    w3 -= 0.10; // Decrease Mean Reversion Entry weight
+    w6 += 0.05; // Increase Order Flow weight
   } else if (isSideways) {
-    // Sideways -> use oscillators
-    w3 += 0.15; // Increase Entry (Oscillators) weight
+    // Sideways -> use oscillators & fakeouts
+    w3 += 0.15; // Increase Entry (Oscillators/Sweeps) weight
+    w5 += 0.10; // Increase Structure (Fakeouts) weight
     w2 -= 0.10; // Decrease Trend weight
     w1 -= 0.05; // Decrease Market Condition weight
   }
@@ -289,19 +298,19 @@ export const analyzeChart = (
 
   // Structure Score
   let structureScore = 0;
-  if (bos === 'bullish') structureScore += 0.5;
-  else if (bos === 'bearish') structureScore -= 0.5;
-  if (liquidityGrab === 'bullish') structureScore += 0.3;
-  else if (liquidityGrab === 'bearish') structureScore -= 0.3;
+  if (bos === 'bullish') structureScore += 0.4;
+  else if (bos === 'bearish') structureScore -= 0.4;
+  if (liquidityGrab === 'bullish') structureScore += 0.4;
+  else if (liquidityGrab === 'bearish') structureScore -= 0.4;
   if (fakeout === 'bullish') structureScore += 0.2;
   else if (fakeout === 'bearish') structureScore -= 0.2;
 
   // Volume/Volatility Score
   let volVolScore = 0;
-  if (volumeSpike > 1.5) volVolScore += 0.4;
-  if (atrExpansion > 1.2) volVolScore += 0.3;
-  if (orderFlow > 0) volVolScore += 0.3;
-  else if (orderFlow < 0) volVolScore -= 0.3;
+  if (orderFlow.signal === 'bullish') volVolScore += 0.5;
+  else if (orderFlow.signal === 'bearish') volVolScore -= 0.5;
+  if (volumeSpike > 1.5) volVolScore += 0.3;
+  if (atrExpansion > 1.2) volVolScore += 0.2;
 
   // Normalize weights to sum to 1
   const total = w1 + w2 + w3 + w4 + w5 + w6;
@@ -369,20 +378,23 @@ export const analyzeChart = (
 
   const perfect = isPerfectConfirmation(finalScore, layer1Score, layer2Score, layer3Score, layer4Score, structureScore, volVolScore, rsiDivergence);
 
-  // Conflict Check: If Trend and Entry strongly disagree
-  const isConflict = Math.sign(layer2Score) !== Math.sign(layer3Score) && Math.abs(layer2Score) > 0.5 && Math.abs(layer3Score) > 0.5;
+  // Conflict Check: If Trend and Structure strongly disagree
+  const isConflict = Math.sign(layer2Score) !== Math.sign(structureScore) && Math.abs(layer2Score) > 0.5 && Math.abs(structureScore) > 0.5;
 
   if (isConflict) {
     signal = 'NO TRADE';
     confidence *= 0.3; // Reduce confidence heavily instead of 0
-    reason = 'Signal conflict: Trend vs Momentum.';
+    reason = 'Signal conflict: Trend vs Structure.';
   } else if (perfect) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     confidence = Math.min(100, confidence + 20); // Boost confidence for perfect setup
     reason = `PERFECT ${signal} setup. High confluence & divergence.`;
-  } else if (confidence >= 100) { 
+  } else if (confidence >= 75) { 
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Strong ${signal} setup. High confluence.`;
+  } else if (confidence >= 60) {
+    signal = finalScore > 0 ? 'LONG' : 'SHORT';
+    reason = `Valid ${signal} setup. Moderate confluence.`;
   } else {
     signal = 'NO TRADE';
     reason = 'Awaiting high-probability setup.';
@@ -560,7 +572,9 @@ export const analyzeChart = (
       marketCondition: layer1Score,
       trend: layer2Score,
       entry: layer3Score,
-      confirmation: layer4Score
+      confirmation: layer4Score,
+      structure: structureScore,
+      volatility: volVolScore
     }
   };
 };

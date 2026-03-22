@@ -272,6 +272,29 @@ export default function App() {
     ws.onerror = () => setIsConnected(false);
   }, []);
 
+  const testTelegram = async () => {
+    try {
+      const response = await fetch('/api/telegram/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: import.meta.env.VITE_TELEGRAM_BOT_TOKEN,
+          chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID,
+          message: `<b>TEST MESSAGE</b>\n\nEndellion Trade Telegram integration is working perfectly! 🚀\n\nTime: ${new Date().toISOString()}`
+        })
+      });
+      
+      if (response.ok) {
+        alert('Telegram test message sent successfully!');
+      } else {
+        const err = await response.text();
+        alert(`Failed to send Telegram message: ${err}`);
+      }
+    } catch (err) {
+      alert(`Error sending Telegram message: ${err}`);
+    }
+  };
+
   return (
     <div className="h-screen w-screen bg-[#050505] text-white/90 font-sans overflow-hidden flex flex-col selection:bg-emerald-500/30">
       {/* Top Navigation Bar */}
@@ -349,6 +372,13 @@ export default function App() {
               <LayoutGrid size={14} />
             </button>
           </div>
+          
+          <button
+            onClick={testTelegram}
+            className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-md px-3 py-1.5 text-xs font-mono font-bold uppercase transition-colors flex items-center gap-1"
+          >
+            Test Telegram
+          </button>
         </div>
 
         <div className="flex items-center gap-6">

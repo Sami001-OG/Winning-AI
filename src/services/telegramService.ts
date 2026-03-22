@@ -8,18 +8,23 @@ export const sendTelegramAlert = async (message: string) => {
   }
 
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const response = await fetch('/api/telegram/send', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'HTML',
+        botToken: token,
+        chatId: chatId,
+        message: message,
       }),
     });
+    
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('Telegram API Error via proxy:', response.status, errorData);
+    }
   } catch (error) {
-    console.error('Error sending Telegram alert', error);
+    console.error('Error sending Telegram alert via proxy:', error);
   }
 };

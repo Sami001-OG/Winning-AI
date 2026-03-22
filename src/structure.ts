@@ -48,15 +48,45 @@ export const detectAtrExpansion = (data: Candle[], atr: number[]): number => {
   return lastAtr / avgAtr;
 };
 
-export const calculateOrderFlow = (data: Candle[]): number => {
-  if (data.length < 20) return 0;
-  let flow = 0;
-  for (let i = data.length - 20; i < data.length; i++) {
+export const calculateOrderFlow = (data: Candle[], period: number = 14): { buyingPressure: number, sellingPressure: number, netFlow: number, signal: 'bullish' | 'bearish' | 'neutral' } => {
+  if (data.length < period) return { buyingPressure: 0, sellingPressure: 0, netFlow: 0, signal: 'neutral' };
+  
+  let buyingVolume = 0;
+  let sellingVolume = 0;
+  
+  for (let i = data.length - period; i < data.length; i++) {
     const c = data[i];
-    const priceChange = c.close - c.open;
-    flow += priceChange * c.volume;
+    const trueRange = c.high - c.low;
+    
+    if (trueRange === 0) {
+      buyingVolume += c.volume / 2;
+      sellingVolume += c.volume / 2;
+      continue;
+    }
+    
+    // Buying pressure is distance from low to close
+    const buyPct = (c.close - c.low) / trueRange;
+    // Selling pressure is distance from close to high
+    const sellPct = (c.high - c.close) / trueRange;
+    
+    buyingVolume += c.volume * buyPct;
+    sellingVolume += c.volume * sellPct;
   }
-  return flow;
+  
+  const netFlow = buyingVolume - sellingVolume;
+  const totalVolume = buyingVolume + sellingVolume;
+  const buyRatio = totalVolume > 0 ? buyingVolume / totalVolume : 0.5;
+  
+  let signal: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+  if (buyRatio > 0.55) signal = 'bullish';
+  else if (buyRatio < 0.45) signal = 'bearish';
+  
+  return {
+    buyingPressure: buyingVolume,
+    sellingPressure: sellingVolume,
+    netFlow,
+    signal
+  };
 };
 
 export const detectRsiDivergence = (data: Candle[], rsi: number[]): 'bullish' | 'bearish' | 'neutral' => {

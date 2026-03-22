@@ -44,5 +44,7 @@ export interface AnalysisResult {
     trend: number;
     entry: number;
     confirmation: number;
+    structure: number;
+    volatility: number;
   };
 }
