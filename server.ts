@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -161,10 +162,21 @@ async function startServer() {
   const lastSentSignals: Record<string, { direction: string, timestamp: number }> = {};
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
+  console.log("Initializing 24/7 Telegram Alert Scanner...");
+  let hasLoggedMissingTokens = false;
+
   setInterval(async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
     const chatId = process.env.VITE_TELEGRAM_CHAT_ID;
-    if (!botToken || !chatId) return;
+    
+    if (!botToken || !chatId) {
+      if (!hasLoggedMissingTokens) {
+        console.log("Telegram Scanner skipped: Missing VITE_TELEGRAM_BOT_TOKEN or VITE_TELEGRAM_CHAT_ID in environment variables.");
+        hasLoggedMissingTokens = true;
+      }
+      return;
+    }
+    hasLoggedMissingTokens = false; // Reset if tokens are added later
 
     try {
       const symbols = await fetchTopSymbols();
@@ -204,6 +216,9 @@ Time Frame : ${tf}`;
                 await sendTelegramSignal(botToken, chatId, message);
               }
             }
+            
+            // Add a small delay to respect Binance API rate limits (1200 requests/minute)
+            await new Promise(resolve => setTimeout(resolve, 100));
           } catch (err) {
             console.error(`Error processing symbol ${symbol} on ${tf} in background loop:`, err);
           }
