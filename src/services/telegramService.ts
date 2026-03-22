@@ -1,4 +1,4 @@
-export const sendTelegramAlert = async (message: string) => {
+export const sendTelegramAlert = async (message: string, imageUrl?: string) => {
   const token = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
   const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
 
@@ -17,6 +17,7 @@ export const sendTelegramAlert = async (message: string) => {
         botToken: token,
         chatId: chatId,
         message: message,
+        imageUrl: imageUrl,
       }),
     });
     

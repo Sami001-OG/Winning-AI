@@ -31,7 +31,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const klinesDataRef = useRef<Record<string, Candle[]>>({});
   const wsRef = useRef<WebSocket | null>(null);
   const prevEntriesRef = useRef<Record<string, number>>({});
-  const lastSentSignalsRef = useRef<Record<string, string>>({});
+  const lastSentSignalsRef = useRef<Record<string, { direction: string, timestamp: number }>>({});
+  const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
   const fetchTopSymbols = async () => {
     try {
@@ -87,15 +88,36 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           const structure = analysis.layers?.structure || 0;
           const lastClose = data[data.length - 1].close;
 
-          if (analysis.signal === 'LONG' && structure >= 0) {
-            if (lastSentSignalsRef.current[symbol] !== `LONG_${interval}`) {
-              sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`);
-              lastSentSignalsRef.current[symbol] = `LONG_${interval}`;
-            }
-          } else if (analysis.signal === 'SHORT' && structure <= 0) {
-            if (lastSentSignalsRef.current[symbol] !== `SHORT_${interval}`) {
-              sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`);
-              lastSentSignalsRef.current[symbol] = `SHORT_${interval}`;
+          // Check if the previous candles also had the same signal to prevent continuous spam on page refresh
+          const prevKlines1 = data.slice(0, -1);
+          const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, trades, symbol);
+          
+          const prevKlines2 = data.slice(0, -2);
+          const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, trades, symbol);
+
+          const prevKlines3 = data.slice(0, -3);
+          const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, trades, symbol);
+          
+          const isContinuous = 
+            (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
+            (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
+            (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
+
+          if (!isContinuous) {
+            const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+            const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+
+            const now = Date.now();
+            const lastSent = lastSentSignalsRef.current[symbol];
+
+            if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+              if (analysis.signal === 'LONG' && structure >= 0) {
+                sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`, bullishImageUrl);
+                lastSentSignalsRef.current[symbol] = { direction: 'LONG', timestamp: now };
+              } else if (analysis.signal === 'SHORT' && structure <= 0) {
+                sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`, bearishImageUrl);
+                lastSentSignalsRef.current[symbol] = { direction: 'SHORT', timestamp: now };
+              }
             }
           }
         }

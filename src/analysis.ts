@@ -325,10 +325,10 @@ export const analyzeChart = (
   
   let confidence = Math.abs(finalScore) * 100;
   
-  // High Volatility Penalty
-  if (isHighVolatility) {
-    confidence *= 0.8; 
-  }
+  // High Volatility is often good for breakouts, removing the penalty
+  // if (isHighVolatility) {
+  //   confidence *= 0.8; 
+  // }
 
   // Session Logic (Killzones)
   const latestCandle = data[data.length - 1];
@@ -343,6 +343,56 @@ export const analyzeChart = (
 
   if (inKillzone) {
     confidence *= 1.10; // +10% confidence boost during killzones
+  }
+
+  // ==========================================
+  // LOGICAL PENALTIES
+  // ==========================================
+  const isLong = finalScore > 0;
+  const isShort = finalScore < 0;
+
+  // 1. Low Volume Penalty (Dead Market)
+  // Trading breakouts or trends in low volume is highly risky (fakeouts)
+  if (lastVol < lastVolSma * 0.5) {
+    confidence *= 0.85; // -15% penalty
+  }
+
+  // 2. Extreme Over-extension Penalty
+  // Buying when already extremely overbought, or selling when extremely oversold
+  if (isLong && lastRsi > 80) {
+    confidence *= 0.80; // -20% penalty
+  } else if (isShort && lastRsi < 20) {
+    confidence *= 0.80; // -20% penalty
+  }
+
+  // 3. Choppy Market / No Clear Structure Penalty
+  // If the market is sideways and we have no structural trigger (sweep/fakeout), it's just noise
+  if (isSideways && Math.abs(structureScore) < 0.3) {
+    confidence *= 0.85; // -15% penalty
+  }
+  
+  // 4. Against Major Trend Penalty
+  // If we are longing but price is below the 200 EMA, or shorting but price is above 200 EMA
+  if (isLong && lastClose < lastEma200) {
+    confidence *= 0.90; // -10% penalty
+  } else if (isShort && lastClose > lastEma200) {
+    confidence *= 0.90; // -10% penalty
+  }
+
+  // 5. Indecision Candle Penalty (Doji)
+  // If the last candle has a very small body compared to its wick, it shows indecision
+  const lastCandleBodySize = Math.abs(lastClose - latestCandle.open);
+  const lastCandleRange = latestCandle.high - latestCandle.low;
+  if (lastCandleRange > 0 && lastCandleBodySize / lastCandleRange < 0.15) {
+    confidence *= 0.90; // -10% penalty
+  }
+
+  // 6. Volume Profile (Value Area) Boost
+  // If the current price is outside the Value Area (VA) and the trading signal aligns with moving out of the VA
+  if (isLong && lastClose > volProfile.vaHigh) {
+    confidence *= 1.15; // +15% boost for bullish breakout of VA
+  } else if (isShort && lastClose < volProfile.vaLow) {
+    confidence *= 1.15; // +15% boost for bearish breakout of VA
   }
 
   // ==========================================
@@ -378,14 +428,10 @@ export const analyzeChart = (
 
   const perfect = isPerfectConfirmation(finalScore, layer1Score, layer2Score, layer3Score, layer4Score, structureScore, volVolScore, rsiDivergence);
 
-  // Conflict Check: If Trend and Structure strongly disagree
-  const isConflict = Math.sign(layer2Score) !== Math.sign(structureScore) && Math.abs(layer2Score) > 0.5 && Math.abs(structureScore) > 0.5;
+  // Removed strict conflict check to allow structure to override trend
+  // const isConflict = Math.sign(layer2Score) !== Math.sign(structureScore) && Math.abs(layer2Score) > 0.5 && Math.abs(structureScore) > 0.5;
 
-  if (isConflict) {
-    signal = 'NO TRADE';
-    confidence *= 0.3; // Reduce confidence heavily instead of 0
-    reason = 'Signal conflict: Trend vs Structure.';
-  } else if (perfect) {
+  if (perfect) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     confidence = Math.min(100, confidence + 20); // Boost confidence for perfect setup
     reason = `PERFECT ${signal} setup. High confluence & divergence.`;
@@ -406,6 +452,16 @@ export const analyzeChart = (
     confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
   }
+
+  // Cap confidence at 100
+  confidence = Math.min(100, confidence);
+
+  indicators.push({
+    name: 'Volume Profile',
+    value: lastClose > volProfile.vaHigh ? 'ABOVE VA' : lastClose < volProfile.vaLow ? 'BELOW VA' : 'INSIDE VA',
+    signal: lastClose > volProfile.vaHigh ? 'bullish' : lastClose < volProfile.vaLow ? 'bearish' : 'neutral',
+    description: `VAH: ${volProfile.vaHigh.toFixed(4)} | VAL: ${volProfile.vaLow.toFixed(4)}`
+  });
 
   indicators.push({
     name: 'Session Killzone',
@@ -443,7 +499,10 @@ export const analyzeChart = (
   let suggestedEntry: number | undefined;
   
   if (signal === 'LONG' && layer4Score > 0) {
-    if (isTrending) {
+    if (lastClose > volProfile.vaHigh) {
+      // Breakout above VA: Pullback to VA High is a perfect entry
+      suggestedEntry = volProfile.vaHigh;
+    } else if (isTrending) {
       // In a trending market, look for a pullback to EMA20
       suggestedEntry = lastEma20;
     } else {
@@ -451,7 +510,10 @@ export const analyzeChart = (
       suggestedEntry = lastBB?.lower;
     }
   } else if (signal === 'SHORT' && layer4Score < 0) {
-    if (isTrending) {
+    if (lastClose < volProfile.vaLow) {
+      // Breakout below VA: Pullback to VA Low is a perfect entry
+      suggestedEntry = volProfile.vaLow;
+    } else if (isTrending) {
       // In a trending market, look for a pullback to EMA20 resistance
       suggestedEntry = lastEma20;
     } else {

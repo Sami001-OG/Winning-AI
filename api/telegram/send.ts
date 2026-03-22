@@ -6,7 +6,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { botToken, chatId, message } = req.body;
+    const { botToken, chatId, message, imageUrl } = req.body;
     
     if (!botToken || !chatId) {
       return res.status(400).json({ error: "Missing botToken or chatId" });
@@ -27,18 +27,29 @@ export default async function handler(req: any, res: any) {
       ? cleanToken.substring(3) 
       : cleanToken;
 
-    const url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+    let url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+    let body: any = {
+      chat_id: cleanChatId,
+      text: message,
+      parse_mode: 'HTML',
+    };
+
+    if (imageUrl) {
+      url = `https://api.telegram.org/bot${finalToken}/sendPhoto`;
+      body = {
+        chat_id: cleanChatId,
+        photo: imageUrl,
+        caption: message,
+        parse_mode: 'HTML',
+      };
+    }
     
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        chat_id: cleanChatId,
-        text: message,
-        parse_mode: 'HTML',
-      }),
+      body: JSON.stringify(body),
     });
     
     if (!response.ok) {
