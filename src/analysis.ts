@@ -482,15 +482,77 @@ export const analyzeChart = (
   // ==========================================
   let tp: number | undefined;
   let sl: number | undefined;
+  let tpSlStrategy = 'ATR Multiplier';
+
+  // Calculate recent swing high/low for structure-based stops
+  const lookbackPeriod = Math.min(20, data.length);
+  const recentCandles = data.slice(-lookbackPeriod);
+  const swingHigh = Math.max(...recentCandles.map(c => c.high));
+  const swingLow = Math.min(...recentCandles.map(c => c.low));
 
   if (signal === 'LONG') {
-    sl = lastClose - (lastAtr * 1.5); // Tighter 1.5 ATR Stop Loss
-    const risk = lastClose - sl;
-    tp = lastClose + (risk * 2.5);    // 1:2.5 Risk/Reward
+    if (lastClose > volProfile.vaHigh) {
+      // Strategy 1: Volume Profile Breakout
+      tpSlStrategy = 'Volume Profile Breakout';
+      sl = volProfile.pocPrice; // Stop loss at Point of Control
+      const risk = lastClose - sl;
+      tp = lastClose + (risk * 2.5); // 1:2.5 RR based on POC risk
+    } else if (isSideways && lastBB) {
+      // Strategy 2: Mean Reversion / Sideways
+      tpSlStrategy = 'Bollinger Bands (Mean Reversion)';
+      sl = Math.min(lastBB.lower - (lastAtr * 0.5), swingLow - (lastAtr * 0.2));
+      const risk = lastClose - sl;
+      tp = lastBB.upper; // Target upper band
+      // Ensure minimum 1:1.5 RR
+      if ((tp - lastClose) < (risk * 1.5)) {
+        tp = lastClose + (risk * 1.5);
+      }
+    } else {
+      // Strategy 3: Trend Following (ATR & Structure)
+      tpSlStrategy = 'Trend Following (ATR & Structure)';
+      const atrStop = lastClose - (lastAtr * 2);
+      const structureStop = swingLow - (lastAtr * 0.2);
+      // Use structure stop if it's not too far (within 3 ATR), otherwise use ATR stop
+      sl = (lastClose - structureStop <= lastAtr * 3) ? structureStop : atrStop;
+      const risk = lastClose - sl;
+      tp = lastClose + (risk * 2); // 1:2 RR
+    }
   } else if (signal === 'SHORT') {
-    sl = lastClose + (lastAtr * 1.5);
-    const risk = sl - lastClose;
-    tp = lastClose - (risk * 2.5);
+    if (lastClose < volProfile.vaLow) {
+      // Strategy 1: Volume Profile Breakout
+      tpSlStrategy = 'Volume Profile Breakout';
+      sl = volProfile.pocPrice; // Stop loss at Point of Control
+      const risk = sl - lastClose;
+      tp = lastClose - (risk * 2.5);
+    } else if (isSideways && lastBB) {
+      // Strategy 2: Mean Reversion / Sideways
+      tpSlStrategy = 'Bollinger Bands (Mean Reversion)';
+      sl = Math.max(lastBB.upper + (lastAtr * 0.5), swingHigh + (lastAtr * 0.2));
+      const risk = sl - lastClose;
+      tp = lastBB.lower; // Target lower band
+      // Ensure minimum 1:1.5 RR
+      if ((lastClose - tp) < (risk * 1.5)) {
+        tp = lastClose - (risk * 1.5);
+      }
+    } else {
+      // Strategy 3: Trend Following (ATR & Structure)
+      tpSlStrategy = 'Trend Following (ATR & Structure)';
+      const atrStop = lastClose + (lastAtr * 2);
+      const structureStop = swingHigh + (lastAtr * 0.2);
+      // Use structure stop if it's not too far (within 3 ATR), otherwise use ATR stop
+      sl = (structureStop - lastClose <= lastAtr * 3) ? structureStop : atrStop;
+      const risk = sl - lastClose;
+      tp = lastClose - (risk * 2); // 1:2 RR
+    }
+  }
+
+  if (signal !== 'NO TRADE') {
+    indicators.push({
+      name: 'TP/SL Strategy',
+      value: tpSlStrategy,
+      signal: 'neutral',
+      description: 'Dynamic risk management applied.'
+    });
   }
 
   // ==========================================
