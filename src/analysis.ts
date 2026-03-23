@@ -330,17 +330,26 @@ export const analyzeChart = (
   //   confidence *= 0.8; 
   // }
 
-  // Session Logic (Killzones)
+  // Session Logic (Killzones) - Based on New York Time (EST/EDT)
   const latestCandle = data[data.length - 1];
   const lastCandleDate = new Date(latestCandle.time * 1000);
-  const utcHour = lastCandleDate.getUTCHours();
   
-  // Asian Open: 00:00 - 06:00 UTC
-  // London Open: 07:00 - 10:00 UTC
-  // NY Open: 13:00 - 16:00 UTC
-  const isAsianKillzone = utcHour >= 0 && utcHour < 6;
-  const isLondonKillzone = utcHour >= 7 && utcHour < 10;
-  const isNYKillzone = utcHour >= 13 && utcHour < 16;
+  // Get the hour in New York time (0-23)
+  const nyTimeStr = lastCandleDate.toLocaleString('en-US', { 
+    timeZone: 'America/New_York', 
+    hour: 'numeric', 
+    hour12: false 
+  });
+  let nyHour = parseInt(nyTimeStr, 10);
+  if (nyHour === 24) nyHour = 0;
+  
+  // ICT Killzones (New York Time)
+  // Asian Killzone: 20:00 - 00:00 NY Time
+  // London Killzone: 02:00 - 05:00 NY Time
+  // NY Killzone: 07:00 - 10:00 NY Time
+  const isAsianKillzone = nyHour >= 20;
+  const isLondonKillzone = nyHour >= 2 && nyHour < 5;
+  const isNYKillzone = nyHour >= 7 && nyHour < 10;
   const inKillzone = isAsianKillzone || isLondonKillzone || isNYKillzone;
 
   if (inKillzone) {
@@ -469,7 +478,7 @@ export const analyzeChart = (
     name: 'Session Killzone',
     value: inKillzone ? (isAsianKillzone ? 'ASIAN' : isLondonKillzone ? 'LONDON' : 'NEW YORK') : 'OUTSIDE',
     signal: inKillzone ? (signal === 'LONG' ? 'bullish' : signal === 'SHORT' ? 'bearish' : 'neutral') : 'neutral',
-    description: 'Asian (00-06) / London (07-10) / NY (13-16) UTC'
+    description: 'Asian (20-00) / London (02-05) / NY (07-10) EST'
   });
 
   indicators.push({

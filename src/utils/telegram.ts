@@ -7,7 +7,8 @@ export const isNYSession = (): boolean => {
     hour12: false,
   }).format(now);
 
-  const hour = parseInt(nyTimeStr, 10);
+  let hour = parseInt(nyTimeStr, 10);
+  if (hour === 24) hour = 0;
   
   // 08:00 to 17:00 (5 PM)
   if (!isNaN(hour) && hour >= 8 && hour < 17) {
