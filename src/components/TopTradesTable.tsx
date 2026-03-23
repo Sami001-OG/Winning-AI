@@ -6,6 +6,7 @@ import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, Arr
 import { fetchWithRetry } from '../utils/api';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const sessions = ['ALL', 'ASIAN', 'LONDON', 'NEW YORK'];
 
 interface TradeSignal {
   symbol: string;
@@ -22,6 +23,7 @@ interface TopTradesTableProps {
 
 export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const [interval, setInterval] = useState('15m');
+  const [sessionFilter, setSessionFilter] = useState('ALL');
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -133,8 +135,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     
     // Sort by confidence
     newSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
-    const top10 = newSignals.slice(0, 10);
-    setSignals(top10);
+    setSignals(newSignals);
     setLastUpdate(new Date());
   };
 
@@ -257,6 +258,14 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     return 'text-white/40';
   };
 
+  const filteredSignals = signals.filter(signal => {
+    if (sessionFilter === 'ALL') return true;
+    const sessionIndicator = signal.analysis.indicators.find(i => i.name === 'Session Killzone');
+    return sessionIndicator?.value === sessionFilter;
+  });
+  
+  const displaySignals = filteredSignals.slice(0, 10);
+
   return (
     <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl mb-8">
       <div className="p-4 border-b border-white/10 bg-white/[0.02] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -265,25 +274,44 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Weighted Confirmed Trades (Top 10)</h2>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="text-[10px] font-mono text-white/40 flex items-center gap-1">
             <RefreshCw size={10} className={loading ? "animate-spin" : ""} />
             {loading ? "Scanning Market..." : `Updated: ${lastUpdate.toLocaleTimeString()}`}
           </div>
-          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
-            {timeframes.map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setInterval(tf)}
-                className={`px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all ${
-                  interval === tf 
-                    ? "bg-white/10 text-emerald-400" 
-                    : "text-white/40 hover:text-white/80 hover:bg-white/5"
-                }`}
-              >
-                {tf}
-              </button>
-            ))}
+          
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
+              {sessions.map((session) => (
+                <button
+                  key={session}
+                  onClick={() => setSessionFilter(session)}
+                  className={`px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all ${
+                    sessionFilter === session 
+                      ? "bg-white/10 text-blue-400" 
+                      : "text-white/40 hover:text-white/80 hover:bg-white/5"
+                  }`}
+                >
+                  {session}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
+              {timeframes.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setInterval(tf)}
+                  className={`px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all ${
+                    interval === tf 
+                      ? "bg-white/10 text-emerald-400" 
+                      : "text-white/40 hover:text-white/80 hover:bg-white/5"
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -311,7 +339,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
             </tr>
           </thead>
           <tbody className="font-mono text-sm">
-            {loading && signals.length === 0 ? (
+            {loading && displaySignals.length === 0 ? (
               <tr>
                 <td colSpan={10} className="p-8 text-center text-white/40 text-xs">
                   <div className="flex flex-col items-center justify-center gap-2">
@@ -320,12 +348,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                   </div>
                 </td>
               </tr>
-            ) : signals.length === 0 ? (
+            ) : displaySignals.length === 0 ? (
               <tr>
-                <td colSpan={10} className="p-8 text-center text-white/40 text-xs">No active signals found.</td>
+                <td colSpan={10} className="p-8 text-center text-white/40 text-xs">No active signals found for the selected session.</td>
               </tr>
             ) : (
-              signals.map((s) => (
+              displaySignals.map((s) => (
                 <tr key={s.symbol} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                   <td className="p-4 font-bold text-white">{s.symbol}</td>
                   <td className="p-4">

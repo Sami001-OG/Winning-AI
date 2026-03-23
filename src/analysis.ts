@@ -335,11 +335,13 @@ export const analyzeChart = (
   const lastCandleDate = new Date(latestCandle.time * 1000);
   const utcHour = lastCandleDate.getUTCHours();
   
+  // Asian Open: 00:00 - 06:00 UTC
   // London Open: 07:00 - 10:00 UTC
   // NY Open: 13:00 - 16:00 UTC
+  const isAsianKillzone = utcHour >= 0 && utcHour < 6;
   const isLondonKillzone = utcHour >= 7 && utcHour < 10;
   const isNYKillzone = utcHour >= 13 && utcHour < 16;
-  const inKillzone = isLondonKillzone || isNYKillzone;
+  const inKillzone = isAsianKillzone || isLondonKillzone || isNYKillzone;
 
   if (inKillzone) {
     confidence *= 1.10; // +10% confidence boost during killzones
@@ -465,9 +467,9 @@ export const analyzeChart = (
 
   indicators.push({
     name: 'Session Killzone',
-    value: inKillzone ? (isLondonKillzone ? 'LONDON' : 'NEW YORK') : 'OUTSIDE',
+    value: inKillzone ? (isAsianKillzone ? 'ASIAN' : isLondonKillzone ? 'LONDON' : 'NEW YORK') : 'OUTSIDE',
     signal: inKillzone ? (signal === 'LONG' ? 'bullish' : signal === 'SHORT' ? 'bearish' : 'neutral') : 'neutral',
-    description: 'London (07-10) / NY (13-16) UTC'
+    description: 'Asian (00-06) / London (07-10) / NY (13-16) UTC'
   });
 
   indicators.push({
