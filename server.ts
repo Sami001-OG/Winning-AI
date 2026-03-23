@@ -171,6 +171,7 @@ async function startServer() {
 
   // Background loop
   const lastSentSignals: Record<string, { direction: string, timestamp: number }> = {};
+  const sentSessionNotifications = new Set<string>();
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
@@ -190,6 +191,61 @@ async function startServer() {
     hasLoggedMissingTokens = false; // Reset if tokens are added later
 
     try {
+      // --- Session Notifications ---
+      const now = new Date();
+      const utcHour = now.getUTCHours();
+      const utcMinute = now.getUTCMinutes();
+      const dateStr = now.toISOString().split('T')[0];
+
+      const sessions = [
+        { name: 'Asian', start: 0, end: 6 },
+        { name: 'London', start: 7, end: 10 },
+        { name: 'New York', start: 13, end: 16 }
+      ];
+
+      for (const session of sessions) {
+        // Check start window (5 mins before to 5 mins after)
+        let isStartWindow = false;
+        if (session.start === 0) {
+          isStartWindow = (utcHour === 23 && utcMinute >= 55) || (utcHour === 0 && utcMinute <= 5);
+        } else {
+          isStartWindow = (utcHour === session.start - 1 && utcMinute >= 55) || (utcHour === session.start && utcMinute <= 5);
+        }
+
+        if (isStartWindow) {
+          const sessionDateStr = (utcHour === 23) ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : dateStr;
+          const key = `${session.name}_START_${sessionDateStr}`;
+          if (!sentSessionNotifications.has(key)) {
+            await sendTelegramSignal(botToken, chatId, `🟢 <b>${session.name} Session</b> has started!`);
+            sentSessionNotifications.add(key);
+          }
+        }
+
+        // Check end window (5 mins before to 5 mins after)
+        let isEndWindow = false;
+        if (session.end === 0) {
+          isEndWindow = (utcHour === 23 && utcMinute >= 55) || (utcHour === 0 && utcMinute <= 5);
+        } else {
+          isEndWindow = (utcHour === session.end - 1 && utcMinute >= 55) || (utcHour === session.end && utcMinute <= 5);
+        }
+
+        if (isEndWindow) {
+          const sessionDateStr = (utcHour === 23) ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : dateStr;
+          const key = `${session.name}_END_${sessionDateStr}`;
+          if (!sentSessionNotifications.has(key)) {
+            await sendTelegramSignal(botToken, chatId, `🔴 <b>${session.name} Session</b> has ended!`);
+            sentSessionNotifications.add(key);
+          }
+        }
+      }
+
+      // Cleanup old session notifications to prevent memory leak
+      if (sentSessionNotifications.size > 20) {
+        const oldKeys = Array.from(sentSessionNotifications).slice(0, 10);
+        oldKeys.forEach(k => sentSessionNotifications.delete(k));
+      }
+      // -----------------------------
+
       const symbols = await fetchTopSymbols();
       const timeframes = ['15m', '1h', '4h', '1d'];
 
