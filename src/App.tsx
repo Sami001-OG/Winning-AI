@@ -277,10 +277,10 @@ export default function App() {
       {/* Top Navigation Bar */}
       <header className="h-14 border-b border-white/10 bg-[#0A0A0A] flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-emerald-500">
+          <h1 className="flex items-center gap-2 text-emerald-500 m-0">
             <ActivitySquare size={20} />
             <span className="font-bold tracking-widest uppercase text-sm text-white">ENDELLION<span className="text-emerald-500">-TRADE</span></span>
-          </div>
+          </h1>
 
           <div className="h-4 w-px bg-white/10" />
 

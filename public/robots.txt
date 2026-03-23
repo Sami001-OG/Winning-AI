@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://endellion-trade.com/sitemap.xml
