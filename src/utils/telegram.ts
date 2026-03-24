@@ -10,8 +10,8 @@ export const isNYSession = (): boolean => {
   let hour = parseInt(nyTimeStr, 10);
   if (hour === 24) hour = 0;
   
-  // 08:00 to 17:00 (5 PM)
-  if (!isNaN(hour) && hour >= 8 && hour < 17) {
+  // NY Killzone is 07:00 to 10:00 NY Time
+  if (!isNaN(hour) && hour >= 7 && hour < 10) {
     return true;
   }
   return false;

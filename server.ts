@@ -58,7 +58,7 @@ async function fetchTopSymbols() {
     return data
       .filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume) > 0)
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-      .slice(0, 30)
+      .slice(0, 50)
       .map((t: any) => t.symbol);
   } catch (e) {
     return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
@@ -216,7 +216,7 @@ async function startServer() {
           const sessionDateStr = (utcHour === 23) ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : dateStr;
           const key = `${session.name}_START_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
-            await sendTelegramSignal(botToken, chatId, `🟢 <b>${session.name} Session</b> has started!`);
+            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🟢 <b>${session.name} Session</b> is now OPEN.`);
             sentSessionNotifications.add(key);
           }
         }
@@ -233,7 +233,7 @@ async function startServer() {
           const sessionDateStr = (utcHour === 23) ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : dateStr;
           const key = `${session.name}_END_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
-            await sendTelegramSignal(botToken, chatId, `🔴 <b>${session.name} Session</b> has ended!`);
+            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🔴 <b>${session.name} Session</b> is now CLOSED.`);
             sentSessionNotifications.add(key);
           }
         }
@@ -248,6 +248,7 @@ async function startServer() {
 
       const symbols = await fetchTopSymbols();
       const timeframes = ['15m', '1h', '4h', '1d'];
+      const allSignals: any[] = [];
 
       for (const symbol of symbols) {
         for (const tf of timeframes) {
@@ -256,62 +257,64 @@ async function startServer() {
             const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
             
             if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 75) {
-              // Check if the previous candles also had the same signal to prevent continuous spam
-              const prevKlines1 = klines.slice(0, -1);
-              const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, [], symbol);
-              
-              const prevKlines2 = klines.slice(0, -2);
-              const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, [], symbol);
-
-              const prevKlines3 = klines.slice(0, -3);
-              const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, [], symbol);
-              
-              const isContinuous = 
-                (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
-                (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
-                (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
-
-              if (isContinuous) {
-                // This is a continuous signal, skip sending an alert
-                continue;
-              }
-
-              const now = Date.now();
-              const signalKey = `${symbol}-${tf}`;
-              const lastSent = lastSentSignals[signalKey];
-              
-              // Check if we should send:
-              // 1. Never sent before
-              // 2. Direction changed
-              // 3. Cooldown period passed
-              if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-                lastSentSignals[signalKey] = {
-                  direction: analysis.signal,
-                  timestamp: now
-                };
-                
-                const entryPrice = analysis.suggestedEntry || (klines.length > 0 ? klines[klines.length - 1].close : 0);
-
-                const message = `Symbol : ${symbol}
-Trade Direction : ${analysis.signal === 'LONG' ? 'Long' : 'Short'}
-Entry : ${(entryPrice || 0).toFixed(4)}
-TP : ${analysis.tp?.toFixed(4) || 'N/A'}
-SL : ${analysis.sl?.toFixed(4) || 'N/A'}
-Confidence : ${(analysis.confidence || 0).toFixed(1)}%
-Time Frame : ${tf}`;
-
-                const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-                const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-                const imageUrl = analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
-
-                await sendTelegramSignal(botToken, chatId, message, imageUrl);
-              }
+              allSignals.push({ symbol, tf, analysis, klines });
             }
             
             // Add a small delay to respect Binance API rate limits (1200 requests/minute)
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 50));
           } catch (err) {
             console.error(`Error processing symbol ${symbol} on ${tf} in background loop:`, err);
+          }
+        }
+      }
+
+      // Sort by highest confidence
+      allSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
+
+      // Find the absolute best signal that isn't continuous spam
+      for (const sig of allSignals) {
+        const { symbol, tf, analysis, klines } = sig;
+        
+        // Check if the previous candles also had the same signal to prevent continuous spam
+        const prevKlines1 = klines.slice(0, -1);
+        const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, [], symbol);
+        
+        const prevKlines2 = klines.slice(0, -2);
+        const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, [], symbol);
+
+        const prevKlines3 = klines.slice(0, -3);
+        const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, [], symbol);
+        
+        const isContinuous = 
+          (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
+          (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
+          (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
+
+        if (!isContinuous) {
+          const now = Date.now();
+          const signalKey = `${symbol}-${tf}`;
+          const lastSent = lastSentSignals[signalKey];
+          
+          // Check if we should send:
+          // 1. Never sent before
+          // 2. Direction changed
+          // 3. Cooldown period passed
+          if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+            lastSentSignals[signalKey] = {
+              direction: analysis.signal,
+              timestamp: now
+            };
+            
+            const entryPrice = analysis.suggestedEntry || (klines.length > 0 ? klines[klines.length - 1].close : 0);
+            const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+            const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${tf}\n\n🎯 <b>Entry:</b> ${(entryPrice || 0).toFixed(4)}\n✅ <b>Take Profit:</b> ${analysis.tp?.toFixed(4) || 'N/A'}\n❌ <b>Stop Loss:</b> ${analysis.sl?.toFixed(4) || 'N/A'}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+
+            const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+            const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+            const imageUrl = analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
+
+            await sendTelegramSignal(botToken, chatId, message, imageUrl);
+            break; // ONLY SEND THE BEST ONE PER CYCLE
           }
         }
       }

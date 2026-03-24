@@ -6,7 +6,7 @@ import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, Arr
 import { fetchWithRetry } from '../utils/api';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
-const sessions = ['ALL', 'ASIAN', 'LONDON', 'NEW YORK'];
+const sessions = ['ALL', 'Asian', 'London', 'New York'];
 
 interface TradeSignal {
   symbol: string;
@@ -43,7 +43,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       const usdtPairs = data
         .filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume) > 0)
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .slice(0, 30)
+        .slice(0, 50)
         .map((t: any) => t.symbol);
       return usdtPairs;
     } catch (e) {
@@ -85,45 +85,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           prevEntriesRef.current[symbol] = currentEntry;
         }
 
-        // Telegram Alert Logic
-        if (analysis.confidence >= 75) {
-          const structure = analysis.layers?.structure || 0;
-          const lastClose = data[data.length - 1].close;
-
-          // Check if the previous candles also had the same signal to prevent continuous spam on page refresh
-          const prevKlines1 = data.slice(0, -1);
-          const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, trades, symbol);
-          
-          const prevKlines2 = data.slice(0, -2);
-          const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, trades, symbol);
-
-          const prevKlines3 = data.slice(0, -3);
-          const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, trades, symbol);
-          
-          const isContinuous = 
-            (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
-            (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
-            (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
-
-          if (!isContinuous) {
-            const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-            const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-
-            const now = Date.now();
-            const lastSent = lastSentSignalsRef.current[symbol];
-
-            if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-              if (analysis.signal === 'LONG' && structure >= 0 && analysis.confidence > 90) {
-                sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`, bullishImageUrl);
-                lastSentSignalsRef.current[symbol] = { direction: 'LONG', timestamp: now };
-              } else if (analysis.signal === 'SHORT' && structure <= 0 && analysis.confidence > 90) {
-                sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`, bearishImageUrl);
-                lastSentSignalsRef.current[symbol] = { direction: 'SHORT', timestamp: now };
-              }
-            }
-          }
-        }
-
         newSignals.push({
           symbol,
           analysis,
@@ -137,6 +98,57 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     newSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
     setSignals(newSignals);
     setLastUpdate(new Date());
+
+    // Telegram Alert Logic - ONLY SEND THE BEST SIGNAL
+    for (const bestTrade of newSignals) {
+      const { symbol, analysis, lastPrice } = bestTrade;
+      
+      if (analysis.signal === 'NO TRADE' || analysis.confidence < 85) continue;
+
+      const data = klinesDataRef.current[symbol];
+      if (!data) continue;
+
+      const structure = analysis.layers?.structure || 0;
+
+      // Check if the previous candles also had the same signal to prevent continuous spam on page refresh
+      const prevKlines1 = data.slice(0, -1);
+      const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, trades, symbol);
+      
+      const prevKlines2 = data.slice(0, -2);
+      const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, trades, symbol);
+
+      const prevKlines3 = data.slice(0, -3);
+      const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, trades, symbol);
+      
+      const isContinuous = 
+        (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
+        (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
+        (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
+
+      if (!isContinuous) {
+        const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+        const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+
+        const now = Date.now();
+        const lastSent = lastSentSignalsRef.current[symbol];
+
+        if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+          const entryPrice = analysis.suggestedEntry || lastPrice;
+          const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${interval}\n\n🎯 <b>Entry:</b> ${entryPrice.toFixed(4)}\n✅ <b>Take Profit:</b> ${analysis.tp?.toFixed(4) || 'N/A'}\n❌ <b>Stop Loss:</b> ${analysis.sl?.toFixed(4) || 'N/A'}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+
+          if (analysis.signal === 'LONG' && structure >= 0) {
+            sendTelegramAlert(message, bullishImageUrl);
+            lastSentSignalsRef.current[symbol] = { direction: 'LONG', timestamp: now };
+            break; // Only send the absolute best one
+          } else if (analysis.signal === 'SHORT' && structure <= 0) {
+            sendTelegramAlert(message, bearishImageUrl);
+            lastSentSignalsRef.current[symbol] = { direction: 'SHORT', timestamp: now };
+            break; // Only send the absolute best one
+          }
+        }
+      }
+    }
   };
 
   const toggleFreeze = (symbol: string, entry: number) => {
@@ -344,7 +356,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                 <td colSpan={10} className="p-8 text-center text-white/40 text-xs">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <RefreshCw size={24} className="animate-spin text-emerald-500/50" />
-                    <span>Analyzing top 30 pairs...</span>
+                    <span>Analyzing top 50 pairs...</span>
                   </div>
                 </td>
               </tr>
