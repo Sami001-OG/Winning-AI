@@ -113,10 +113,10 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
             const lastSent = lastSentSignalsRef.current[symbol];
 
             if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-              if (analysis.signal === 'LONG' && structure >= 0) {
+              if (analysis.signal === 'LONG' && structure >= 0 && analysis.confidence > 90) {
                 sendTelegramAlert(`<b>LONG SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`, bullishImageUrl);
                 lastSentSignalsRef.current[symbol] = { direction: 'LONG', timestamp: now };
-              } else if (analysis.signal === 'SHORT' && structure <= 0) {
+              } else if (analysis.signal === 'SHORT' && structure <= 0 && analysis.confidence > 90) {
                 sendTelegramAlert(`<b>SHORT SIGNAL: ${symbol}</b>\nConfidence: ${analysis.confidence.toFixed(1)}%\nPrice: ${lastClose.toFixed(4)}`, bearishImageUrl);
                 lastSentSignalsRef.current[symbol] = { direction: 'SHORT', timestamp: now };
               }
