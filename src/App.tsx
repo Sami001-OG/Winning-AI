@@ -275,14 +275,14 @@ export default function App() {
   return (
     <div className="h-screen w-screen bg-[#050505] text-white/90 font-sans overflow-hidden flex flex-col selection:bg-emerald-500/30">
       {/* Top Navigation Bar */}
-      <header className="h-14 border-b border-white/10 bg-[#0A0A0A] flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-6">
-          <h1 className="flex items-center gap-2 text-emerald-500 m-0">
+      <header className="h-14 border-b border-white/10 bg-[#0A0A0A] flex items-center justify-between px-2 sm:px-4 shrink-0 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-3 sm:gap-6 shrink-0">
+          <h1 className="flex items-center gap-2 text-emerald-500 m-0 shrink-0">
             <ActivitySquare size={20} />
-            <span className="font-bold tracking-widest uppercase text-sm text-white">ENDELLION<span className="text-emerald-500">-TRADE</span></span>
+            <span className="font-bold tracking-widest uppercase text-sm text-white hidden sm:inline">ENDELLION<span className="text-emerald-500">-TRADE</span></span>
           </h1>
 
-          <div className="h-4 w-px bg-white/10" />
+          <div className="hidden sm:block h-4 w-px bg-white/10" />
 
           {/* Symbol Search */}
           <form 
@@ -298,7 +298,7 @@ export default function App() {
                 setSearchInput(newSymbol);
               }
             }}
-            className="flex items-center gap-2 relative"
+            className="flex items-center gap-2 relative shrink-0"
           >
             <div className="relative flex items-center">
               <Search size={14} className="absolute left-3 text-white/40" />
@@ -307,7 +307,7 @@ export default function App() {
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className={cn(
-                  "bg-white/5 border rounded-md pl-9 pr-4 py-1.5 text-xs font-mono text-white placeholder:text-white/30 focus:outline-none focus:bg-white/10 transition-all w-32 uppercase",
+                  "bg-white/5 border rounded-md pl-8 sm:pl-9 pr-2 sm:pr-4 py-1.5 text-xs font-mono text-white placeholder:text-white/30 focus:outline-none focus:bg-white/10 transition-all w-24 sm:w-32 uppercase",
                   error ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-emerald-500/50"
                 )}
                 placeholder="SYMBOL"
@@ -315,7 +315,7 @@ export default function App() {
             </div>
             <button 
               type="submit"
-              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 rounded-md px-3 py-1.5 text-xs font-mono font-bold uppercase transition-colors"
+              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 rounded-md px-2 sm:px-3 py-1.5 text-xs font-mono font-bold uppercase transition-colors"
             >
               Search
             </button>
@@ -327,7 +327,7 @@ export default function App() {
           </form>
 
           {/* Layout Toggle */}
-          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
+          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10 shrink-0">
             <button
               onClick={() => setLayout('single')}
               className={cn(
@@ -351,10 +351,10 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 sm:gap-6 shrink-0 ml-4">
           {/* Current Price Ticker */}
           {data.length > 0 && (
-            <div className="flex items-center gap-3 font-mono">
+            <div className="hidden sm:flex items-center gap-3 font-mono">
               <span className="text-xs text-white/40">LAST</span>
               <span className={cn(
                 "text-sm font-bold",
@@ -365,11 +365,11 @@ export default function App() {
             </div>
           )}
           
-          <div className="h-4 w-px bg-white/10" />
+          <div className="hidden sm:block h-4 w-px bg-white/10" />
           
           <div className="flex items-center gap-2">
             <div className={cn("w-2 h-2 rounded-full", isConnected ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" : "bg-rose-500")} />
-            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">
+            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest hidden sm:inline">
               {isConnected ? 'Connected' : 'Offline'}
             </span>
           </div>
@@ -381,10 +381,10 @@ export default function App() {
         <div className="max-w-[1600px] mx-auto p-4 flex flex-col gap-4">
           
           {/* Top Panel: Chart */}
-          <section className="w-full h-[60vh] min-h-[500px] rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden relative shadow-2xl">
+          <section className="w-full h-[50vh] sm:h-[60vh] min-h-[400px] sm:min-h-[500px] rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden relative shadow-2xl">
             {layout === 'single' ? (
               <div className="w-full h-full relative">
-                <div className="absolute top-4 left-4 z-20 flex items-center gap-1 bg-black/80 backdrop-blur border border-white/10 p-1 rounded-lg shadow-xl">
+                <div className="absolute top-4 left-4 z-20 flex items-center gap-1 bg-black/80 backdrop-blur border border-white/10 p-1 rounded-lg shadow-xl max-w-[calc(100%-2rem)] overflow-x-auto no-scrollbar">
                   {['1m', '5m', '15m', '1h', '4h', '1d'].map((tf) => (
                     <button
                       key={tf}
@@ -433,12 +433,12 @@ export default function App() {
           {/* Middle Panel: ENDELLION-TRADE */}
           <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl">
             <div className="p-4 border-b border-white/10 bg-white/[0.02] flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full xl:w-auto justify-between xl:justify-start">
                 <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest flex items-center gap-2">
                   ENDELLION-TRADE <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">[{analysisTf}]</span>
                 </h2>
                 <div className="hidden sm:block h-4 w-px bg-white/10" />
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 sm:pb-0 w-full sm:w-auto">
                   {['5m', '15m', '1h', '4h'].map(tf => {
                     const res = multiAnalysis[tf];
                     if (!res) return null;
@@ -465,7 +465,7 @@ export default function App() {
                 </div>
               </div>
               
-              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full xl:w-auto justify-between xl:justify-end">
                 {activeTrade && activeTrade.tp && activeTrade.sl && (
                   <div className="flex items-center gap-3 sm:gap-4 border-r border-white/10 pr-3 sm:pr-4">
                     <div className="flex flex-col items-end">
@@ -479,7 +479,7 @@ export default function App() {
                   </div>
                 )}
                 
-                <div className="flex items-center gap-2 sm:gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-start">
                   <div className="flex flex-col items-end mr-1 sm:mr-2">
                     <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">Confidence</span>
                     <div className={cn(
@@ -517,14 +517,14 @@ export default function App() {
                     <button
                       onClick={() => setShowConfirmDialog(true)}
                       className={cn(
-                        "px-3 py-1.5 rounded text-[10px] sm:text-xs font-mono font-bold uppercase transition-all border shadow-lg flex items-center gap-1.5 active:scale-95",
+                        "px-3 py-1.5 rounded text-[10px] sm:text-xs font-mono font-bold uppercase transition-all border shadow-lg flex items-center gap-1.5 active:scale-95 ml-auto sm:ml-0",
                         activeAnalysis.signal === 'LONG' 
                           ? "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border-emerald-500/50 hover:shadow-[0_0_15px_rgba(16,185,129,0.2)]" 
                           : "bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border-rose-500/50 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)]"
                       )}
                     >
                       <Target size={12} />
-                      Execute
+                      <span className="hidden sm:inline">Execute</span>
                     </button>
                   )}
                 </div>
@@ -629,7 +629,7 @@ export default function App() {
                 <div className="p-6 text-center text-white/40 font-mono text-sm">No trades executed yet.</div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full text-left border-collapse min-w-[600px]">
                     <thead>
                       <tr className="border-b border-white/5 bg-white/[0.02] text-[10px] font-mono text-white/40 uppercase tracking-widest">
                         <th className="p-4 font-normal">Time</th>

@@ -330,25 +330,24 @@ export const analyzeChart = (
   //   confidence *= 0.8; 
   // }
 
-  // Session Logic (Killzones) - Based on New York Time (EST/EDT)
+  // Session Logic - Based on UTC Time
   const latestCandle = data[data.length - 1];
   const lastCandleDate = new Date(latestCandle.time * 1000);
   
-  // Get the hour in New York time (0-23)
-  const nyTimeStr = lastCandleDate.toLocaleString('en-US', { 
-    timeZone: 'America/New_York', 
-    hour: 'numeric', 
-    hour12: false 
-  });
-  let nyHour = parseInt(nyTimeStr, 10);
-  if (nyHour === 24) nyHour = 0;
+  const utcHour = lastCandleDate.getUTCHours();
   
-  // ICT Killzones (New York Time)
-  // NY Killzone: 07:00 - 10:00 NY Time
-  const inKillzone = nyHour >= 7 && nyHour < 10;
+  // Standard UTC Trading Sessions
+  const inAsianSession = utcHour >= 0 && utcHour < 9;
+  const inLondonSession = utcHour >= 8 && utcHour < 17;
+  const inNewYorkSession = utcHour >= 13 && utcHour < 22;
 
-  if (inKillzone) {
-    confidence *= 1.10; // +10% confidence boost during killzones
+  let currentSession = 'OUTSIDE';
+  if (inNewYorkSession) currentSession = 'New York';
+  else if (inLondonSession) currentSession = 'London';
+  else if (inAsianSession) currentSession = 'Asian';
+
+  if (currentSession !== 'OUTSIDE') {
+    confidence *= 1.10; // +10% confidence boost during active sessions
   }
 
   // ==========================================
@@ -471,9 +470,9 @@ export const analyzeChart = (
 
   indicators.push({
     name: 'Session Killzone',
-    value: inKillzone ? 'NEW YORK' : 'OUTSIDE',
-    signal: inKillzone ? (signal === 'LONG' ? 'bullish' : signal === 'SHORT' ? 'bearish' : 'neutral') : 'neutral',
-    description: 'NY Killzone (07:00 - 10:00 EST/EDT)'
+    value: currentSession,
+    signal: currentSession !== 'OUTSIDE' ? (signal === 'LONG' ? 'bullish' : signal === 'SHORT' ? 'bearish' : 'neutral') : 'neutral',
+    description: 'Active Trading Session (UTC)'
   });
 
   indicators.push({

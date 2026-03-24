@@ -198,9 +198,9 @@ async function startServer() {
       const dateStr = now.toISOString().split('T')[0];
 
       const sessions = [
-        { name: 'Asian', start: 0, end: 6 },
-        { name: 'London', start: 7, end: 10 },
-        { name: 'New York', start: 13, end: 16 }
+        { name: 'Asian', start: 0, end: 9 },
+        { name: 'London', start: 8, end: 17 },
+        { name: 'New York', start: 13, end: 22 }
       ];
 
       for (const session of sessions) {
@@ -216,7 +216,8 @@ async function startServer() {
           const sessionDateStr = (utcHour === 23) ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : dateStr;
           const key = `${session.name}_START_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
-            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🟢 <b>${session.name} Session</b> is now OPEN.`);
+            const timeString = `${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC`;
+            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🟢 <b>${session.name} Session</b> is now OPEN.\n⏰ Time: ${timeString}`);
             sentSessionNotifications.add(key);
           }
         }
@@ -233,7 +234,8 @@ async function startServer() {
           const sessionDateStr = (utcHour === 23) ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : dateStr;
           const key = `${session.name}_END_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
-            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🔴 <b>${session.name} Session</b> is now CLOSED.`);
+            const timeString = `${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC`;
+            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🔴 <b>${session.name} Session</b> is now CLOSED.\n⏰ Time: ${timeString}`);
             sentSessionNotifications.add(key);
           }
         }
