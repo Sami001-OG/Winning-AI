@@ -12,6 +12,7 @@ import {
 } from 'technicalindicators';
 import { Candle, AnalysisResult, IndicatorResult, Trade } from './types';
 import { detectPatterns } from './patterns';
+import { formatPrice } from './utils/format';
 import { 
   detectBOS, 
   detectLiquidityGrab, 
@@ -465,7 +466,7 @@ export const analyzeChart = (
     name: 'Volume Profile',
     value: lastClose > volProfile.vaHigh ? 'ABOVE VA' : lastClose < volProfile.vaLow ? 'BELOW VA' : 'INSIDE VA',
     signal: lastClose > volProfile.vaHigh ? 'bullish' : lastClose < volProfile.vaLow ? 'bearish' : 'neutral',
-    description: `VAH: ${volProfile.vaHigh.toFixed(4)} | VAL: ${volProfile.vaLow.toFixed(4)}`
+    description: `VAH: ${formatPrice(volProfile.vaHigh)} | VAL: ${formatPrice(volProfile.vaLow)}`
   });
 
   indicators.push({
@@ -689,19 +690,19 @@ export const analyzeChart = (
   });
   indicators.push({
     name: 'Volume Profile (POC)',
-    value: volProfile.pocPrice?.toFixed(2) || 'N/A',
+    value: volProfile.pocPrice ? formatPrice(volProfile.pocPrice) : 'N/A',
     signal: lastClose > volProfile.vaHigh ? 'bullish' : lastClose < volProfile.vaLow ? 'bearish' : 'neutral',
-    description: `VA: ${volProfile.vaLow?.toFixed(2) || 'N/A'} - ${volProfile.vaHigh?.toFixed(2) || 'N/A'}`
+    description: `VA: ${volProfile.vaLow ? formatPrice(volProfile.vaLow) : 'N/A'} - ${volProfile.vaHigh ? formatPrice(volProfile.vaHigh) : 'N/A'}`
   });
   indicators.push({
     name: 'MACD',
-    value: lastMacd?.MACD !== undefined ? `${lastMacd.MACD.toFixed(2)}` : 'N/A',
+    value: lastMacd?.MACD !== undefined ? formatPrice(lastMacd.MACD) : 'N/A',
     signal: (lastMacd?.MACD || 0) > (lastMacd?.signal || 0) ? 'bullish' : 'bearish',
     description: 'Trend Oscillator'
   });
   indicators.push({
     name: 'ATR (14)',
-    value: lastAtr?.toFixed(4) || 'N/A',
+    value: lastAtr ? formatPrice(lastAtr) : 'N/A',
     signal: 'neutral',
     description: 'Average True Range'
   });

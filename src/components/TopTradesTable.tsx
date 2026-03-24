@@ -4,6 +4,7 @@ import { Candle, AnalysisResult, Trade } from '../types';
 import { sendTelegramAlert } from '../services/telegramService';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
+import { formatPrice } from '../utils/format';
 
 const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
 const sessions = ['ALL', 'Asian', 'London', 'New York'];
@@ -135,7 +136,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
           const entryPrice = analysis.suggestedEntry || lastPrice;
           const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${interval}\n\n🎯 <b>Entry:</b> ${entryPrice.toFixed(4)}\n✅ <b>Take Profit:</b> ${analysis.tp?.toFixed(4) || 'N/A'}\n❌ <b>Stop Loss:</b> ${analysis.sl?.toFixed(4) || 'N/A'}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${interval}\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n✅ <b>Take Profit:</b> ${formatPrice(analysis.tp)}\n❌ <b>Stop Loss:</b> ${formatPrice(analysis.sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
 
           if (analysis.signal === 'LONG' && structure >= 0) {
             sendTelegramAlert(message, bullishImageUrl);
@@ -420,7 +421,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                         )}
                         <div className="flex items-center gap-1">
                           <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white"}>
-                            {(frozenEntries[s.symbol] || s.analysis.suggestedEntry || 0).toFixed(4)}
+                            {formatPrice(frozenEntries[s.symbol] || s.analysis.suggestedEntry || 0)}
                           </span>
                           {!frozenEntries[s.symbol] && s.entryDirection === 'up' && <ArrowUp size={12} className="text-emerald-400" />}
                           {!frozenEntries[s.symbol] && s.entryDirection === 'down' && <ArrowDown size={12} className="text-rose-400" />}
@@ -431,12 +432,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                       <span className="text-white/20">-</span>
                     )}
                   </td>
-                  <td className="p-4 text-right text-white/80">{s.lastPrice.toFixed(4)}</td>
+                  <td className="p-4 text-right text-white/80">{formatPrice(s.lastPrice)}</td>
                   <td className="p-4 text-right">
                     {s.analysis.signal !== 'NO TRADE' && s.analysis.tp && s.analysis.sl ? (
                       <div className="flex flex-col items-end text-[10px]">
-                        <span className="text-emerald-400">{s.analysis.tp !== undefined ? s.analysis.tp.toFixed(4) : '-'}</span>
-                        <span className="text-rose-400">{s.analysis.sl !== undefined ? s.analysis.sl.toFixed(4) : '-'}</span>
+                        <span className="text-emerald-400">{s.analysis.tp !== undefined ? formatPrice(s.analysis.tp) : '-'}</span>
+                        <span className="text-rose-400">{s.analysis.sl !== undefined ? formatPrice(s.analysis.sl) : '-'}</span>
                       </div>
                     ) : (
                       <span className="text-white/20">-</span>
