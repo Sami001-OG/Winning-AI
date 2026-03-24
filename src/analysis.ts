@@ -65,14 +65,26 @@ export const analyzeChart = (
   // Dynamically adjust weights based on patterns
   const adjustedReliability = { ...indicatorReliability };
   detectedPatterns.forEach(p => {
-    if (p.name === 'Double Bottom' || p.name === 'Double Top') {
+    if (p.name === 'Double Bottom' || p.name === 'Double Top' || p.name === 'Triple Bottom' || p.name === 'Triple Top') {
       adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.5;
     } else if (p.name === 'Bullish Engulfing' || p.name === 'Bearish Engulfing') {
       adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.8;
       adjustedReliability.vol = (adjustedReliability.vol || 1) * 1.5;
-    } else if (p.name === 'Ascending Triangle' || p.name === 'Descending Triangle') {
+    } else if (p.name === 'Ascending Triangle' || p.name === 'Descending Triangle' || p.name === 'Symmetrical Triangle') {
       adjustedReliability.ema = (adjustedReliability.ema || 1) * 1.3;
       adjustedReliability.obv = (adjustedReliability.obv || 1) * 1.5;
+    } else if (p.name === 'Bull Flag' || p.name === 'Bear Flag' || p.name === 'Bull Pennant' || p.name === 'Bear Pennant') {
+      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.5;
+      adjustedReliability.ema = (adjustedReliability.ema || 1) * 1.5;
+    } else if (p.name === 'Falling Wedge' || p.name === 'Rising Wedge') {
+      adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.8;
+      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.5;
+    } else if (p.name === 'Head and Shoulders' || p.name === 'Inverted Head and Shoulders') {
+      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.7;
+      adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.5;
+    } else if (p.name === 'Cup and Handle' || p.name === 'Inverted Cup and Handle') {
+      adjustedReliability.vol = (adjustedReliability.vol || 1) * 1.6;
+      adjustedReliability.ema = (adjustedReliability.ema || 1) * 1.4;
     }
   });
 
@@ -529,7 +541,16 @@ export const analyzeChart = (
 
   let risk = 0;
   if (signal === 'LONG') {
-    if (entryPrice > volProfile.vaHigh) {
+    const hasBullishPattern = patternNames.some(p => ['Bull Flag', 'Bull Pennant', 'Falling Wedge', 'Ascending Triangle', 'Double Bottom', 'Triple Bottom', 'Inverted Head and Shoulders', 'Cup and Handle'].includes(p));
+    
+    if (hasBullishPattern) {
+      // Strategy: Pattern-based breakout/reversal
+      tpSlStrategy = 'Pattern-Based (Bullish)';
+      sl = swingLow - (lastAtr * 0.5); // Tighter stop below recent swing low
+      if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
+      risk = entryPrice - sl;
+      tp = entryPrice + (risk * 2.5); // Higher reward for pattern setups
+    } else if (entryPrice > volProfile.vaHigh) {
       // Strategy 1: Volume Profile Breakout
       tpSlStrategy = 'Volume Profile Breakout';
       sl = volProfile.pocPrice; // Stop loss at Point of Control
@@ -559,7 +580,16 @@ export const analyzeChart = (
       tp = entryPrice + (risk * 2); // 1:2 RR
     }
   } else if (signal === 'SHORT') {
-    if (entryPrice < volProfile.vaLow) {
+    const hasBearishPattern = patternNames.some(p => ['Bear Flag', 'Bear Pennant', 'Rising Wedge', 'Descending Triangle', 'Double Top', 'Triple Top', 'Head and Shoulders', 'Inverted Cup and Handle'].includes(p));
+    
+    if (hasBearishPattern) {
+      // Strategy: Pattern-based breakdown/reversal
+      tpSlStrategy = 'Pattern-Based (Bearish)';
+      sl = swingHigh + (lastAtr * 0.5); // Tighter stop above recent swing high
+      if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
+      risk = sl - entryPrice;
+      tp = Math.max(0.00000001, entryPrice - (risk * 2.5)); // Higher reward for pattern setups
+    } else if (entryPrice < volProfile.vaLow) {
       // Strategy 1: Volume Profile Breakout
       tpSlStrategy = 'Volume Profile Breakout';
       sl = volProfile.pocPrice; // Stop loss at Point of Control
@@ -619,19 +649,40 @@ export const analyzeChart = (
   const prevCandle = data[data.length - 2];
   
   if (lastCandle) {
-    if (isDoji(lastCandle)) patternNames.push('Doji');
-    if (isHammer(lastCandle)) patternNames.push('Hammer');
+    if (isDoji(lastCandle) && !patternNames.includes('Doji')) patternNames.push('Doji');
+    if (isHammer(lastCandle) && !patternNames.includes('Hammer')) patternNames.push('Hammer');
     if (prevCandle) {
-      if (isEngulfingBullish(prevCandle, lastCandle)) patternNames.push('Bullish Engulfing');
-      if (isEngulfingBearish(prevCandle, lastCandle)) patternNames.push('Bearish Engulfing');
+      if (isEngulfingBullish(prevCandle, lastCandle) && !patternNames.includes('Bullish Engulfing')) patternNames.push('Bullish Engulfing');
+      if (isEngulfingBearish(prevCandle, lastCandle) && !patternNames.includes('Bearish Engulfing')) patternNames.push('Bearish Engulfing');
     }
   }
 
   // Adjust confidence based on patterns
   let confidenceAdjustment = 0;
-  if (patternNames.includes('Bullish Engulfing') && finalScore > 0) confidenceAdjustment = 10;
-  else if (patternNames.includes('Bearish Engulfing') && finalScore < 0) confidenceAdjustment = 10;
-  else if (patternNames.includes('Hammer') && finalScore > 0) confidenceAdjustment = 5;
+  if (patternNames.includes('Bullish Engulfing') && finalScore > 0) confidenceAdjustment += 10;
+  else if (patternNames.includes('Bearish Engulfing') && finalScore < 0) confidenceAdjustment += 10;
+  else if (patternNames.includes('Hammer') && finalScore > 0) confidenceAdjustment += 5;
+  
+  // Complex patterns confidence adjustment
+  if (finalScore > 0) {
+    if (patternNames.includes('Inverted Head and Shoulders')) confidenceAdjustment += 18;
+    if (patternNames.includes('Cup and Handle')) confidenceAdjustment += 16;
+    if (patternNames.includes('Bull Flag')) confidenceAdjustment += 15;
+    if (patternNames.includes('Triple Bottom')) confidenceAdjustment += 14;
+    if (patternNames.includes('Bull Pennant')) confidenceAdjustment += 12;
+    if (patternNames.includes('Falling Wedge')) confidenceAdjustment += 10;
+    if (patternNames.includes('Ascending Triangle')) confidenceAdjustment += 8;
+    if (patternNames.includes('Double Bottom')) confidenceAdjustment += 8;
+  } else if (finalScore < 0) {
+    if (patternNames.includes('Head and Shoulders')) confidenceAdjustment += 18;
+    if (patternNames.includes('Inverted Cup and Handle')) confidenceAdjustment += 16;
+    if (patternNames.includes('Bear Flag')) confidenceAdjustment += 15;
+    if (patternNames.includes('Triple Top')) confidenceAdjustment += 14;
+    if (patternNames.includes('Bear Pennant')) confidenceAdjustment += 12;
+    if (patternNames.includes('Rising Wedge')) confidenceAdjustment += 10;
+    if (patternNames.includes('Descending Triangle')) confidenceAdjustment += 8;
+    if (patternNames.includes('Double Top')) confidenceAdjustment += 8;
+  }
   
   confidence = Math.min(100, Math.max(0, confidence + confidenceAdjustment));
 
