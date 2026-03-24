@@ -10,20 +10,33 @@ export const fetchWithRetry = async (
   retries = 3,
   backoff = 1000
 ): Promise<Response> => {
-  let currentUrl = url;
-  
-  // If it's a Binance URL, we can try different endpoints
   const isBinance = url.includes('binance.com');
   
+  if (isBinance) {
+    const path = url.split('binance.com')[1];
+    let lastError: any;
+    
+    for (let i = 0; i < BINANCE_ENDPOINTS.length; i++) {
+      try {
+        const endpoint = BINANCE_ENDPOINTS[i];
+        const response = await fetch(`${endpoint}${path}`);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response;
+      } catch (error) {
+        lastError = error;
+        // Try next endpoint immediately, no backoff for Binance endpoints
+        continue;
+      }
+    }
+    throw lastError || new Error('All Binance endpoints failed');
+  }
+
+  // Fallback for non-Binance URLs
+  let currentUrl = url;
   for (let i = 0; i <= retries; i++) {
     try {
-      if (isBinance) {
-        // Try different endpoint on each retry if it's a Binance URL
-        const endpoint = BINANCE_ENDPOINTS[i % BINANCE_ENDPOINTS.length];
-        const path = url.split('binance.com')[1];
-        currentUrl = `${endpoint}${path}`;
-      }
-      
       const response = await fetch(currentUrl);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);

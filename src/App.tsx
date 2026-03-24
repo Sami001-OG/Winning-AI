@@ -8,6 +8,7 @@ import { LightweightChart } from './LightweightChart';
 import { TopTradesTable } from './components/TopTradesTable';
 import { analyzeChart } from './analysis';
 import { Candle, AnalysisResult, Trade } from './types';
+import { useBinanceData } from './hooks/useBinanceData';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -53,16 +54,13 @@ const MemoizedChart = memo(({ symbol, interval, activeTrade }: { symbol: string,
 const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.2, rsi: 1.5, vol: 1.2, obv: 1.2 };
 
 export default function App() {
-  const [data, setData] = useState<Candle[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [multiAnalysis, setMultiAnalysis] = useState<Record<string, AnalysisResult>>({});
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [interval, setInterval] = useState('15m');
   const [analysisTf, setAnalysisTf] = useState('15m');
   const [searchInput, setSearchInput] = useState('BTCUSDT');
-  const [isConnected, setIsConnected] = useState(false);
   const [layout, setLayout] = useState<'single' | 'multi'>('single');
-  const [error, setError] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trade[]>(() => {
     const saved = localStorage.getItem('demo_trades');
     if (saved) {
@@ -75,39 +73,14 @@ export default function App() {
     return [];
   });
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+
+  const { data, error, isConnected } = useBinanceData(symbol, interval);
 
   useEffect(() => {
     localStorage.setItem('demo_trades', JSON.stringify(trades));
   }, [trades]);
 
   const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
-
-  const fetchData = async (targetSymbol: string, targetInterval: string) => {
-    try {
-      setError(null);
-      setData([]); // Clear old data immediately
-      setAnalysis(null); // Clear old analysis
-      const response = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${targetInterval}&limit=300`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch data from Binance');
-      }
-      const data = await response.json();
-      const candles: Candle[] = data.map((k: any) => ({
-        time: Math.floor(k[0] / 1000),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
-      }));
-      setData(candles);
-      connectWebSocket(targetSymbol.toUpperCase(), targetInterval);
-    } catch (error: any) {
-      console.error('Error fetching data:', error);
-      setError(error.message || 'Failed to fetch data');
-    }
-  };
 
   const fetchMultiTimeframeData = async (targetSymbol: string) => {
     setMultiAnalysis({}); // Clear old multi-timeframe analysis immediately
@@ -138,20 +111,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    fetchData(symbol, interval);
     fetchMultiTimeframeData(symbol);
-    return () => {
-      if (wsRef.current) wsRef.current.close();
-    };
-  }, [symbol, interval]);
+  }, [symbol]);
 
   useEffect(() => {
     if (data.length > 0) {
       setAnalysis(analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol));
+    } else {
+      setAnalysis(null);
     }
   }, [data, trades, symbol]);
 
@@ -211,6 +178,12 @@ export default function App() {
     
     const currentPrice = data[data.length - 1].close;
     
+    const tpDistance = Math.abs(activeAnalysis.tp - currentPrice) / currentPrice;
+    if (tpDistance < 0.01) {
+      console.log("TP distance too small, trade rejected.");
+      return;
+    }
+    
     const newTrade: Trade = {
       id: Math.random().toString(36).substr(2, 9),
       symbol: symbol,
@@ -225,52 +198,6 @@ export default function App() {
     setTrades(prev => [newTrade, ...prev].slice(0, 100));
     setShowConfirmDialog(false);
   };
-
-  const connectWebSocket = useCallback((targetSymbol: string, targetInterval: string) => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
-    const wsUrl = `wss://stream.binance.com:9443/ws/${targetSymbol.toLowerCase()}@kline_${targetInterval}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setIsConnected(true);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.k) {
-          const k = message.k;
-          const newCandle: Candle = {
-            time: Math.floor(k.t / 1000),
-            open: parseFloat(k.o),
-            high: parseFloat(k.h),
-            low: parseFloat(k.l),
-            close: parseFloat(k.c),
-            volume: parseFloat(k.v)
-          };
-          
-          setData(prevData => {
-            if (prevData.length === 0) return [newCandle];
-            const lastCandle = prevData[prevData.length - 1];
-            if (lastCandle.time === newCandle.time) {
-              return [...prevData.slice(0, -1), newCandle];
-            } else {
-              return [...prevData, newCandle].slice(-300);
-            }
-          });
-        }
-      } catch (e) {
-        console.error("Error parsing Binance message:", e);
-      }
-    };
-
-    ws.onclose = () => setIsConnected(false);
-    ws.onerror = () => setIsConnected(false);
-  }, []);
 
   return (
     <div className="h-screen w-screen bg-[#050505] text-white/90 font-sans overflow-hidden flex flex-col selection:bg-emerald-500/30">

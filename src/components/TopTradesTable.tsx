@@ -164,6 +164,11 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     });
   };
 
+  const updateSignalsRef = useRef(updateSignals);
+  useEffect(() => {
+    updateSignalsRef.current = updateSignals;
+  }, [updateSignals]);
+
   useEffect(() => {
     let isMounted = true;
     
@@ -198,7 +203,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         }
 
         if (!isMounted) return;
-        updateSignals();
+        updateSignalsRef.current();
         setLoading(false);
 
         // Setup WS
@@ -246,7 +251,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     init();
 
     const timerId = window.setInterval(() => {
-      updateSignals();
+      updateSignalsRef.current();
     }, 2000); // Update table every 2 seconds
 
     return () => {
@@ -272,6 +277,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   };
 
   const filteredSignals = signals.filter(signal => {
+    // 1% TP check
+    if (signal.analysis.tp && signal.analysis.suggestedEntry) {
+      const tpDistance = Math.abs(signal.analysis.tp - signal.analysis.suggestedEntry) / signal.analysis.suggestedEntry;
+      if (tpDistance < 0.01) return false;
+    }
+    
     if (sessionFilter === 'ALL') return true;
     const sessionIndicator = signal.analysis.indicators.find(i => i.name === 'Session Killzone');
     return sessionIndicator?.value === sessionFilter;
