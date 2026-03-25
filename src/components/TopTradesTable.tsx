@@ -44,11 +44,10 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         .filter((t: any) => 
           t.symbol.endsWith('USDT') && 
           parseFloat(t.volume) > 0 &&
-          !t.symbol.includes('UPUSDT') &&
-          !t.symbol.includes('DOWNUSDT') &&
-          !t.symbol.includes('BULLUSDT') &&
-          !t.symbol.includes('BEARUSDT') &&
-          !['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'EURUSDT', 'GBPUSDT'].includes(t.symbol)
+          (t.symbol.includes('UPUSDT') ||
+           t.symbol.includes('DOWNUSDT') ||
+           t.symbol.includes('BULLUSDT') ||
+           t.symbol.includes('BEARUSDT'))
         )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
         .map((t: any) => t.symbol);
@@ -56,7 +55,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     } catch (e) {
       console.error('Error fetching top symbols', e);
       // Fallback
-      return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
+      return ['BTCUPUSDT', 'BTCDOWNUSDT', 'ETHUPUSDT', 'ETHDOWNUSDT', 'BNBUPUSDT', 'BNBDOWNUSDT'];
     }
   };
 
