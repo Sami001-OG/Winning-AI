@@ -5,20 +5,27 @@ const BINANCE_ENDPOINTS = [
   'https://api3.binance.com'
 ];
 
+const BINANCE_FUTURES_ENDPOINTS = [
+  'https://fapi.binance.com'
+];
+
 export const fetchWithRetry = async (
   url: string,
   retries = 3,
   backoff = 1000
 ): Promise<Response> => {
-  const isBinance = url.includes('binance.com');
+  const isBinanceSpot = url.includes('api.binance.com');
+  const isBinanceFutures = url.includes('fapi.binance.com');
   
-  if (isBinance) {
+  if (isBinanceSpot || isBinanceFutures) {
     const path = url.split('binance.com')[1];
     let lastError: any;
     
-    for (let i = 0; i < BINANCE_ENDPOINTS.length; i++) {
+    const endpoints = isBinanceFutures ? BINANCE_FUTURES_ENDPOINTS : BINANCE_ENDPOINTS;
+    
+    for (let i = 0; i < endpoints.length; i++) {
       try {
-        const endpoint = BINANCE_ENDPOINTS[i];
+        const endpoint = endpoints[i];
         const response = await fetch(`${endpoint}${path}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);

@@ -49,16 +49,16 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
   const fetchTopSymbols = async () => {
     try {
-      const res = await fetchWithRetry('https://api.binance.com/api/v3/ticker/24hr');
+      const res = await fetchWithRetry('https://fapi.binance.com/fapi/v1/ticker/24hr');
       const data = await res.json();
       const usdtPairs = data
         .filter((t: any) => 
           t.symbol.endsWith('USDT') && 
           parseFloat(t.volume) > 0 &&
-          (t.symbol.includes('UPUSDT') ||
-           t.symbol.includes('DOWNUSDT') ||
-           t.symbol.includes('BULLUSDT') ||
-           t.symbol.includes('BEARUSDT'))
+          !t.symbol.includes('UPUSDT') &&
+          !t.symbol.includes('DOWNUSDT') &&
+          !t.symbol.includes('BULLUSDT') &&
+          !t.symbol.includes('BEARUSDT')
         )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
         .map((t: any) => t.symbol);
@@ -66,12 +66,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     } catch (e) {
       console.error('Error fetching top symbols', e);
       // Fallback
-      return ['BTCUPUSDT', 'BTCDOWNUSDT', 'ETHUPUSDT', 'ETHDOWNUSDT', 'BNBUPUSDT', 'BNBDOWNUSDT'];
+      return ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT'];
     }
   };
 
   const fetchKlines = async (symbol: string, tf: string) => {
-    const res = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=250`);
+    const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250`);
     const data = await res.json();
     return data.map((d: any) => ({
       time: Math.floor(d[0] / 1000),
@@ -324,8 +324,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         if (!isMounted) return;
 
         const batches = [];
-        for (let i = 0; i < symbols.length; i += 3) {
-          batches.push(symbols.slice(i, i + 3));
+        for (let i = 0; i < symbols.length; i += 15) {
+          batches.push(symbols.slice(i, i + 15));
         }
 
         klinesDataRef.current = {};
@@ -342,10 +342,11 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
               console.error(`Error fetching klines for ${sym}`, e);
             }
           }));
-          // Delay to respect Binance rate limits (1200 weight / min)
-          // 3 symbols * 3 TFs = 9 requests * 2 weight = 18 weight per batch
-          // 18 weight / 1000ms = 1080 weight / min (safe)
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Delay to respect Binance rate limits (2400 weight / min for Futures)
+          // 15 symbols * 3 TFs = 45 requests * 2 weight = 90 weight per batch
+          // 20 batches * 500ms = 10 seconds total loading time
+          // Total weight = 1800 (well under 2400/min limit)
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         if (!isMounted) return;
@@ -360,7 +361,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         
         for (let i = 0; i < allStreams.length; i += streamsPerConnection) {
           const connectionStreams = allStreams.slice(i, i + streamsPerConnection);
-          const ws = new WebSocket(`wss://stream.binance.com:9443/ws`);
+          const ws = new WebSocket(`wss://fstream.binance.com/ws`);
           wsRefs.current.push(ws);
 
           ws.onopen = () => {
