@@ -126,37 +126,35 @@ export const analyzeMultiTimeframe = (
   trades: Trade[],
   symbol: string
 ): AnalysisResult => {
-  // 1. HTF Analysis (4h)
-  const htfDirection = getHTFDirection(data4h);
-  
-  if (htfDirection === 'NEUTRAL') {
-    return createNoTradeResult('HTF Direction Neutral or Conflicting');
-  }
-
-  // 2. MTF Analysis (15m) - Uses the original weighting process / confidence calculating system
+  // 1. Analyze all timeframes
+  const htfAnalysis = analyzeChart(data4h, indicatorReliability, trades, symbol);
   const mtfAnalysis = analyzeChart(data15m, indicatorReliability, trades, symbol);
+  const ltfAnalysis = analyzeChart(data5m, indicatorReliability, trades, symbol);
   
   if (mtfAnalysis.signal === 'NO TRADE') {
     return mtfAnalysis;
   }
 
-  if (mtfAnalysis.signal !== htfDirection) {
-    return createNoTradeResult(`MTF Signal (${mtfAnalysis.signal}) does not match HTF Direction (${htfDirection})`);
+  // 2. Check for alignment
+  const signals = [htfAnalysis.signal, mtfAnalysis.signal, ltfAnalysis.signal];
+  const isAligned = signals.every(s => s === mtfAnalysis.signal);
+  
+  if (!isAligned) {
+    return createNoTradeResult(`Timeframes not aligned: 4h(${htfAnalysis.signal}), 15m(${mtfAnalysis.signal}), 5m(${ltfAnalysis.signal})`);
   }
 
-  // 3. LTF Analysis (5m) - Only for entry trigger
-  const ltfValid = validateLTFEntry(data5m, htfDirection);
-  if (!ltfValid.isValid) {
-    return createNoTradeResult(ltfValid.reason);
-  }
-
-  // If all gates pass, return the MTF analysis exactly as calculated by the original weighting process
+  // 3. Combine confidence
+  // Weighting: 15m (MTF) is core, 4h (HTF) is trend, 5m (LTF) is trigger
+  const combinedConfidence = (htfAnalysis.confidence * 0.3) + (mtfAnalysis.confidence * 0.4) + (ltfAnalysis.confidence * 0.3);
+  
+  // 4. Final result
   const finalAnalysis = { ...mtfAnalysis };
+  finalAnalysis.confidence = combinedConfidence;
   
   // Update the System Logic indicator to reflect multi-TF alignment
   const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === 'System Logic');
   if (sysLogicIdx !== -1) {
-    finalAnalysis.indicators[sysLogicIdx].description = `Gated Multi-TF Aligned: HTF ${htfDirection}, MTF Validated, LTF Triggered.`;
+    finalAnalysis.indicators[sysLogicIdx].description = `Multi-TF Aligned: 4h(${htfAnalysis.signal}), 15m(${mtfAnalysis.signal}), 5m(${ltfAnalysis.signal}). Combined Confidence: ${combinedConfidence.toFixed(1)}%`;
   }
 
   return finalAnalysis;
