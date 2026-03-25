@@ -35,6 +35,8 @@ const isHammer = (c: Candle) => {
 const isEngulfingBullish = (p: Candle, c: Candle) => p.close < p.open && c.close > c.open && c.close > p.open && c.open < p.close;
 const isEngulfingBearish = (p: Candle, c: Candle) => p.close > p.open && c.close < c.open && c.close < p.open && c.open > p.close;
 
+export * from './multiTimeframe';
+
 export const analyzeChart = (
   data: Candle[], 
   indicatorReliability: Record<string, number> = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 },

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { analyzeChart } from '../analysis';
+import { analyzeMultiTimeframe } from '../analysis';
 import { Candle, AnalysisResult, Trade } from '../types';
 import { sendTelegramAlert } from '../services/telegramService';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 import { formatPrice } from '../utils/format';
 
-const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const TIMEFRAMES = ['4h', '15m', '5m'];
 const sessions = ['ALL', 'Asian', 'London', 'New York'];
 
 interface TradeSignal {
@@ -23,7 +23,6 @@ interface TopTradesTableProps {
 }
 
 export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
-  const [interval, setInterval] = useState('15m');
   const [sessionFilter, setSessionFilter] = useState('ALL');
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,8 +30,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [frozenEntries, setFrozenEntries] = useState<Record<string, number>>({});
   
-  const klinesDataRef = useRef<Record<string, Candle[]>>({});
-  const wsRef = useRef<WebSocket | null>(null);
+  const klinesDataRef = useRef<Record<string, Record<string, Candle[]>>>({});
+  const wsRefs = useRef<WebSocket[]>([]);
   const prevEntriesRef = useRef<Record<string, number>>({});
   const lastSentSignalsRef = useRef<Record<string, { direction: string, timestamp: number }>>({});
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
@@ -42,9 +41,16 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       const res = await fetchWithRetry('https://api.binance.com/api/v3/ticker/24hr');
       const data = await res.json();
       const usdtPairs = data
-        .filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume) > 0)
+        .filter((t: any) => 
+          t.symbol.endsWith('USDT') && 
+          parseFloat(t.volume) > 0 &&
+          !t.symbol.includes('UPUSDT') &&
+          !t.symbol.includes('DOWNUSDT') &&
+          !t.symbol.includes('BULLUSDT') &&
+          !t.symbol.includes('BEARUSDT') &&
+          !['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'EURUSDT', 'GBPUSDT'].includes(t.symbol)
+        )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .slice(0, 50)
         .map((t: any) => t.symbol);
       return usdtPairs;
     } catch (e) {
@@ -70,9 +76,13 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
   const updateSignals = () => {
     const newSignals: TradeSignal[] = [];
-    for (const [symbol, data] of Object.entries(klinesDataRef.current) as [string, Candle[]][]) {
-      if (data.length > 0) {
-        const analysis = analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol);
+    for (const [symbol, tfData] of Object.entries(klinesDataRef.current)) {
+      if (!tfData['4h'] || !tfData['15m'] || !tfData['5m']) continue;
+      if (tfData['4h'].length === 0 || tfData['15m'].length === 0 || tfData['5m'].length === 0) continue;
+
+      const analysis = analyzeMultiTimeframe(tfData['4h'], tfData['15m'], tfData['5m'], DEFAULT_RELIABILITY, trades, symbol);
+
+      if (analysis.signal !== 'NO TRADE') {
         const currentEntry = analysis.suggestedEntry;
         const prevEntry = prevEntriesRef.current[symbol];
         
@@ -89,7 +99,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         newSignals.push({
           symbol,
           analysis,
-          lastPrice: data[data.length - 1].close,
+          lastPrice: tfData['5m'][tfData['5m'].length - 1].close,
           entryDirection
         });
       }
@@ -106,20 +116,17 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       
       if (analysis.signal === 'NO TRADE' || analysis.confidence < 85) continue;
 
-      const data = klinesDataRef.current[symbol];
-      if (!data) continue;
+      const data4h = klinesDataRef.current[symbol]['4h'];
+      const data15m = klinesDataRef.current[symbol]['15m'];
+      const data5m = klinesDataRef.current[symbol]['5m'];
+      if (!data4h || !data15m || !data5m) continue;
 
       const structure = analysis.layers?.structure || 0;
 
       // Check if the previous candles also had the same signal to prevent continuous spam on page refresh
-      const prevKlines1 = data.slice(0, -1);
-      const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, trades, symbol);
-      
-      const prevKlines2 = data.slice(0, -2);
-      const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, trades, symbol);
-
-      const prevKlines3 = data.slice(0, -3);
-      const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, trades, symbol);
+      const prevAnalysis1 = analyzeMultiTimeframe(data4h.slice(0, -1), data15m.slice(0, -1), data5m.slice(0, -1), DEFAULT_RELIABILITY, trades, symbol);
+      const prevAnalysis2 = analyzeMultiTimeframe(data4h.slice(0, -2), data15m.slice(0, -2), data5m.slice(0, -2), DEFAULT_RELIABILITY, trades, symbol);
+      const prevAnalysis3 = analyzeMultiTimeframe(data4h.slice(0, -3), data15m.slice(0, -3), data5m.slice(0, -3), DEFAULT_RELIABILITY, trades, symbol);
       
       const isContinuous = 
         (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
@@ -136,7 +143,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
           const entryPrice = analysis.suggestedEntry || lastPrice;
           const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${interval}\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n✅ <b>Take Profit:</b> ${formatPrice(analysis.tp)}\n❌ <b>Stop Loss:</b> ${formatPrice(analysis.sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 5m)\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n✅ <b>Take Profit:</b> ${formatPrice(analysis.tp)}\n❌ <b>Stop Loss:</b> ${formatPrice(analysis.sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
 
           if (analysis.signal === 'LONG' && structure >= 0) {
             sendTelegramAlert(message, bullishImageUrl);
@@ -176,8 +183,9 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       setLoading(true);
       setError(null);
       
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (wsRefs.current.length > 0) {
+        wsRefs.current.forEach(ws => ws.close());
+        wsRefs.current = [];
       }
 
       try {
@@ -185,21 +193,28 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         if (!isMounted) return;
 
         const batches = [];
-        for (let i = 0; i < symbols.length; i += 5) {
-          batches.push(symbols.slice(i, i + 5));
+        for (let i = 0; i < symbols.length; i += 3) {
+          batches.push(symbols.slice(i, i + 3));
         }
 
         klinesDataRef.current = {};
         
         for (const batch of batches) {
           await Promise.all(batch.map(async (sym) => {
+            klinesDataRef.current[sym] = {};
             try {
-              const klines = await fetchKlines(sym, interval);
-              klinesDataRef.current[sym] = klines;
+              await Promise.all(TIMEFRAMES.map(async (tf) => {
+                const klines = await fetchKlines(sym, tf);
+                klinesDataRef.current[sym][tf] = klines;
+              }));
             } catch (e) {
               console.error(`Error fetching klines for ${sym}`, e);
             }
           }));
+          // Delay to respect Binance rate limits (1200 weight / min)
+          // 3 symbols * 3 TFs = 9 requests * 2 weight = 18 weight per batch
+          // 18 weight / 1000ms = 1080 weight / min (safe)
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         if (!isMounted) return;
@@ -207,38 +222,60 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         setLoading(false);
 
         // Setup WS
-        const streams = symbols.map(s => `${s.toLowerCase()}@kline_${interval}`).join('/');
-        const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-        wsRef.current = ws;
+        const allStreams = symbols.flatMap(s => TIMEFRAMES.map(tf => `${s.toLowerCase()}@kline_${tf}`));
+        
+        // Binance allows max 1024 streams per connection. We'll use 900 per connection to be safe.
+        const streamsPerConnection = 900;
+        
+        for (let i = 0; i < allStreams.length; i += streamsPerConnection) {
+          const connectionStreams = allStreams.slice(i, i + streamsPerConnection);
+          const ws = new WebSocket(`wss://stream.binance.com:9443/ws`);
+          wsRefs.current.push(ws);
 
-        ws.onmessage = (event) => {
-          const message = JSON.parse(event.data);
-          if (message.data && message.data.e === 'kline') {
-            const kline = message.data.k;
-            const symbol = message.data.s;
+          ws.onopen = () => {
+            // Binance allows max 200 streams per SUBSCRIBE request
+            for (let j = 0; j < connectionStreams.length; j += 200) {
+              const chunk = connectionStreams.slice(j, j + 200);
+              ws.send(JSON.stringify({
+                method: "SUBSCRIBE",
+                params: chunk,
+                id: j + 1
+              }));
+            }
+          };
+
+          ws.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            const klineData = message.e === 'kline' ? message : (message.data && message.data.e === 'kline' ? message.data : null);
             
-            if (klinesDataRef.current[symbol]) {
-              const data = klinesDataRef.current[symbol];
-              const candle: Candle = {
-                time: Math.floor(kline.t / 1000),
-                open: parseFloat(kline.o),
-                high: parseFloat(kline.h),
-                low: parseFloat(kline.l),
-                close: parseFloat(kline.c),
-                volume: parseFloat(kline.v),
-                isFinal: kline.x
-              };
+            if (klineData) {
+              const kline = klineData.k;
+              const symbol = klineData.s;
+              const interval = kline.i;
+              
+              if (klinesDataRef.current[symbol] && klinesDataRef.current[symbol][interval]) {
+                const data = klinesDataRef.current[symbol][interval];
+                const candle: Candle = {
+                  time: Math.floor(kline.t / 1000),
+                  open: parseFloat(kline.o),
+                  high: parseFloat(kline.h),
+                  low: parseFloat(kline.l),
+                  close: parseFloat(kline.c),
+                  volume: parseFloat(kline.v),
+                  isFinal: kline.x
+                };
 
-              const lastCandle = data[data.length - 1];
-              if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
-                data[data.length - 1] = candle;
-              } else {
-                data.push(candle);
-                if (data.length > 250) data.shift();
+                const lastCandle = data[data.length - 1];
+                if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
+                  data[data.length - 1] = candle;
+                } else {
+                  data.push(candle);
+                  if (data.length > 250) data.shift();
+                }
               }
             }
-          }
-        };
+          };
+        }
       } catch (e: any) {
         console.error('Init error', e);
         if (isMounted) {
@@ -257,23 +294,23 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     return () => {
       isMounted = false;
       window.clearInterval(timerId);
-      if (wsRef.current) wsRef.current.close();
+      wsRefs.current.forEach(ws => ws.close());
     };
-  }, [interval]);
+  }, []);
 
   const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 85) return 'text-emerald-400';
-    if (confidence >= 70) return 'text-yellow-400';
-    return 'text-white/60';
+    if (confidence >= 85) return 'text-emerald-400 group-hover:text-emerald-600';
+    if (confidence >= 70) return 'text-yellow-400 group-hover:text-yellow-600';
+    return 'text-white/60 group-hover:text-black/60';
   };
 
   const getScoreColor = (score: number | undefined) => {
-    if (score === undefined) return 'text-white/40';
-    if (score > 0.5) return 'text-emerald-400';
-    if (score < -0.5) return 'text-rose-400';
-    if (score > 0) return 'text-emerald-400/60';
-    if (score < 0) return 'text-rose-400/60';
-    return 'text-white/40';
+    if (score === undefined) return 'text-white/40 group-hover:text-black/40';
+    if (score > 0.5) return 'text-emerald-400 group-hover:text-emerald-600';
+    if (score < -0.5) return 'text-rose-400 group-hover:text-rose-600';
+    if (score > 0) return 'text-emerald-400/60 group-hover:text-emerald-600/60';
+    if (score < 0) return 'text-rose-400/60 group-hover:text-rose-600/60';
+    return 'text-white/40 group-hover:text-black/40';
   };
 
   const filteredSignals = signals.filter(signal => {
@@ -288,14 +325,19 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     return sessionIndicator?.value === sessionFilter;
   });
   
-  const displaySignals = filteredSignals.slice(0, 10);
+  const displaySignals = filteredSignals;
 
   return (
-    <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl mb-8">
-      <div className="p-4 border-b border-white/10 bg-white/[0.02] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <Activity size={16} className="text-emerald-400" />
-          <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Weighted Confirmed Trades (Top 10)</h2>
+    <section className="w-full rounded-2xl border border-white/10 bg-[#050505] overflow-hidden shadow-2xl mb-8 relative">
+      {/* Subtle gradient background for the section */}
+      <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none" />
+      
+      <div className="p-5 border-b border-white/10 bg-black/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+            <Activity size={16} className="text-emerald-400" />
+          </div>
+          <h2 className="text-xs font-mono font-bold text-white uppercase tracking-widest">High Probability Signals <span className="text-white/40 font-normal">(Multi-TF Aligned)</span></h2>
         </div>
         
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -305,34 +347,18 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           </div>
           
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
+            <div className="flex items-center gap-1 bg-black/60 p-1 rounded-lg border border-white/10 shadow-inner">
               {sessions.map((session) => (
                 <button
                   key={session}
                   onClick={() => setSessionFilter(session)}
-                  className={`px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all ${
+                  className={`px-4 py-1.5 rounded-md text-[10px] font-mono font-bold uppercase transition-all duration-200 ${
                     sessionFilter === session 
-                      ? "bg-white/10 text-blue-400" 
-                      : "text-white/40 hover:text-white/80 hover:bg-white/5"
+                      ? "bg-white text-black shadow-sm" 
+                      : "text-white/40 hover:text-white hover:bg-white/10"
                   }`}
                 >
                   {session}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10">
-              {timeframes.map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => setInterval(tf)}
-                  className={`px-3 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all ${
-                    interval === tf 
-                      ? "bg-white/10 text-emerald-400" 
-                      : "text-white/40 hover:text-white/80 hover:bg-white/5"
-                  }`}
-                >
-                  {tf}
                 </button>
               ))}
             </div>
@@ -340,98 +366,93 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         </div>
       </div>
       
-      <div className="p-0 overflow-x-auto">
+      <div className="p-0 overflow-x-auto no-scrollbar">
         {error && (
           <div className="p-4 bg-rose-500/10 border-b border-rose-500/20 text-rose-400 text-xs font-mono flex items-center gap-2">
             <AlertTriangle size={14} />
             <span>{error}. Using fallback symbols.</span>
           </div>
         )}
-        <table className="w-full text-left border-collapse min-w-[800px]">
-          <thead>
-            <tr className="border-b border-white/5 bg-white/[0.02] text-[10px] font-mono text-white/40 uppercase tracking-widest">
-              <th className="p-4 font-normal">Symbol</th>
-              <th className="p-4 font-normal">Trade Signal</th>
-              <th className="p-4 font-normal">Confidence Score</th>
-              <th className="p-4 font-normal text-center">Market Condition</th>
-              <th className="p-4 font-normal text-center">Trend Alignment</th>
-              <th className="p-4 font-normal text-center">Entry Timing</th>
-              <th className="p-4 font-normal text-center">Volume Confirmation</th>
-              <th className="p-4 font-normal text-right">Target Entry Price</th>
-              <th className="p-4 font-normal text-right">Current Price</th>
-              <th className="p-4 font-normal text-right">Take Profit / Stop Loss</th>
-            </tr>
-          </thead>
-          <tbody className="font-mono text-sm">
+        <div className="min-w-[1000px]">
+          {/* Header */}
+          <div className="grid grid-cols-[100px_100px_150px_1fr_1fr_1fr_1fr_150px_120px_120px] gap-4 p-4 border-y border-white/20 bg-[#111] text-[10px] font-mono text-white/50 uppercase tracking-widest sticky top-0 z-10 shadow-md">
+            <div className="flex items-center">Symbol</div>
+            <div className="flex items-center">Signal</div>
+            <div className="flex items-center">Confidence</div>
+            <div className="text-center flex items-center justify-center">Market</div>
+            <div className="text-center flex items-center justify-center">Trend</div>
+            <div className="text-center flex items-center justify-center">Timing</div>
+            <div className="text-center flex items-center justify-center">Volume</div>
+            <div className="text-right flex items-center justify-end">Target Entry</div>
+            <div className="text-right flex items-center justify-end">Current</div>
+            <div className="text-right flex items-center justify-end">TP / SL</div>
+          </div>
+          
+          {/* Body */}
+          <div className="font-mono text-sm">
             {loading && displaySignals.length === 0 ? (
-              <tr>
-                <td colSpan={10} className="p-8 text-center text-white/40 text-xs">
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <RefreshCw size={24} className="animate-spin text-emerald-500/50" />
-                    <span>Analyzing top 50 pairs...</span>
-                  </div>
-                </td>
-              </tr>
+              <div className="p-8 text-center text-white/40 text-xs flex flex-col items-center justify-center gap-2">
+                <RefreshCw size={24} className="animate-spin text-emerald-500/50" />
+                <span>Analyzing top 50 pairs...</span>
+              </div>
             ) : displaySignals.length === 0 ? (
-              <tr>
-                <td colSpan={10} className="p-8 text-center text-white/40 text-xs">No active signals found for the selected session.</td>
-              </tr>
+              <div className="p-8 text-center text-white/40 text-xs">No active signals found for the selected session.</div>
             ) : (
               displaySignals.map((s) => (
-                <tr key={s.symbol} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                  <td className="p-4 font-bold text-white">{s.symbol}</td>
-                  <td className="p-4">
+                <div key={s.symbol} className="grid grid-cols-[100px_100px_150px_1fr_1fr_1fr_1fr_150px_120px_120px] gap-4 p-4 border-b border-white/5 hover:bg-white hover:text-black transition-all duration-200 group items-center cursor-pointer">
+                  <div className="font-bold text-white group-hover:text-black">{s.symbol}</div>
+                  <div>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
-                      s.analysis.signal === 'LONG' ? "bg-emerald-500/10 text-emerald-400" : 
-                      s.analysis.signal === 'SHORT' ? "bg-rose-500/10 text-rose-400" : 
-                      "bg-white/5 text-white/40"
+                      s.analysis.signal === 'LONG' ? "bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white" : 
+                      s.analysis.signal === 'SHORT' ? "bg-rose-500/10 text-rose-400 group-hover:bg-rose-500 group-hover:text-white" : 
+                      "bg-white/5 text-white/40 group-hover:bg-black/10 group-hover:text-black"
                     }`}>
                       {s.analysis.signal}
                     </span>
-                  </td>
-                  <td className="p-4">
+                  </div>
+                  <div>
                     <div className="flex items-center gap-2">
                       <span className={`font-bold ${getConfidenceColor(s.analysis.confidence)}`}>
                         {s.analysis.confidence.toFixed(1)}%
                       </span>
-                      <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className="w-16 h-1.5 bg-white/5 group-hover:bg-black/10 rounded-full overflow-hidden">
                         <div 
-                          className={`h-full rounded-full ${s.analysis.confidence >= 85 ? 'bg-emerald-500' : s.analysis.confidence >= 70 ? 'bg-yellow-500' : 'bg-white/20'}`}
+                          className={`h-full rounded-full ${s.analysis.confidence >= 85 ? 'bg-emerald-500' : s.analysis.confidence >= 70 ? 'bg-yellow-500' : 'bg-white/20 group-hover:bg-black/20'}`}
                           style={{ width: `${s.analysis.confidence}%` }}
                         />
                       </div>
                     </div>
-                  </td>
-                  <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.marketCondition)}`}>
+                  </div>
+                  <div className={`text-center ${getScoreColor(s.analysis.layers?.marketCondition)}`}>
                     {s.analysis.layers?.marketCondition !== undefined ? s.analysis.layers.marketCondition.toFixed(2) : '-'}
-                  </td>
-                  <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.trend)}`}>
+                  </div>
+                  <div className={`text-center ${getScoreColor(s.analysis.layers?.trend)}`}>
                     {s.analysis.layers?.trend !== undefined ? s.analysis.layers.trend.toFixed(2) : '-'}
-                  </td>
-                  <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.entry)}`}>
+                  </div>
+                  <div className={`text-center ${getScoreColor(s.analysis.layers?.entry)}`}>
                     {s.analysis.layers?.entry !== undefined ? s.analysis.layers.entry.toFixed(2) : '-'}
-                  </td>
-                  <td className={`p-4 text-center ${getScoreColor(s.analysis.layers?.confirmation)}`}>
+                  </div>
+                  <div className={`text-center ${getScoreColor(s.analysis.layers?.confirmation)}`}>
                     {s.analysis.layers?.confirmation !== undefined ? s.analysis.layers.confirmation.toFixed(2) : '-'}
-                  </td>
-                  <td className="p-4 text-right">
+                  </div>
+                  <div className="text-right">
                     {s.analysis.signal !== 'NO TRADE' && (frozenEntries[s.symbol] || s.analysis.suggestedEntry) ? (
                       <div className="flex items-center justify-end gap-2">
                         {frozenEntries[s.symbol] ? (
                           <Lock 
                             size={12} 
                             className="text-emerald-400 cursor-pointer" 
-                            onClick={() => toggleFreeze(s.symbol, s.analysis.suggestedEntry!)}
+                            onClick={(e) => { e.stopPropagation(); toggleFreeze(s.symbol, s.analysis.suggestedEntry!); }}
                           />
                         ) : (
                           <Unlock 
                             size={12} 
-                            className="text-white/20 hover:text-white/60 cursor-pointer transition-colors" 
-                            onClick={() => toggleFreeze(s.symbol, s.analysis.suggestedEntry!)}
+                            className="text-white/20 group-hover:text-black/40 hover:!text-emerald-500 cursor-pointer transition-colors" 
+                            onClick={(e) => { e.stopPropagation(); toggleFreeze(s.symbol, s.analysis.suggestedEntry!); }}
                           />
                         )}
                         <div className="flex items-center gap-1">
-                          <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white"}>
+                          <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white group-hover:text-black"}>
                             {formatPrice(frozenEntries[s.symbol] || s.analysis.suggestedEntry || 0)}
                           </span>
                           {!frozenEntries[s.symbol] && s.entryDirection === 'up' && <ArrowUp size={12} className="text-emerald-400" />}
@@ -440,25 +461,25 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                         </div>
                       </div>
                     ) : (
-                      <span className="text-white/20">-</span>
+                      <span className="text-white/20 group-hover:text-black/20">-</span>
                     )}
-                  </td>
-                  <td className="p-4 text-right text-white/80">{formatPrice(s.lastPrice)}</td>
-                  <td className="p-4 text-right">
+                  </div>
+                  <div className="text-right text-white/80 group-hover:text-black/80">{formatPrice(s.lastPrice)}</div>
+                  <div className="text-right">
                     {s.analysis.signal !== 'NO TRADE' && s.analysis.tp && s.analysis.sl ? (
                       <div className="flex flex-col items-end text-[10px]">
-                        <span className="text-emerald-400">{s.analysis.tp !== undefined ? formatPrice(s.analysis.tp) : '-'}</span>
-                        <span className="text-rose-400">{s.analysis.sl !== undefined ? formatPrice(s.analysis.sl) : '-'}</span>
+                        <span className="text-emerald-400 group-hover:text-emerald-600">{s.analysis.tp !== undefined ? formatPrice(s.analysis.tp) : '-'}</span>
+                        <span className="text-rose-400 group-hover:text-rose-600">{s.analysis.sl !== undefined ? formatPrice(s.analysis.sl) : '-'}</span>
                       </div>
                     ) : (
-                      <span className="text-white/20">-</span>
+                      <span className="text-white/20 group-hover:text-black/20">-</span>
                     )}
-                  </td>
-                </tr>
+                  </div>
+                </div>
               ))
             )}
-          </tbody>
-        </table>
+          </div>
+        </div>
       </div>
     </section>
   );

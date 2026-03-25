@@ -519,20 +519,20 @@ export default function App() {
             </div>
             <div className="p-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
               {activeAnalysis?.indicators.map(indicator => (
-                <div key={indicator.name} className="bg-white/5 border border-white/5 p-4 rounded-lg hover:border-white/20 transition-colors group">
-                  <div className="text-xs font-mono text-white/50 uppercase tracking-wider mb-2 group-hover:text-white/80 transition-colors truncate">
+                <div key={indicator.name} className="bg-black/40 border border-white/5 p-4 rounded-lg hover:border-white/20 hover:bg-white/[0.02] transition-all duration-300 group shadow-inner">
+                  <div className="text-[10px] font-mono text-white/40 uppercase tracking-wider mb-2 group-hover:text-white/70 transition-colors truncate">
                     {indicator.name}
                   </div>
                   <div className="flex items-end justify-between">
-                    <div className="text-base font-mono font-bold text-white truncate pr-2">
+                    <div className="text-sm sm:text-base font-mono font-bold text-white/90 group-hover:text-white transition-colors truncate pr-2">
                       {indicator.value}
                     </div>
                     {indicator.signal === 'bullish' ? (
-                      <TrendingUp size={16} className="text-emerald-400 shrink-0" />
+                      <TrendingUp size={14} className="text-emerald-400 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity" />
                     ) : indicator.signal === 'bearish' ? (
-                      <TrendingDown size={16} className="text-rose-400 shrink-0" />
+                      <TrendingDown size={14} className="text-rose-400 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity" />
                     ) : (
-                      <Minus size={16} className="text-yellow-400 shrink-0" />
+                      <Minus size={14} className="text-yellow-400 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity" />
                     )}
                   </div>
                 </div>
@@ -551,63 +551,78 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="p-0">
+            <div className="p-0 overflow-x-auto no-scrollbar">
               {trades.length === 0 ? (
-                <div className="p-6 text-center text-white/40 font-mono text-sm">No trades executed yet.</div>
+                <div className="p-12 text-center text-white/40 font-mono text-xs flex flex-col items-center gap-2">
+                  <ActivitySquare size={24} className="opacity-20" />
+                  <span>No trades executed yet.</span>
+                </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[600px]">
-                    <thead>
-                      <tr className="border-b border-white/5 bg-white/[0.02] text-[10px] font-mono text-white/40 uppercase tracking-widest">
-                        <th className="p-4 font-normal">Time</th>
-                        <th className="p-4 font-normal">Pair</th>
-                        <th className="p-4 font-normal">Type</th>
-                        <th className="p-4 font-normal">Entry</th>
-                        <th className="p-4 font-normal">Target (TP)</th>
-                        <th className="p-4 font-normal">Stop (SL)</th>
-                        <th className="p-4 font-normal text-right">Status</th>
-                        <th className="p-4 font-normal text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="font-mono text-sm">
-                      {trades.map(trade => (
-                        <tr key={trade.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                          <td className="p-4 text-white/60">{new Date(trade.timestamp).toLocaleTimeString()}</td>
-                          <td className="p-4 font-bold text-white">{trade.symbol}</td>
-                          <td className="p-4">
-                            <span className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-bold tracking-wider",
-                              trade.type === 'LONG' ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
-                            )}>
-                              {trade.type}
-                            </span>
-                          </td>
-                          <td className="p-4 text-white/80">{(trade.entry || 0).toFixed(2)}</td>
-                          <td className="p-4 text-emerald-400">{(trade.tp || 0).toFixed(2)}</td>
-                          <td className="p-4 text-rose-400">{(trade.sl || 0).toFixed(2)}</td>
-                          <td className="p-4 text-right">
-                            <span className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-bold tracking-wider",
-                              trade.status === 'SUCCESS' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" :
-                              trade.status === 'FAILED' ? "bg-rose-500/20 text-rose-400 border border-rose-500/20" :
-                              "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
-                            )}>
-                              {trade.status}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right">
-                            <button
-                              onClick={() => setTrades(prev => prev.filter(t => t.id !== trade.id))}
-                              className="text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-500/10 transition-colors"
-                              title="Delete Trade"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="min-w-[800px]">
+                  {/* Header */}
+                  <div className="grid grid-cols-8 gap-4 p-4 border-b border-white/5 bg-[#111] text-[10px] font-mono text-white/40 uppercase tracking-widest sticky top-0 z-10">
+                    <div className="col-span-1 flex items-center">Time</div>
+                    <div className="col-span-1 flex items-center">Pair</div>
+                    <div className="col-span-1 flex items-center">Type</div>
+                    <div className="col-span-1 flex items-center">Entry</div>
+                    <div className="col-span-1 flex items-center">Target (TP)</div>
+                    <div className="col-span-1 flex items-center">Stop (SL)</div>
+                    <div className="col-span-1 flex items-center justify-end">Status</div>
+                    <div className="col-span-1 flex items-center justify-end">Action</div>
+                  </div>
+                  
+                  {/* Body */}
+                  <div className="flex flex-col">
+                    {trades.map(trade => (
+                      <div 
+                        key={trade.id} 
+                        className="grid grid-cols-8 gap-4 p-4 border-b border-white/5 hover:bg-white/[0.02] transition-colors group items-center"
+                      >
+                        <div className="col-span-1 text-xs font-mono text-white/60 group-hover:text-white/80 transition-colors">
+                          {new Date(trade.timestamp).toLocaleTimeString()}
+                        </div>
+                        <div className="col-span-1 text-sm font-bold text-white group-hover:text-emerald-400 transition-colors">
+                          {trade.symbol}
+                        </div>
+                        <div className="col-span-1">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-bold tracking-wider",
+                            trade.type === 'LONG' ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                          )}>
+                            {trade.type}
+                          </span>
+                        </div>
+                        <div className="col-span-1 text-sm font-mono text-white/80 group-hover:text-white transition-colors">
+                          {(trade.entry || 0).toFixed(2)}
+                        </div>
+                        <div className="col-span-1 text-sm font-mono text-emerald-400/80 group-hover:text-emerald-400 transition-colors">
+                          {(trade.tp || 0).toFixed(2)}
+                        </div>
+                        <div className="col-span-1 text-sm font-mono text-rose-400/80 group-hover:text-rose-400 transition-colors">
+                          {(trade.sl || 0).toFixed(2)}
+                        </div>
+                        <div className="col-span-1 flex justify-end">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-bold tracking-wider",
+                            trade.status === 'SUCCESS' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" :
+                            trade.status === 'FAILED' ? "bg-rose-500/20 text-rose-400 border border-rose-500/20" :
+                            "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
+                          )}>
+                            {trade.status}
+                          </span>
+                        </div>
+                        <div className="col-span-1 flex justify-end">
+                          <button
+                            onClick={() => setTrades(prev => prev.filter(t => t.id !== trade.id))}
+                            className="text-rose-400/50 hover:text-rose-400 p-1.5 rounded hover:bg-rose-500/10 transition-colors"
+                            title="Delete Trade"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
