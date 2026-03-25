@@ -3,6 +3,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { analyzeChart } from "./src/analysis";
+import { analyzeMultiTimeframe } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
 import { Candle, Trade } from "./src/types";
 
@@ -250,24 +251,23 @@ async function startServer() {
       // -----------------------------
 
       const symbols = await fetchTopSymbols();
-      const timeframes = ['15m', '1h', '4h', '1d'];
       const allSignals: any[] = [];
 
       for (const symbol of symbols) {
-        for (const tf of timeframes) {
-          try {
-            const klines = await fetchKlines(symbol, tf);
-            const analysis = analyzeChart(klines, DEFAULT_RELIABILITY, [], symbol);
-            
-            if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 75) {
-              allSignals.push({ symbol, tf, analysis, klines });
-            }
-            
-            // Add a small delay to respect Binance API rate limits (1200 requests/minute)
-            await new Promise(resolve => setTimeout(resolve, 50));
-          } catch (err) {
-            console.error(`Error processing symbol ${symbol} on ${tf} in background loop:`, err);
+        try {
+          const klines4h = await fetchKlines(symbol, '4h');
+          const klines15m = await fetchKlines(symbol, '15m');
+          const klines5m = await fetchKlines(symbol, '5m');
+          const analysis = analyzeMultiTimeframe(klines4h, klines15m, klines5m, DEFAULT_RELIABILITY, [], symbol);
+          
+          if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 75) {
+            allSignals.push({ symbol, tf: 'Multi-TF (4h, 15m, 5m)', analysis, klines: klines15m });
           }
+          
+          // Add a small delay to respect Binance API rate limits (1200 requests/minute)
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (err) {
+          console.error(`Error processing symbol ${symbol} in background loop:`, err);
         }
       }
 
@@ -310,7 +310,7 @@ async function startServer() {
             
             const entryPrice = analysis.suggestedEntry || (klines.length > 0 ? klines[klines.length - 1].close : 0);
             const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-            const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${tf}\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n✅ <b>Take Profit:</b> ${formatPrice(analysis.tp)}\n❌ <b>Stop Loss:</b> ${formatPrice(analysis.sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+            const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${tf}\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n✅ <b>TP1:</b> ${formatPrice(analysis.tp)}\n✅ <b>TP2:</b> ${formatPrice(analysis.tp2 || 0)}\n✅ <b>TP3:</b> ${formatPrice(analysis.tp3 || 0)}\n❌ <b>Stop Loss:</b> ${formatPrice(analysis.sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
 
             const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
             const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";

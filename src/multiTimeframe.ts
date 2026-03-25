@@ -131,25 +131,23 @@ export const analyzeMultiTimeframe = (
   const mtfAnalysis = analyzeChart(data15m, indicatorReliability, trades, symbol);
   const ltfAnalysis = analyzeChart(data5m, indicatorReliability, trades, symbol);
   
-  if (mtfAnalysis.signal === 'NO TRADE') {
-    return mtfAnalysis;
+  // 2. If ANY timeframe says NO TRADE, we have no alignment/entry
+  if (htfAnalysis.signal === 'NO TRADE' || 
+      mtfAnalysis.signal === 'NO TRADE' || 
+      ltfAnalysis.signal === 'NO TRADE') {
+    return createNoTradeResult(`Entry criteria not met on all timeframes: 4h(${htfAnalysis.signal}), 15m(${mtfAnalysis.signal}), 5m(${ltfAnalysis.signal})`);
   }
 
-  // 2. Check for alignment
-  const signals = [htfAnalysis.signal, mtfAnalysis.signal, ltfAnalysis.signal];
-  const isAligned = signals.every(s => s === mtfAnalysis.signal);
-  
-  console.log(`[MTF Debug] Symbol: ${symbol}, Signals: 4h(${htfAnalysis.signal}, ${htfAnalysis.confidence.toFixed(1)}%), 15m(${mtfAnalysis.signal}, ${mtfAnalysis.confidence.toFixed(1)}%), 5m(${ltfAnalysis.signal}, ${ltfAnalysis.confidence.toFixed(1)}%), Aligned: ${isAligned}`);
-
-  if (!isAligned) {
+  // 3. Check for alignment (all must be same)
+  if (htfAnalysis.signal !== mtfAnalysis.signal || mtfAnalysis.signal !== ltfAnalysis.signal) {
     return createNoTradeResult(`Timeframes not aligned: 4h(${htfAnalysis.signal}), 15m(${mtfAnalysis.signal}), 5m(${ltfAnalysis.signal})`);
   }
-
-  // 3. Combine confidence
+  
+  // 4. Combine confidence
   // Weighting: 15m (MTF) is core, 4h (HTF) is trend, 5m (LTF) is trigger
   const combinedConfidence = (htfAnalysis.confidence * 0.3) + (mtfAnalysis.confidence * 0.4) + (ltfAnalysis.confidence * 0.3);
   
-  // 4. Final result
+  // 5. Final result
   const finalAnalysis = { ...mtfAnalysis };
   finalAnalysis.confidence = combinedConfidence;
   
