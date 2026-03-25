@@ -139,6 +139,8 @@ export const analyzeMultiTimeframe = (
   const signals = [htfAnalysis.signal, mtfAnalysis.signal, ltfAnalysis.signal];
   const isAligned = signals.every(s => s === mtfAnalysis.signal);
   
+  console.log(`[MTF Debug] Symbol: ${symbol}, Signals: 4h(${htfAnalysis.signal}, ${htfAnalysis.confidence.toFixed(1)}%), 15m(${mtfAnalysis.signal}, ${mtfAnalysis.confidence.toFixed(1)}%), 5m(${ltfAnalysis.signal}, ${ltfAnalysis.confidence.toFixed(1)}%), Aligned: ${isAligned}`);
+
   if (!isAligned) {
     return createNoTradeResult(`Timeframes not aligned: 4h(${htfAnalysis.signal}), 15m(${mtfAnalysis.signal}), 5m(${ltfAnalysis.signal})`);
   }
@@ -151,8 +153,15 @@ export const analyzeMultiTimeframe = (
   const finalAnalysis = { ...mtfAnalysis };
   finalAnalysis.confidence = combinedConfidence;
   
+  // Combine indicators from all timeframes
+  finalAnalysis.indicators = [
+    ...htfAnalysis.indicators.map(i => ({ ...i, name: `4h - ${i.name}` })),
+    ...mtfAnalysis.indicators.map(i => ({ ...i, name: `15m - ${i.name}` })),
+    ...ltfAnalysis.indicators.map(i => ({ ...i, name: `5m - ${i.name}` }))
+  ];
+  
   // Update the System Logic indicator to reflect multi-TF alignment
-  const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === 'System Logic');
+  const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === '15m - System Logic');
   if (sysLogicIdx !== -1) {
     finalAnalysis.indicators[sysLogicIdx].description = `Multi-TF Aligned: 4h(${htfAnalysis.signal}), 15m(${mtfAnalysis.signal}), 5m(${ltfAnalysis.signal}). Combined Confidence: ${combinedConfidence.toFixed(1)}%`;
   }

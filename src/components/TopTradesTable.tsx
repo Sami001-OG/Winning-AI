@@ -24,6 +24,7 @@ interface ActiveTrade {
   tp3: number;
   sl: number;
   achieved: number; // 0, 1, 2, 3
+  isMTF: boolean;
 }
 
 const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 };
@@ -94,7 +95,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       
       // --- ACTIVE TRADE MONITORING ---
       const activeTrade = activeTradesRef.current[symbol];
-      if (activeTrade) {
+      if (activeTrade && activeTrade.isMTF) {
         let updated = false;
 
         if (activeTrade.direction === 'LONG') {
@@ -216,7 +217,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
               direction: 'LONG',
               entry: entryPrice,
               tp1, tp2, tp3, sl,
-              achieved: 0
+              achieved: 0,
+              isMTF: true
             };
             break; // Only send the absolute best one
           } else if (analysis.signal === 'SHORT' && structure <= 0) {
@@ -227,7 +229,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
               direction: 'SHORT',
               entry: entryPrice,
               tp1, tp2, tp3, sl,
-              achieved: 0
+              achieved: 0,
+              isMTF: true
             };
             break; // Only send the absolute best one
           }
