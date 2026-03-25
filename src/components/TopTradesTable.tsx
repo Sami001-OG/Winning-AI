@@ -100,7 +100,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
         if (activeTrade.direction === 'LONG') {
           if (lastPrice <= activeTrade.sl) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> LONG\n❌ <b>Stop Loss Hit</b> at ${formatPrice(lastPrice)}`);
+            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Stop Loss Hit</b> at ${formatPrice(lastPrice)}`);
             delete activeTradesRef.current[symbol];
           } else if (activeTrade.achieved < 3 && lastPrice >= activeTrade.tp3) {
             sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅✅✅ <b>TP3 Achieved</b> at ${formatPrice(lastPrice)}`);
@@ -116,7 +116,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           }
         } else if (activeTrade.direction === 'SHORT') {
           if (lastPrice >= activeTrade.sl) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> SHORT\n❌ <b>Stop Loss Hit</b> at ${formatPrice(lastPrice)}`);
+            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Stop Loss Hit</b> at ${formatPrice(lastPrice)}`);
             delete activeTradesRef.current[symbol];
           } else if (activeTrade.achieved < 3 && lastPrice <= activeTrade.tp3) {
             sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅✅✅ <b>TP3 Achieved</b> at ${formatPrice(lastPrice)}`);
@@ -208,6 +208,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
           const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
           const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 5m)\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n\n✅ <b>TP1:</b> ${formatPrice(tp1)}\n✅ <b>TP2:</b> ${formatPrice(tp2)}\n✅ <b>TP3:</b> ${formatPrice(tp3)}\n\n❌ <b>Stop Loss:</b> ${formatPrice(sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+
+          console.log(`[Telegram Debug] Sending alert for ${symbol}: ${message}`);
 
           if (analysis.signal === 'LONG' && structure >= 0) {
             sendTelegramAlert(message, bullishImageUrl);
