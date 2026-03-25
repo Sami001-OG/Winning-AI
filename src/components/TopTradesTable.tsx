@@ -171,7 +171,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     for (const bestTrade of newSignals) {
       const { symbol, analysis, lastPrice } = bestTrade;
       
-      if (analysis.signal === 'NO TRADE' || analysis.confidence < 85) continue;
+      if (analysis.signal === 'NO TRADE') continue;
 
       const data4h = klinesDataRef.current[symbol]['4h'];
       const data15m = klinesDataRef.current[symbol]['15m'];
@@ -186,9 +186,9 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       const prevAnalysis3 = analyzeMultiTimeframe(data4h.slice(0, -3), data15m.slice(0, -3), data5m.slice(0, -3), DEFAULT_RELIABILITY, trades, symbol);
       
       const isContinuous = 
-        (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
-        (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
-        (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
+        (prevAnalysis1.signal === analysis.signal) ||
+        (prevAnalysis2.signal === analysis.signal) ||
+        (prevAnalysis3.signal === analysis.signal);
 
       if (!isContinuous) {
         const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
