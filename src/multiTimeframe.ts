@@ -1,7 +1,7 @@
 import { Candle, AnalysisResult, Trade } from './types';
 import { analyzeChart } from './analysis';
 import { EMA, MACD, ADX, RSI, SMA, ATR } from 'technicalindicators';
-import { detectBOS, detectLiquidityGrab, detectRsiDivergence } from './structure';
+import { detectBOS, detectLiquidityGrab, detectRsiDivergence, calculateOrderFlow } from './structure';
 import { calculateVolumeProfile } from './volumeProfile';
 import { detectPatterns } from './patterns';
 
@@ -42,29 +42,48 @@ const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' => {
 
   const bos = detectBOS(data);
   const volProfile = calculateVolumeProfile(data);
+  const orderFlow = calculateOrderFlow(data, 20);
+  const rsi = RSI.calculate({ values: closes, period: 14 });
+  const rsiDivergence = detectRsiDivergence(data, rsi);
+  const liquidityGrab = detectLiquidityGrab(data);
 
   let longScore = 0;
   let shortScore = 0;
 
-  if (lastClose > lastEma50 && lastEma50 > lastEma200) longScore++;
-  if (lastClose < lastEma50 && lastEma50 < lastEma200) shortScore++;
+  // 1. Trend Alignment (High Weight)
+  if (lastClose > lastEma50 && lastEma50 > lastEma200) longScore += 2;
+  if (lastClose < lastEma50 && lastEma50 < lastEma200) shortScore += 2;
 
-  if (lastMacd && lastMacd.MACD! > lastMacd.signal!) longScore++;
-  if (lastMacd && lastMacd.MACD! < lastMacd.signal!) shortScore++;
+  // 2. Momentum
+  if (lastMacd && lastMacd.MACD! > lastMacd.signal!) longScore += 1;
+  if (lastMacd && lastMacd.MACD! < lastMacd.signal!) shortScore += 1;
 
-  if (lastAdx && lastAdx.adx > 20) {
-    if (lastAdx.pdi > lastAdx.mdi) longScore++;
-    if (lastAdx.mdi > lastAdx.pdi) shortScore++;
+  if (lastAdx && lastAdx.adx > 25) {
+    if (lastAdx.pdi > lastAdx.mdi) longScore += 1.5;
+    if (lastAdx.mdi > lastAdx.pdi) shortScore += 1.5;
   }
 
-  if (bos === 'bullish') longScore++;
-  if (bos === 'bearish') shortScore++;
+  // 3. Market Structure & Liquidity
+  if (bos === 'bullish') longScore += 1.5;
+  if (bos === 'bearish') shortScore += 1.5;
 
-  if (lastClose > volProfile.vaHigh) longScore++;
-  if (lastClose < volProfile.vaLow) shortScore++;
+  if (liquidityGrab === 'bullish') longScore += 1;
+  if (liquidityGrab === 'bearish') shortScore += 1;
 
-  if (longScore >= 3 && shortScore === 0) return 'LONG';
-  if (shortScore >= 3 && longScore === 0) return 'SHORT';
+  // 4. Order Flow & Volume Profile
+  if (lastClose > volProfile.vaHigh) longScore += 1;
+  if (lastClose < volProfile.vaLow) shortScore += 1;
+
+  if (orderFlow.signal === 'bullish') longScore += 1;
+  if (orderFlow.signal === 'bearish') shortScore += 1;
+
+  // 5. Divergence (Leading Indicator)
+  if (rsiDivergence === 'bullish') longScore += 1.5;
+  if (rsiDivergence === 'bearish') shortScore += 1.5;
+
+  // Require a strong conviction for HTF trend
+  if (longScore >= 5.5 && shortScore <= 2) return 'LONG';
+  if (shortScore >= 5.5 && longScore <= 2) return 'SHORT';
   
   return 'NEUTRAL';
 };
@@ -78,9 +97,13 @@ const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): { isVali
   const lastVolSma = volSma[volSma.length - 1];
   const lastVol = volumes[volumes.length - 1];
   const prevVol = volumes[volumes.length - 2];
+  const prevVol2 = volumes[volumes.length - 3];
 
   const bos = detectBOS(data);
   const liquidityGrab = detectLiquidityGrab(data);
+  const orderFlow = calculateOrderFlow(data, 5); // Short term order flow
+  const rsi = RSI.calculate({ values: closes, period: 14 });
+  const rsiDivergence = detectRsiDivergence(data, rsi);
   
   const lastCandle = data[data.length - 1];
   
@@ -91,27 +114,31 @@ const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): { isVali
   const isDisplacementUp = lastCandle.close > lastCandle.open && lastCandleBody > (lastAtr * 0.8) && lastVol > lastVolSma;
   const isDisplacementDown = lastCandle.close < lastCandle.open && lastCandleBody > (lastAtr * 0.8) && lastVol > lastVolSma;
 
-  const volumeSpike = lastVol > lastVolSma * 1.5 || prevVol > lastVolSma * 1.5;
+  const volumeSpike = lastVol > lastVolSma * 1.5 || prevVol > lastVolSma * 1.5 || prevVol2 > lastVolSma * 1.5;
 
   if (direction === 'LONG') {
     const isBullishCandle = lastCandle.close > lastCandle.open;
     const isMicroBOS = bos === 'bullish';
     const isLiquiditySweep = liquidityGrab === 'bullish';
+    const isBullishOrderFlow = orderFlow.signal === 'bullish';
+    const isBullishDivergence = rsiDivergence === 'bullish';
     
     if (!isBullishCandle) return { isValid: false, reason: 'LTF No bullish candle confirmation' };
-    if (!volumeSpike) return { isValid: false, reason: 'LTF No volume spike' };
-    if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep) {
-      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, or Sweep)' };
+    if (!volumeSpike && !isBullishOrderFlow) return { isValid: false, reason: 'LTF No volume spike or bullish order flow' };
+    if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep && !isBullishDivergence) {
+      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, or Divergence)' };
     }
   } else {
     const isBearishCandle = lastCandle.close < lastCandle.open;
     const isMicroBOS = bos === 'bearish';
     const isLiquiditySweep = liquidityGrab === 'bearish';
+    const isBearishOrderFlow = orderFlow.signal === 'bearish';
+    const isBearishDivergence = rsiDivergence === 'bearish';
     
     if (!isBearishCandle) return { isValid: false, reason: 'LTF No bearish candle confirmation' };
-    if (!volumeSpike) return { isValid: false, reason: 'LTF No volume spike' };
-    if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep) {
-      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, or Sweep)' };
+    if (!volumeSpike && !isBearishOrderFlow) return { isValid: false, reason: 'LTF No volume spike or bearish order flow' };
+    if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep && !isBearishDivergence) {
+      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, or Divergence)' };
     }
   }
 
@@ -126,43 +153,61 @@ export const analyzeMultiTimeframe = (
   trades: Trade[],
   symbol: string
 ): AnalysisResult => {
-  // STEP 1: Core Analysis on 15m chart
+  // STEP 1: HTF Direction (4h) - Overall Trend & Context
+  const htfDirection = getHTFDirection(data4h);
+  
+  // STEP 2: Core Analysis on 15m chart - Setup & Momentum
   const mtfAnalysis = analyzeChart(data15m, indicatorReliability, trades, symbol);
+  
   if (mtfAnalysis.signal === 'NO TRADE') {
     return mtfAnalysis;
   }
 
-  // STEP 2: Align with 4h chart (Major Trend)
-  const htfAnalysis = analyzeChart(data4h, indicatorReliability, trades, symbol);
-  if (htfAnalysis.signal !== mtfAnalysis.signal) {
-    return createNoTradeResult(`4h Trend (${htfAnalysis.signal}) does not align with 15m Signal (${mtfAnalysis.signal})`);
+  // STEP 3: HTF Alignment Check
+  // Professional traders trade with the higher timeframe trend.
+  // If 4h is strongly trending, we only take 15m setups in that direction.
+  if (htfDirection !== 'NEUTRAL' && htfDirection !== mtfAnalysis.signal) {
+    return createNoTradeResult(`4h Trend (${htfDirection}) opposes 15m Setup (${mtfAnalysis.signal})`);
   }
 
-  // STEP 3: Find entry in 5m chart (Execution/Trigger)
-  const ltfAnalysis = analyzeChart(data5m, indicatorReliability, trades, symbol);
-  if (ltfAnalysis.signal !== mtfAnalysis.signal) {
-    return createNoTradeResult(`5m Entry Trigger (${ltfAnalysis.signal}) does not align with 15m Signal (${mtfAnalysis.signal})`);
+  // STEP 4: LTF Entry Trigger (5m) - Execution
+  // We don't need the 5m to be in a full trend, we just need a valid entry trigger
+  // (like a liquidity sweep, BOS, or strong displacement) in the direction of our trade.
+  const ltfValidation = validateLTFEntry(data5m, mtfAnalysis.signal as 'LONG' | 'SHORT');
+  if (!ltfValidation.isValid) {
+    return createNoTradeResult(`5m Entry Invalid: ${ltfValidation.reason}`);
   }
   
-  // Combine confidence
-  // Weighting: 15m (MTF) is core, 4h (HTF) is trend, 5m (LTF) is trigger
-  const combinedConfidence = (htfAnalysis.confidence * 0.3) + (mtfAnalysis.confidence * 0.4) + (ltfAnalysis.confidence * 0.3);
+  // STEP 5: Combine Confidence
+  // Base confidence comes from the 15m setup quality
+  let combinedConfidence = mtfAnalysis.confidence;
   
-  // Final result
+  // Bonus for HTF alignment (trading with the 4h trend is higher probability than trading in a 4h neutral market)
+  if (htfDirection === mtfAnalysis.signal) {
+    combinedConfidence += 15; 
+  }
+  
+  // Cap at 99% (nothing is 100% certain in trading)
+  combinedConfidence = Math.min(99, combinedConfidence);
+  
+  // Final result preparation
   const finalAnalysis = { ...mtfAnalysis };
   finalAnalysis.confidence = combinedConfidence;
   
-  // Combine indicators from all timeframes
-  finalAnalysis.indicators = [
-    ...htfAnalysis.indicators.map(i => ({ ...i, name: `4h - ${i.name}` })),
-    ...mtfAnalysis.indicators.map(i => ({ ...i, name: `15m - ${i.name}` })),
-    ...ltfAnalysis.indicators.map(i => ({ ...i, name: `5m - ${i.name}` }))
-  ];
+  // Update the System Logic indicator to reflect the professional MTF alignment
+  const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === 'System Logic');
+  const alignmentDesc = `Top-Down Aligned: 4h Trend (${htfDirection}) → 15m Setup (${mtfAnalysis.signal}) → 5m Trigger (Valid).`;
   
-  // Update the System Logic indicator to reflect multi-TF alignment
-  const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === '15m - System Logic');
   if (sysLogicIdx !== -1) {
-    finalAnalysis.indicators[sysLogicIdx].description = `Multi-TF Aligned: 15m Core(${mtfAnalysis.signal}) + 4h Trend(${htfAnalysis.signal}) + 5m Trigger(${ltfAnalysis.signal}). Combined Confidence: ${combinedConfidence.toFixed(1)}%`;
+    finalAnalysis.indicators[sysLogicIdx].description = alignmentDesc;
+    finalAnalysis.indicators[sysLogicIdx].value = 'MTF ALIGNED';
+  } else {
+    finalAnalysis.indicators.push({
+      name: 'System Logic',
+      value: 'MTF ALIGNED',
+      signal: mtfAnalysis.signal === 'LONG' ? 'bullish' : 'bearish',
+      description: alignmentDesc
+    });
   }
 
   return finalAnalysis;

@@ -5,6 +5,7 @@ import { fetchWithRetry } from '../utils/api';
 const wsCache: Record<string, WebSocket> = {};
 const dataCache: Record<string, Candle[]> = {};
 const listeners: Record<string, ((candle: Candle) => void)[]> = {};
+const statusListeners: Record<string, ((status: boolean) => void)[]> = {};
 
 export const useBinanceData = (symbol: string, interval: string) => {
   const [data, setData] = useState<Candle[]>([]);
@@ -28,7 +29,8 @@ export const useBinanceData = (symbol: string, interval: string) => {
       }
 
       try {
-        const response = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=500`);
+        // Use Futures API to match the rest of the app
+        const response = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=500`);
         if (!response.ok) throw new Error('Failed to fetch data');
         
         const rawData = await response.json();
@@ -54,9 +56,14 @@ export const useBinanceData = (symbol: string, interval: string) => {
     fetchData();
 
     if (!listeners[key]) listeners[key] = [];
+    if (!statusListeners[key]) statusListeners[key] = [];
+
     const listener = (candle: Candle) => {
       if (isMounted) {
         setData(prev => {
+          // Ignore WS updates until historical data is loaded to prevent the "single gigantic candle" bug
+          if (prev.length === 0) return prev;
+          
           const newData = [...prev];
           const lastCandle = newData[newData.length - 1];
           if (lastCandle && lastCandle.time === candle.time) {
@@ -70,18 +77,25 @@ export const useBinanceData = (symbol: string, interval: string) => {
         });
       }
     };
+
+    const statusListener = (status: boolean) => {
+      if (isMounted) setIsConnected(status);
+    };
+
     listeners[key].push(listener);
+    statusListeners[key].push(statusListener);
 
     if (!wsCache[key]) {
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${key}`);
+      // Use Futures WebSocket
+      const ws = new WebSocket(`wss://fstream.binance.com/ws/${key}`);
       wsCache[key] = ws;
       
       ws.onopen = () => {
-        if (isMounted) setIsConnected(true);
+        statusListeners[key]?.forEach(l => l(true));
       };
       
       ws.onclose = () => {
-        if (isMounted) setIsConnected(false);
+        statusListeners[key]?.forEach(l => l(false));
       };
 
       ws.onmessage = (event) => {
@@ -98,24 +112,31 @@ export const useBinanceData = (symbol: string, interval: string) => {
               volume: parseFloat(k.v),
               isFinal: k.x
             };
-            listeners[key].forEach(l => l(candle));
+            listeners[key]?.forEach(l => l(candle));
           }
         } catch (e) {
           console.error("Error parsing WS message", e);
         }
       };
     } else {
-      // If ws already exists, check its state
+      // If ws already exists, check its state and set immediately
       setIsConnected(wsCache[key].readyState === WebSocket.OPEN);
     }
 
     return () => {
       isMounted = false;
-      listeners[key] = listeners[key].filter(l => l !== listener);
-      if (listeners[key].length === 0) {
-        wsCache[key].close();
+      if (listeners[key]) {
+        listeners[key] = listeners[key].filter(l => l !== listener);
+      }
+      if (statusListeners[key]) {
+        statusListeners[key] = statusListeners[key].filter(l => l !== statusListener);
+      }
+      
+      if (listeners[key]?.length === 0) {
+        wsCache[key]?.close();
         delete wsCache[key];
         delete listeners[key];
+        delete statusListeners[key];
       }
     };
   }, [symbol, interval, key]);

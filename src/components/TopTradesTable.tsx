@@ -521,7 +521,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
             {loading && displaySignals.length === 0 ? (
               <div className="p-8 text-center text-white/40 text-xs flex flex-col items-center justify-center gap-2">
                 <RefreshCw size={24} className="animate-spin text-emerald-500/50" />
-                <span>Analyzing top 50 pairs...</span>
+                <span>Analyzing all USDT Futures pairs...</span>
               </div>
             ) : displaySignals.length === 0 ? (
               <div className="p-8 text-center text-white/40 text-xs">No active signals found.</div>
