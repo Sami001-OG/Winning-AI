@@ -514,35 +514,65 @@ export const analyzeChart = (
   });
 
   // ==========================================
-  // DYNAMIC ENTRY CALCULATION
+  // DYNAMIC ENTRY CALCULATION (DUAL STRATEGY)
   // ==========================================
-  let suggestedEntry: number | undefined;
+  // Primary Entry: Current Market Price (Instant Execution)
+  const entryPrice = lastClose;
   
+  // Secondary Entry: Pullback Limit Order (Better R:R)
+  let limitEntry: number | undefined;
+  let entryStrategy: 'Market (CMP)' | 'Limit (Pullback)' | 'Split (50/50)' = 'Market (CMP)';
+  
+  // Determine if the momentum is extremely strong (FOMO market)
+  const isStrongMomentum = (signal === 'LONG' && lastClose > lastBB?.upper!) || 
+                           (signal === 'SHORT' && lastClose < lastBB?.lower!);
+                           
+  // Determine if we are near a major support/resistance level
+  const isNearSupportResistance = Math.abs(lastClose - volProfile.pocPrice) / lastClose < 0.01;
+
   if (signal === 'LONG' && layer4Score > 0) {
     if (lastClose > volProfile.vaHigh) {
-      // Breakout above VA: Pullback to VA High is a perfect entry
-      suggestedEntry = volProfile.vaHigh;
+      limitEntry = volProfile.vaHigh; // Pullback to VA High
     } else if (isTrending) {
-      // In a trending market, look for a pullback to EMA20
-      suggestedEntry = lastEma20;
+      limitEntry = lastEma20; // Pullback to EMA20
     } else {
-      // In a sideways market, look for entry near the lower Bollinger Band
-      suggestedEntry = lastBB?.lower;
+      limitEntry = lastBB?.lower; // Mean reversion to lower BB
+    }
+    // Only provide a limit entry if it's actually a pullback (below current price)
+    if (limitEntry && limitEntry >= lastClose) {
+      limitEntry = undefined;
     }
   } else if (signal === 'SHORT' && layer4Score < 0) {
     if (lastClose < volProfile.vaLow) {
-      // Breakout below VA: Pullback to VA Low is a perfect entry
-      suggestedEntry = volProfile.vaLow;
+      limitEntry = volProfile.vaLow; // Pullback to VA Low
     } else if (isTrending) {
-      // In a trending market, look for a pullback to EMA20 resistance
-      suggestedEntry = lastEma20;
+      limitEntry = lastEma20; // Pullback to EMA20
     } else {
-      // In a sideways market, look for entry near the upper Bollinger Band
-      suggestedEntry = lastBB?.upper;
+      limitEntry = lastBB?.upper; // Mean reversion to upper BB
+    }
+    // Only provide a limit entry if it's actually a pullback (above current price)
+    if (limitEntry && limitEntry <= lastClose) {
+      limitEntry = undefined;
     }
   }
-
-  const entryPrice = suggestedEntry || lastClose;
+  
+  // Dynamic Strategy Decision
+  if (limitEntry) {
+    const distanceToLimit = Math.abs(lastClose - limitEntry) / lastClose;
+    
+    if (isStrongMomentum) {
+      // If momentum is crazy strong, a pullback might never happen. Just market buy.
+      entryStrategy = 'Market (CMP)';
+      limitEntry = undefined; // Discard limit entry to avoid confusion
+    } else if (distanceToLimit > 0.02) {
+      // If the limit entry is very far away (>2%), the market entry has terrible R:R.
+      // Better to wait for the limit order.
+      entryStrategy = 'Limit (Pullback)';
+    } else {
+      // If the limit entry is reasonably close (<=2%), use the professional split strategy.
+      entryStrategy = 'Split (50/50)';
+    }
+  }
 
   // ==========================================
   // RISK MANAGEMENT (TP / SL)
@@ -788,7 +818,9 @@ export const analyzeChart = (
     },
     tp,
     sl,
-    suggestedEntry,
+    suggestedEntry: entryPrice, // For backward compatibility
+    limitEntry,
+    entryStrategy,
     layers: {
       marketCondition: layer1Score,
       trend: layer2Score,

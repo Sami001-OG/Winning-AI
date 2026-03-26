@@ -391,28 +391,35 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                   </div>
                   <div className="text-right">
                     {s.analysis.signal !== 'NO TRADE' && (frozenEntries[s.symbol] || s.analysis.suggestedEntry) ? (
-                      <div className="flex items-center justify-end gap-2">
-                        {frozenEntries[s.symbol] ? (
-                          <Lock 
-                            size={12} 
-                            className="text-emerald-400 cursor-pointer" 
-                            onClick={(e) => { e.stopPropagation(); toggleFreeze(s.symbol, s.analysis.suggestedEntry!); }}
-                          />
-                        ) : (
-                          <Unlock 
-                            size={12} 
-                            className="text-white/20 group-hover:text-black/40 hover:!text-emerald-500 cursor-pointer transition-colors" 
-                            onClick={(e) => { e.stopPropagation(); toggleFreeze(s.symbol, s.analysis.suggestedEntry!); }}
-                          />
-                        )}
-                        <div className="flex items-center gap-1">
-                          <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white group-hover:text-black"}>
-                            {formatPrice(frozenEntries[s.symbol] || s.analysis.suggestedEntry || 0)}
-                          </span>
-                          {!frozenEntries[s.symbol] && s.entryDirection === 'up' && <ArrowUp size={12} className="text-emerald-400" />}
-                          {!frozenEntries[s.symbol] && s.entryDirection === 'down' && <ArrowDown size={12} className="text-rose-400" />}
-                          {!frozenEntries[s.symbol] && s.entryDirection === 'none' && <span className="w-3" />}
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center justify-end gap-2">
+                          {frozenEntries[s.symbol] ? (
+                            <Lock 
+                              size={12} 
+                              className="text-emerald-400 cursor-pointer" 
+                              onClick={(e) => { e.stopPropagation(); toggleFreeze(s.symbol, s.analysis.suggestedEntry!); }}
+                            />
+                          ) : (
+                            <Unlock 
+                              size={12} 
+                              className="text-white/20 group-hover:text-black/40 hover:!text-emerald-500 cursor-pointer transition-colors" 
+                              onClick={(e) => { e.stopPropagation(); toggleFreeze(s.symbol, s.analysis.suggestedEntry!); }}
+                            />
+                          )}
+                          <div className="flex items-center gap-1">
+                            <span className={frozenEntries[s.symbol] ? "text-emerald-400 font-bold" : "text-white group-hover:text-black"} title="CMP Entry">
+                              {formatPrice(frozenEntries[s.symbol] || s.analysis.suggestedEntry || 0)}
+                            </span>
+                            {!frozenEntries[s.symbol] && s.entryDirection === 'up' && <ArrowUp size={12} className="text-emerald-400" />}
+                            {!frozenEntries[s.symbol] && s.entryDirection === 'down' && <ArrowDown size={12} className="text-rose-400" />}
+                            {!frozenEntries[s.symbol] && s.entryDirection === 'none' && <span className="w-3" />}
+                          </div>
                         </div>
+                        {s.analysis.limitEntry && !frozenEntries[s.symbol] && (
+                          <div className="text-[10px] text-yellow-400/80 group-hover:text-yellow-600/80" title="Limit (Pullback) Entry">
+                            L: {formatPrice(s.analysis.limitEntry)}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <span className="text-white/20 group-hover:text-black/20">-</span>

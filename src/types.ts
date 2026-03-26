@@ -38,7 +38,9 @@ export interface AnalysisResult {
   };
   tp?: number;
   sl?: number;
-  suggestedEntry?: number;
+  suggestedEntry?: number; // Deprecated, keeping for backward compatibility
+  limitEntry?: number; // The calculated pullback entry price
+  entryStrategy?: 'Market (CMP)' | 'Limit (Pullback)' | 'Split (50/50)';
   layers?: {
     marketCondition: number;
     trend: number;

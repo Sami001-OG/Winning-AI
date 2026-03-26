@@ -400,7 +400,7 @@ async function startServer() {
               timestamp: now
             };
             
-            const entryPrice = analysis.suggestedEntry || (klines.length > 0 ? klines[klines.length - 1].close : 0);
+            const entryPrice = klines.length > 0 ? klines[klines.length - 1].close : 0;
             const tpDistance = (analysis.tp || 0) - entryPrice;
             const tp1 = entryPrice + (tpDistance * 0.3333);
             const tp2 = entryPrice + (tpDistance * 0.6666);
@@ -416,7 +416,9 @@ async function startServer() {
             };
 
             const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-            const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${tf}\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n✅ <b>TP1:</b> ${formatPrice(tp1)}\n✅ <b>TP2:</b> ${formatPrice(tp2)}\n✅ <b>TP3:</b> ${formatPrice(tp3)}\n❌ <b>Stop Loss:</b> ${formatPrice(sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
+            const limitEntryStr = analysis.limitEntry ? `\n⏳ <b>Limit (Pullback):</b> ${formatPrice(analysis.limitEntry)}` : '';
+            const strategyStr = analysis.entryStrategy ? `\n\n📝 <b>Strategy:</b> ${analysis.entryStrategy}` : '';
+            const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> ${tf}${strategyStr}\n\n🎯 <b>CMP Entry:</b> ${formatPrice(entryPrice)}${limitEntryStr}\n✅ <b>TP1:</b> ${formatPrice(tp1)}\n✅ <b>TP2:</b> ${formatPrice(tp2)}\n✅ <b>TP3:</b> ${formatPrice(tp3)}\n❌ <b>Stop Loss:</b> ${formatPrice(sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
 
             const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
             const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
