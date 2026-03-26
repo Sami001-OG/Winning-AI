@@ -12,11 +12,25 @@ const BINANCE_FUTURES_ENDPOINTS = [
 export const fetchWithRetry = async (
   url: string,
   retries = 3,
-  backoff = 1000
+  backoff = 1000,
+  timeout = 10000
 ): Promise<Response> => {
   const isBinanceSpot = url.includes('api.binance.com');
   const isBinanceFutures = url.includes('fapi.binance.com');
   
+  const fetchWithTimeout = async (targetUrl: string) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(targetUrl, { signal: controller.signal });
+      clearTimeout(id);
+      return response;
+    } catch (error) {
+      clearTimeout(id);
+      throw error;
+    }
+  };
+
   if (isBinanceSpot || isBinanceFutures) {
     const path = url.split('binance.com')[1];
     let lastError: any;
@@ -26,7 +40,7 @@ export const fetchWithRetry = async (
     for (let i = 0; i < endpoints.length; i++) {
       try {
         const endpoint = endpoints[i];
-        const response = await fetch(`${endpoint}${path}`);
+        const response = await fetchWithTimeout(`${endpoint}${path}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -44,7 +58,7 @@ export const fetchWithRetry = async (
   let currentUrl = url;
   for (let i = 0; i <= retries; i++) {
     try {
-      const response = await fetch(currentUrl);
+      const response = await fetchWithTimeout(currentUrl);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }

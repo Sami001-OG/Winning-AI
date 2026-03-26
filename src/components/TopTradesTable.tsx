@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { analyzeMultiTimeframe } from '../analysis';
 import { Candle, AnalysisResult, Trade } from '../types';
-import { sendTelegramAlert } from '../services/telegramService';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 import { formatPrice } from '../utils/format';
@@ -43,14 +42,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const klinesDataRef = useRef<Record<string, Record<string, Candle[]>>>({});
   const wsRefs = useRef<WebSocket[]>([]);
   const prevEntriesRef = useRef<Record<string, number>>({});
-  const lastSentSignalsRef = useRef<Record<string, { direction: string, timestamp: number }>>({});
-  const activeTradesRef = useRef<Record<string, ActiveTrade>>({});
   const lastSessionAlertRef = useRef<string>('');
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
   const fetchTopSymbols = async () => {
     try {
-      const res = await fetchWithRetry('https://fapi.binance.com/fapi/v1/ticker/24hr');
+      const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`);
       const data = await res.json();
       const usdtPairs = data
         .filter((t: any) => 
@@ -73,7 +70,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
   const fetchKlines = async (symbol: string, tf: string) => {
     try {
-      const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250`);
+      const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250&_t=${Date.now()}`);
       const data = await res.json();
       
       if (!Array.isArray(data)) {
@@ -104,51 +101,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
       const lastPrice = tfData['5m'][tfData['5m'].length - 1].close;
       
-      // --- ACTIVE TRADE MONITORING ---
-      const activeTrade = activeTradesRef.current[symbol];
-      if (activeTrade && activeTrade.isMTF) {
-        let updated = false;
-
-        if (activeTrade.direction === 'LONG') {
-          if (lastPrice <= activeTrade.sl) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Stop Loss Hit</b> at ${formatPrice(lastPrice)}`);
-            delete activeTradesRef.current[symbol];
-          } else if (activeTrade.achieved < 3 && lastPrice >= activeTrade.tp3) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅✅✅ <b>TP3 Achieved</b> at ${formatPrice(lastPrice)}`);
-            delete activeTradesRef.current[symbol];
-          } else if (activeTrade.achieved < 2 && lastPrice >= activeTrade.tp2) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅✅ <b>TP2 Achieved</b> at ${formatPrice(lastPrice)}`);
-            activeTrade.achieved = 2;
-            updated = true;
-          } else if (activeTrade.achieved < 1 && lastPrice >= activeTrade.tp1) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>TP1 Achieved</b> at ${formatPrice(lastPrice)}`);
-            activeTrade.achieved = 1;
-            updated = true;
-          }
-        } else if (activeTrade.direction === 'SHORT') {
-          if (lastPrice >= activeTrade.sl) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Stop Loss Hit</b> at ${formatPrice(lastPrice)}`);
-            delete activeTradesRef.current[symbol];
-          } else if (activeTrade.achieved < 3 && lastPrice <= activeTrade.tp3) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅✅✅ <b>TP3 Achieved</b> at ${formatPrice(lastPrice)}`);
-            delete activeTradesRef.current[symbol];
-          } else if (activeTrade.achieved < 2 && lastPrice <= activeTrade.tp2) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅✅ <b>TP2 Achieved</b> at ${formatPrice(lastPrice)}`);
-            activeTrade.achieved = 2;
-            updated = true;
-          } else if (activeTrade.achieved < 1 && lastPrice <= activeTrade.tp1) {
-            sendTelegramAlert(`🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>TP1 Achieved</b> at ${formatPrice(lastPrice)}`);
-            activeTrade.achieved = 1;
-            updated = true;
-          }
-        }
-        
-        if (updated) {
-          activeTradesRef.current[symbol] = activeTrade;
-        }
-      }
-      // --- END ACTIVE TRADE MONITORING ---
-
       const analysis = analyzeMultiTimeframe(tfData['4h'], tfData['15m'], tfData['5m'], DEFAULT_RELIABILITY, trades, symbol);
 
       if (analysis.signal !== 'NO TRADE') {
@@ -178,78 +130,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     newSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
     setSignals(newSignals);
     setLastUpdate(new Date());
-
-    // Telegram Alert Logic - ONLY SEND THE BEST SIGNAL
-    for (const bestTrade of newSignals) {
-      const { symbol, analysis, lastPrice } = bestTrade;
-      
-      if (analysis.signal === 'NO TRADE') continue;
-
-      const data4h = klinesDataRef.current[symbol]['4h'];
-      const data15m = klinesDataRef.current[symbol]['15m'];
-      const data5m = klinesDataRef.current[symbol]['5m'];
-      if (!data4h || !data15m || !data5m) continue;
-
-      const structure = analysis.layers?.structure || 0;
-
-      // Check if the previous candles also had the same signal to prevent continuous spam on page refresh
-      const prevAnalysis1 = analyzeMultiTimeframe(data4h.slice(0, -1), data15m.slice(0, -1), data5m.slice(0, -1), DEFAULT_RELIABILITY, trades, symbol);
-      const prevAnalysis2 = analyzeMultiTimeframe(data4h.slice(0, -2), data15m.slice(0, -2), data5m.slice(0, -2), DEFAULT_RELIABILITY, trades, symbol);
-      const prevAnalysis3 = analyzeMultiTimeframe(data4h.slice(0, -3), data15m.slice(0, -3), data5m.slice(0, -3), DEFAULT_RELIABILITY, trades, symbol);
-      
-      const isContinuous = 
-        (prevAnalysis1.signal === analysis.signal) ||
-        (prevAnalysis2.signal === analysis.signal) ||
-        (prevAnalysis3.signal === analysis.signal);
-
-      if (!isContinuous) {
-        const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-        const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-
-        const now = Date.now();
-        const lastSent = lastSentSignalsRef.current[symbol];
-
-        if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-          const entryPrice = analysis.suggestedEntry || lastPrice;
-          const tpDistance = (analysis.tp || 0) - entryPrice;
-          const tp1 = entryPrice + (tpDistance * 0.3333);
-          const tp2 = entryPrice + (tpDistance * 0.6666);
-          const tp3 = analysis.tp || 0;
-          const sl = analysis.sl || 0;
-
-          const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${symbol}\n${analysis.signal === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${directionEmoji}\n⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 5m)\n\n🎯 <b>Entry:</b> ${formatPrice(entryPrice)}\n\n✅ <b>TP1:</b> ${formatPrice(tp1)}\n✅ <b>TP2:</b> ${formatPrice(tp2)}\n✅ <b>TP3:</b> ${formatPrice(tp3)}\n\n❌ <b>Stop Loss:</b> ${formatPrice(sl)}\n\n🧠 <b>Confidence:</b> ${(analysis.confidence || 0).toFixed(1)}%`;
-
-          console.log(`[Telegram Debug] Sending alert for ${symbol}: ${message}`);
-
-          if (analysis.signal === 'LONG' && structure >= 0) {
-            sendTelegramAlert(message, bullishImageUrl);
-            lastSentSignalsRef.current[symbol] = { direction: 'LONG', timestamp: now };
-            activeTradesRef.current[symbol] = {
-              symbol,
-              direction: 'LONG',
-              entry: entryPrice,
-              tp1, tp2, tp3, sl,
-              achieved: 0,
-              isMTF: true
-            };
-            break; // Only send the absolute best one
-          } else if (analysis.signal === 'SHORT' && structure <= 0) {
-            sendTelegramAlert(message, bearishImageUrl);
-            lastSentSignalsRef.current[symbol] = { direction: 'SHORT', timestamp: now };
-            activeTradesRef.current[symbol] = {
-              symbol,
-              direction: 'SHORT',
-              entry: entryPrice,
-              tp1, tp2, tp3, sl,
-              achieved: 0,
-              isMTF: true
-            };
-            break; // Only send the absolute best one
-          }
-        }
-      }
-    }
   };
 
   const toggleFreeze = (symbol: string, entry: number) => {
@@ -268,60 +148,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   useEffect(() => {
     updateSignalsRef.current = updateSignals;
   }, [updateSignals]);
-
-  useEffect(() => {
-    const checkSessionAlerts = () => {
-      const now = new Date();
-      const utcHour = now.getUTCHours();
-      const utcMinute = now.getUTCMinutes();
-      
-      // We only want to alert exactly on the hour
-      if (utcMinute !== 0) return;
-
-      const dateStr = now.toISOString().split('T')[0];
-      const alertKey = `${dateStr}-${utcHour}`;
-
-      if (lastSessionAlertRef.current === alertKey) return;
-
-      let alertMessage = '';
-
-      switch (utcHour) {
-        case 0:
-          alertMessage = '🟢 <b>Asian Session Opens</b>\nTokyo market is now open.';
-          break;
-        case 8:
-          alertMessage = '🟢 <b>London Session Opens</b>\nLondon market is now open.';
-          break;
-        case 9:
-          alertMessage = '🔴 <b>Asian Session Closes</b>\nTokyo market is now closed.';
-          break;
-        case 13:
-          alertMessage = '🟢 <b>New York Session Opens</b>\nNew York market is now open.';
-          break;
-        case 17:
-          alertMessage = '🔴 <b>London Session Closes</b>\nLondon market is now closed.';
-          break;
-        case 22:
-          alertMessage = '🔴 <b>New York Session Closes</b>\nNew York market is now closed.';
-          break;
-      }
-
-      if (alertMessage) {
-        sendTelegramAlert(`🕒 <b>MARKET SESSION UPDATE</b>\n\n${alertMessage}`);
-        lastSessionAlertRef.current = alertKey;
-      }
-    };
-
-    // Check every minute
-    const sessionTimerId = window.setInterval(checkSessionAlerts, 60000);
-    
-    // Also check immediately on mount
-    checkSessionAlerts();
-
-    return () => {
-      window.clearInterval(sessionTimerId);
-    };
-  }, []);
 
   useEffect(() => {
     let isMounted = true;

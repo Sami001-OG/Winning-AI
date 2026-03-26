@@ -53,9 +53,23 @@ async function sendTelegramSignal(botToken: string, chatId: string, message: str
   return response.ok;
 }
 
+async function fetchWithTimeout(url: string, options: any = {}) {
+  const timeout = options.timeout || 10000;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+}
+
 async function fetchTopSymbols() {
   try {
-    const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+    const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`);
     const data = await res.json();
     return data
       .filter((t: any) => 
@@ -75,7 +89,7 @@ async function fetchTopSymbols() {
 
 async function fetchKlines(symbol: string, tf: string) {
   try {
-    const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250`);
+    const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250&_t=${Date.now()}`);
     const data = await res.json();
     
     if (!Array.isArray(data)) {
@@ -208,7 +222,7 @@ async function startServer() {
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
 
-  setInterval(async () => {
+  const runBackgroundLoop = async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
     const chatId = process.env.VITE_TELEGRAM_CHAT_ID;
     
@@ -217,6 +231,7 @@ async function startServer() {
         console.log("Telegram Scanner skipped: Missing VITE_TELEGRAM_BOT_TOKEN or VITE_TELEGRAM_CHAT_ID in environment variables.");
         hasLoggedMissingTokens = true;
       }
+      setTimeout(runBackgroundLoop, 60000);
       return;
     }
     hasLoggedMissingTokens = false; // Reset if tokens are added later
@@ -282,8 +297,8 @@ async function startServer() {
       const symbols = await fetchTopSymbols();
       const allSignals: any[] = [];
 
-      // Process in batches of 15 to respect rate limits while completing within 60s
-      const BATCH_SIZE = 15;
+      // Process in batches of 30 to respect rate limits while completing faster
+      const BATCH_SIZE = 30;
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
         
@@ -350,7 +365,8 @@ async function startServer() {
       // Sort by highest confidence
       allSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
 
-      // Find the absolute best signal that isn't continuous spam
+      // Find the absolute best signals that aren't continuous spam
+      let signalsSentThisCycle = 0;
       for (const sig of allSignals) {
         const { symbol, tf, analysis, klines } = sig;
         
@@ -407,14 +423,24 @@ async function startServer() {
             const imageUrl = analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
 
             await sendTelegramSignal(botToken, chatId, message, imageUrl);
-            break; // ONLY SEND THE BEST ONE PER CYCLE
+            
+            signalsSentThisCycle++;
+            if (signalsSentThisCycle >= 5) {
+              break; // Limit to 5 signals per cycle to avoid spam
+            }
+            
+            // Small delay between telegram messages
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
         }
       }
     } catch (err) {
       console.error('Error in background loop:', err);
+    } finally {
+      setTimeout(runBackgroundLoop, 60000); // Check every minute
     }
-  }, 60000); // Check every minute
+  };
+  runBackgroundLoop();
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
