@@ -13,10 +13,10 @@ export const fetchWithRetry = async (
   url: string,
   retries = 3,
   backoff = 1000,
-  timeout = 10000
+  timeout = 20000
 ): Promise<Response> => {
-  const isBinanceSpot = url.includes('api.binance.com');
   const isBinanceFutures = url.includes('fapi.binance.com');
+  const isBinanceSpot = url.includes('api.binance.com') && !isBinanceFutures;
   
   const fetchWithTimeout = async (targetUrl: string) => {
     const controller = new AbortController();
@@ -31,42 +31,38 @@ export const fetchWithRetry = async (
     }
   };
 
-  if (isBinanceSpot || isBinanceFutures) {
-    const path = url.split('binance.com')[1];
-    let lastError: any;
-    
-    const endpoints = isBinanceFutures ? BINANCE_FUTURES_ENDPOINTS : BINANCE_ENDPOINTS;
-    
-    for (let i = 0; i < endpoints.length; i++) {
+  let lastError: any;
+  const isBinance = isBinanceSpot || isBinanceFutures;
+  const endpoints = isBinanceSpot ? BINANCE_ENDPOINTS : (isBinanceFutures ? BINANCE_FUTURES_ENDPOINTS : [url]);
+  
+  // Correctly extract the path based on the domain
+  const domain = isBinanceFutures ? 'fapi.binance.com' : 'api.binance.com';
+  const path = isBinance ? url.split(domain)[1] : url;
+
+  for (let i = 0; i <= retries; i++) {
+    for (const endpoint of endpoints) {
       try {
-        const endpoint = endpoints[i];
-        const response = await fetchWithTimeout(`${endpoint}${path}`);
+        const targetUrl = isBinance ? `${endpoint}${path}` : endpoint;
+        console.log(`Fetching: ${targetUrl}`);
+        const response = await fetchWithTimeout(targetUrl);
+        
+        if (response.status === 418) {
+          throw new Error('Rate limited (418)');
+        }
+        
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         return response;
       } catch (error) {
+        console.error(`Error fetching ${endpoint}${path}:`, error);
         lastError = error;
-        // Try next endpoint immediately, no backoff for Binance endpoints
-        continue;
       }
     }
-    throw lastError || new Error('All Binance endpoints failed');
+    
+    // Wait before retrying
+    await new Promise((resolve) => setTimeout(resolve, backoff * Math.pow(2, i)));
   }
-
-  // Fallback for non-Binance URLs
-  let currentUrl = url;
-  for (let i = 0; i <= retries; i++) {
-    try {
-      const response = await fetchWithTimeout(currentUrl);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      return response;
-    } catch (error) {
-      if (i === retries) throw error;
-      await new Promise((resolve) => setTimeout(resolve, backoff * Math.pow(2, i)));
-    }
-  }
-  throw new Error('Fetch failed after retries');
+  
+  throw lastError || new Error('All endpoints failed');
 };
