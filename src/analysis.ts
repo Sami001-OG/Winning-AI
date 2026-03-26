@@ -65,28 +65,44 @@ export const analyzeChart = (
   const patternNames = detectedPatterns.map(p => p.name);
 
   // Dynamically adjust weights based on patterns
-  const adjustedReliability = { ...indicatorReliability };
+  const adjustedReliability = { 
+    ema: 1.5, 
+    macd: 0.5, 
+    rsi: 1.5, 
+    stoch: 0.5, 
+    cci: 0.25, 
+    vol: 1.2, 
+    obv: 1.2,
+    sweep: 2.0,
+    disp: 1.5,
+    ...indicatorReliability 
+  };
+
   detectedPatterns.forEach(p => {
     if (p.name === 'Double Bottom' || p.name === 'Double Top' || p.name === 'Triple Bottom' || p.name === 'Triple Top') {
-      adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.5;
+      adjustedReliability.rsi *= 1.5;
+      adjustedReliability.sweep *= 1.2;
     } else if (p.name === 'Bullish Engulfing' || p.name === 'Bearish Engulfing') {
-      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.8;
-      adjustedReliability.vol = (adjustedReliability.vol || 1) * 1.5;
+      adjustedReliability.macd *= 1.8;
+      adjustedReliability.vol *= 1.5;
+      adjustedReliability.disp *= 1.3;
     } else if (p.name === 'Ascending Triangle' || p.name === 'Descending Triangle' || p.name === 'Symmetrical Triangle') {
-      adjustedReliability.ema = (adjustedReliability.ema || 1) * 1.3;
-      adjustedReliability.obv = (adjustedReliability.obv || 1) * 1.5;
+      adjustedReliability.ema *= 1.3;
+      adjustedReliability.obv *= 1.5;
     } else if (p.name === 'Bull Flag' || p.name === 'Bear Flag' || p.name === 'Bull Pennant' || p.name === 'Bear Pennant') {
-      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.5;
-      adjustedReliability.ema = (adjustedReliability.ema || 1) * 1.5;
+      adjustedReliability.macd *= 1.5;
+      adjustedReliability.ema *= 1.5;
+      adjustedReliability.vol *= 1.3;
     } else if (p.name === 'Falling Wedge' || p.name === 'Rising Wedge') {
-      adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.8;
-      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.5;
+      adjustedReliability.rsi *= 1.8;
+      adjustedReliability.macd *= 1.5;
     } else if (p.name === 'Head and Shoulders' || p.name === 'Inverted Head and Shoulders') {
-      adjustedReliability.macd = (adjustedReliability.macd || 1) * 1.7;
-      adjustedReliability.rsi = (adjustedReliability.rsi || 1) * 1.5;
+      adjustedReliability.macd *= 1.7;
+      adjustedReliability.rsi *= 1.5;
+      adjustedReliability.vol *= 1.4;
     } else if (p.name === 'Cup and Handle' || p.name === 'Inverted Cup and Handle') {
-      adjustedReliability.vol = (adjustedReliability.vol || 1) * 1.6;
-      adjustedReliability.ema = (adjustedReliability.ema || 1) * 1.4;
+      adjustedReliability.vol *= 1.6;
+      adjustedReliability.ema *= 1.4;
     }
   });
 
@@ -198,8 +214,8 @@ export const analyzeChart = (
     else if (lastMacd.MACD! < lastMacd.signal!) macdScore = -0.5;
   }
 
-  const emaRel = adjustedReliability.ema || 1;
-  const macdRel = Math.min(adjustedReliability.macd || 0.2, 0.2); // Cap MACD weight at 0.2 to reduce lag
+  const emaRel = adjustedReliability.ema;
+  const macdRel = adjustedReliability.macd;
   const layer2Score = (emaScore * emaRel + macdScore * macdRel) / (emaRel + macdRel);
 
   indicators.push({
@@ -242,9 +258,9 @@ export const analyzeChart = (
   if (isDisplacementUp) displacementScore = 1;
   else if (isDisplacementDown) displacementScore = -1;
 
-  const rsiRel = 0.5; // RSI is less reliable than price action
-  const sweepRel = 2.0; // Liquidity sweeps are high conviction
-  const dispRel = 1.5; // Displacement confirms the sweep
+  const rsiRel = adjustedReliability.rsi;
+  const sweepRel = adjustedReliability.sweep;
+  const dispRel = adjustedReliability.disp;
   const layer3Score = (rsiScore * rsiRel + sweepScore * sweepRel + displacementScore * dispRel) / (rsiRel + sweepRel + dispRel);
 
   indicators.push({
@@ -266,8 +282,8 @@ export const analyzeChart = (
   if (lastObv > prevObv) obvScore = 1;
   else if (lastObv < prevObv) obvScore = -1;
 
-  const volRel = 1.5;
-  const obvRel = 1.0;
+  const volRel = adjustedReliability.vol;
+  const obvRel = adjustedReliability.obv;
   const layer4Score = (volScore * volRel + obvScore * obvRel) / (volRel + obvRel);
 
   indicators.push({

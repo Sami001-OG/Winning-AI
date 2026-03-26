@@ -72,17 +72,28 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   };
 
   const fetchKlines = async (symbol: string, tf: string) => {
-    const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250`);
-    const data = await res.json();
-    return data.map((d: any) => ({
-      time: Math.floor(d[0] / 1000),
-      open: parseFloat(d[1]),
-      high: parseFloat(d[2]),
-      low: parseFloat(d[3]),
-      close: parseFloat(d[4]),
-      volume: parseFloat(d[5]),
-      isFinal: true
-    }));
+    try {
+      const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250`);
+      const data = await res.json();
+      
+      if (!Array.isArray(data)) {
+        console.warn(`[Binance API Warning] Expected array for ${symbol} ${tf}, got:`, data);
+        return [];
+      }
+
+      return data.map((d: any) => ({
+        time: Math.floor(d[0] / 1000),
+        open: parseFloat(d[1]),
+        high: parseFloat(d[2]),
+        low: parseFloat(d[3]),
+        close: parseFloat(d[4]),
+        volume: parseFloat(d[5]),
+        isFinal: true
+      }));
+    } catch (error) {
+      console.error(`[Binance API Error] Failed to fetch klines for ${symbol} ${tf}:`, error);
+      return [];
+    }
   };
 
   const updateSignals = () => {
