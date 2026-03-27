@@ -7,17 +7,20 @@ export function formatPrice(price: number | undefined | null): string {
   if (absPrice >= 1000) return price.toFixed(2);
   if (absPrice >= 1) return price.toFixed(4);
   
-  const str = absPrice.toString();
-  if (str.includes('e')) {
-    return price.toFixed(10).replace(/0+$/, '');
-  }
+  // Convert to string without scientific notation
+  const str = price.toLocaleString('fullwide', { useGrouping: false, maximumFractionDigits: 20 });
   
-  const decimals = str.split('.')[1] || '';
+  const parts = str.split('.');
+  if (parts.length === 1) return str;
+  
+  const decimals = parts[1];
   let leadingZeros = 0;
   for (let i = 0; i < decimals.length; i++) {
     if (decimals[i] === '0') leadingZeros++;
     else break;
   }
   
-  return price.toFixed(leadingZeros + 4);
+  // Show 4 significant digits after leading zeros, capped at 20 decimals
+  const fractionDigits = Math.min(leadingZeros + 4, 20);
+  return price.toFixed(fractionDigits);
 }

@@ -200,26 +200,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         if (lastCandleTime > 0 && pushedSignalsRef.current[symbol] !== lastCandleTime && finalAnalysis.confidence >= 75) {
           pushedSignalsRef.current[symbol] = lastCandleTime;
           
-          let orderType = 'Market';
-          let entryPriceStr = finalAnalysis.suggestedEntry?.toFixed(4) || 'N/A';
-          
-          if (finalAnalysis.entryStrategy === 'Limit (Pullback)') {
-            orderType = 'Limit';
-            entryPriceStr = finalAnalysis.limitEntry?.toFixed(4) || 'N/A';
-          } else if (finalAnalysis.entryStrategy === 'Split (50/50)') {
-            orderType = 'Split (50% Market, 50% Limit)';
-            entryPriceStr = `Market: ${finalAnalysis.suggestedEntry?.toFixed(4) || 'N/A'}, Limit: ${finalAnalysis.limitEntry?.toFixed(4) || 'N/A'}`;
-          }
-          
-          const message = `🚨 <b>${symbol}</b> Signal Alert 🚨
-Direction: <b>${finalAnalysis.signal}</b>
-Order Type: <b>${orderType}</b>
-Entry: <b>${entryPriceStr}</b>
-TP: <b>${finalAnalysis.tp?.toFixed(4) || 'N/A'}</b>
-SL: <b>${finalAnalysis.sl?.toFixed(4) || 'N/A'}</b>
-Confidence: <b>${finalAnalysis.confidence.toFixed(1)}%</b>`;
-
-          sendTelegramAlert(message);
+          // Telegram alerts are now handled exclusively by the 24/7 backend server loop
+          // to ensure TP/SL tracking and session alerts work even when the browser is closed.
         }
 
         newSignals.push({

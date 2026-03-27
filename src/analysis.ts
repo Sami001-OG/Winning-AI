@@ -669,6 +669,17 @@ export const analyzeChart = (
     }
   }
 
+  let tp1: number | undefined;
+  let tp2: number | undefined;
+  let tp3: number | undefined;
+
+  if (signal !== 'NO TRADE' && tp !== undefined && sl !== undefined) {
+    const totalReward = tp - entryPrice;
+    tp1 = entryPrice + (totalReward * 0.333);
+    tp2 = entryPrice + (totalReward * 0.666);
+    tp3 = tp;
+  }
+
   // Penalize excessive risk
   if (signal !== 'NO TRADE' && risk > 0) {
     const riskPercentage = risk / entryPrice;
@@ -765,19 +776,19 @@ export const analyzeChart = (
   });
   indicators.push({
     name: 'EMA 20',
-    value: lastEma20Val?.toFixed(2) || 'N/A',
+    value: lastEma20Val !== undefined ? formatPrice(lastEma20Val) : 'N/A',
     signal: lastClose > lastEma20Val ? 'bullish' : 'bearish',
     description: 'Short-term Trend'
   });
   indicators.push({
     name: 'EMA 50',
-    value: lastEma50Val?.toFixed(2) || 'N/A',
+    value: lastEma50Val !== undefined ? formatPrice(lastEma50Val) : 'N/A',
     signal: lastClose > lastEma50Val ? 'bullish' : 'bearish',
     description: 'Medium-term Trend'
   });
   indicators.push({
     name: 'Bollinger Bands (20, 2)',
-    value: lastBBVal ? `Upper: ${lastBBVal.upper.toFixed(2)}, Lower: ${lastBBVal.lower.toFixed(2)}` : 'N/A',
+    value: lastBBVal ? `Upper: ${formatPrice(lastBBVal.upper)}, Lower: ${formatPrice(lastBBVal.lower)}` : 'N/A',
     signal: lastBBVal && lastClose < lastBBVal.lower ? 'bullish' : lastBBVal && lastClose > lastBBVal.upper ? 'bearish' : 'neutral',
     description: 'Volatility/Mean Reversion'
   });
@@ -817,6 +828,9 @@ export const analyzeChart = (
       neutral: indicators.filter(i => i.signal === 'neutral').map(i => i.name)
     },
     tp,
+    tp1,
+    tp2,
+    tp3,
     sl,
     suggestedEntry: entryPrice, // For backward compatibility
     limitEntry,
