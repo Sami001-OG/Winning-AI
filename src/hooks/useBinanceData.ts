@@ -86,38 +86,52 @@ export const useBinanceData = (symbol: string, interval: string) => {
     statusListeners[key].push(statusListener);
 
     if (!wsCache[key]) {
-      // Use Futures WebSocket
-      const ws = new WebSocket(`wss://fstream.binance.com/ws/${key}`);
-      wsCache[key] = ws;
-      
-      ws.onopen = () => {
-        statusListeners[key]?.forEach(l => l(true));
-      };
-      
-      ws.onclose = () => {
-        statusListeners[key]?.forEach(l => l(false));
+      const connectWs = () => {
+        const ws = new WebSocket(`wss://fstream.binance.com/ws/${key}`);
+        wsCache[key] = ws;
+        
+        ws.onopen = () => {
+          statusListeners[key]?.forEach(l => l(true));
+        };
+        
+        ws.onclose = () => {
+          statusListeners[key]?.forEach(l => l(false));
+          // Reconnect after 5 seconds if there are still listeners
+          setTimeout(() => {
+            if (listeners[key] && listeners[key].length > 0) {
+              connectWs();
+            }
+          }, 5000);
+        };
+
+        ws.onerror = (error) => {
+          console.error(`WebSocket error for ${key}:`, error);
+          statusListeners[key]?.forEach(l => l(false));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.k) {
+              const k = message.k;
+              const candle: Candle = {
+                time: Math.floor(k.t / 1000),
+                open: parseFloat(k.o),
+                high: parseFloat(k.h),
+                low: parseFloat(k.l),
+                close: parseFloat(k.c),
+                volume: parseFloat(k.v),
+                isFinal: k.x
+              };
+              listeners[key]?.forEach(l => l(candle));
+            }
+          } catch (e) {
+            console.error("Error parsing WS message", e);
+          }
+        };
       };
 
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          if (message.k) {
-            const k = message.k;
-            const candle: Candle = {
-              time: Math.floor(k.t / 1000),
-              open: parseFloat(k.o),
-              high: parseFloat(k.h),
-              low: parseFloat(k.l),
-              close: parseFloat(k.c),
-              volume: parseFloat(k.v),
-              isFinal: k.x
-            };
-            listeners[key]?.forEach(l => l(candle));
-          }
-        } catch (e) {
-          console.error("Error parsing WS message", e);
-        }
-      };
+      connectWs();
     } else {
       // If ws already exists, check its state and set immediately
       setIsConnected(wsCache[key].readyState === WebSocket.OPEN);

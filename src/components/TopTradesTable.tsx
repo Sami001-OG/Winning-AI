@@ -35,6 +35,7 @@ interface TopTradesTableProps {
 export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [frozenEntries, setFrozenEntries] = useState<Record<string, number>>({});
@@ -51,8 +52,9 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
       const data = await res.json();
       const usdtPairs = data
         .filter((t: any) => 
-          t.symbol.endsWith('USDT') && 
+          (t.symbol.endsWith('USDT') || t.symbol.endsWith('USDC') || t.symbol.endsWith('BUSD')) && 
           parseFloat(t.volume) > 0 &&
+          !t.symbol.includes('_') && // Exclude delivery contracts like BTCUSDT_240628
           !t.symbol.includes('UPUSDT') &&
           !t.symbol.includes('DOWNUSDT') &&
           !t.symbol.includes('BULLUSDT') &&
@@ -165,30 +167,60 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         const symbols = await fetchTopSymbols();
         if (!isMounted) return;
 
-        const batches = [];
-        for (let i = 0; i < symbols.length; i += 15) {
-          batches.push(symbols.slice(i, i + 15));
-        }
+        setLoadingProgress({ current: 0, total: symbols.length });
 
         klinesDataRef.current = {};
         
-        for (const batch of batches) {
-          await Promise.all(batch.map(async (sym) => {
+        let processedCount = 0;
+        
+        // Helper for concurrent execution with limit
+        const asyncPool = async <T,>(poolLimit: number, array: T[], iteratorFn: (item: T) => Promise<any>) => {
+          const ret = [];
+          const executing: Promise<any>[] = [];
+          for (const item of array) {
+            const p = Promise.resolve().then(() => iteratorFn(item));
+            ret.push(p);
+            if (poolLimit <= array.length) {
+              const e: Promise<any> = p.then(() => executing.splice(executing.indexOf(e), 1));
+              executing.push(e);
+              if (executing.length >= poolLimit) {
+                await Promise.race(executing);
+              }
+            }
+          }
+          return Promise.all(ret);
+        };
+
+        // Process symbols in chunks to update progress
+        const chunkSize = 20;
+        const chunks = [];
+        for (let i = 0; i < symbols.length; i += chunkSize) {
+          chunks.push(symbols.slice(i, i + chunkSize));
+        }
+
+        for (const chunk of chunks) {
+          await asyncPool(5, chunk, async (sym) => {
             klinesDataRef.current[sym] = {};
             try {
-              await Promise.all(TIMEFRAMES.map(async (tf) => {
+              // Fetch timeframes sequentially for each symbol to reduce burst
+              for (const tf of TIMEFRAMES) {
                 const klines = await fetchKlines(sym, tf);
                 klinesDataRef.current[sym][tf] = klines;
-              }));
+              }
             } catch (e) {
               console.error(`Error fetching klines for ${sym}`, e);
             }
-          }));
-          // Delay to respect Binance rate limits (2400 weight / min for Futures)
-          // 15 symbols * 3 TFs = 45 requests * 2 weight = 90 weight per batch
-          // 20 batches * 500ms = 10 seconds total loading time
-          // Total weight = 1800 (well under 2400/min limit)
-          await new Promise(resolve => setTimeout(resolve, 500));
+          });
+          
+          processedCount += chunk.length;
+          if (isMounted) {
+            setLoadingProgress({ current: processedCount, total: symbols.length });
+          }
+
+          // Small delay between chunks to respect rate limits
+          // 20 symbols * 3 TFs = 60 requests * 2 weight = 120 weight
+          // 120 weight / 3.5s = ~34 weight/s = ~2050 weight/min (safe margin below 2400 limit)
+          await new Promise(resolve => setTimeout(resolve, 3500));
         }
 
         if (!isMounted) return;
@@ -203,52 +235,72 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         
         for (let i = 0; i < allStreams.length; i += streamsPerConnection) {
           const connectionStreams = allStreams.slice(i, i + streamsPerConnection);
-          const ws = new WebSocket(`wss://fstream.binance.com/ws`);
-          wsRefs.current.push(ws);
+          
+          const connectWs = () => {
+            const ws = new WebSocket(`wss://fstream.binance.com/ws`);
+            wsRefs.current.push(ws);
 
-          ws.onopen = () => {
-            // Binance allows max 200 streams per SUBSCRIBE request
-            for (let j = 0; j < connectionStreams.length; j += 200) {
-              const chunk = connectionStreams.slice(j, j + 200);
-              ws.send(JSON.stringify({
-                method: "SUBSCRIBE",
-                params: chunk,
-                id: j + 1
-              }));
-            }
-          };
+            ws.onopen = () => {
+              // Binance allows max 200 streams per SUBSCRIBE request
+              for (let j = 0; j < connectionStreams.length; j += 200) {
+                const chunk = connectionStreams.slice(j, j + 200);
+                ws.send(JSON.stringify({
+                  method: "SUBSCRIBE",
+                  params: chunk,
+                  id: j + 1
+                }));
+              }
+            };
 
-          ws.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            const klineData = message.e === 'kline' ? message : (message.data && message.data.e === 'kline' ? message.data : null);
-            
-            if (klineData) {
-              const kline = klineData.k;
-              const symbol = klineData.s;
-              const interval = kline.i;
+            ws.onclose = () => {
+              if (isMounted) {
+                // Remove the closed ws from refs
+                wsRefs.current = wsRefs.current.filter(ref => ref !== ws);
+                // Reconnect after 5 seconds
+                setTimeout(() => {
+                  if (isMounted) connectWs();
+                }, 5000);
+              }
+            };
+
+            ws.onerror = (error) => {
+              console.error('WebSocket error in TopTradesTable:', error);
+            };
+
+            ws.onmessage = (event) => {
+              const message = JSON.parse(event.data);
+              const klineData = message.e === 'kline' ? message : (message.data && message.data.e === 'kline' ? message.data : null);
               
-              if (klinesDataRef.current[symbol] && klinesDataRef.current[symbol][interval]) {
-                const data = klinesDataRef.current[symbol][interval];
-                const candle: Candle = {
-                  time: Math.floor(kline.t / 1000),
-                  open: parseFloat(kline.o),
-                  high: parseFloat(kline.h),
-                  low: parseFloat(kline.l),
-                  close: parseFloat(kline.c),
-                  volume: parseFloat(kline.v),
-                  isFinal: kline.x
-                };
+              if (klineData) {
+                const kline = klineData.k;
+                const symbol = klineData.s;
+                const interval = kline.i;
+                
+                if (klinesDataRef.current[symbol] && klinesDataRef.current[symbol][interval]) {
+                  const data = klinesDataRef.current[symbol][interval];
+                  const candle: Candle = {
+                    time: Math.floor(kline.t / 1000),
+                    open: parseFloat(kline.o),
+                    high: parseFloat(kline.h),
+                    low: parseFloat(kline.l),
+                    close: parseFloat(kline.c),
+                    volume: parseFloat(kline.v),
+                    isFinal: kline.x
+                  };
 
-                const lastCandle = data[data.length - 1];
-                if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
-                  data[data.length - 1] = candle;
-                } else {
-                  data.push(candle);
-                  if (data.length > 250) data.shift();
+                  const lastCandle = data[data.length - 1];
+                  if (lastCandle && lastCandle.time === Math.floor(kline.t / 1000)) {
+                    data[data.length - 1] = candle;
+                  } else {
+                    data.push(candle);
+                    if (data.length > 250) data.shift();
+                  }
                 }
               }
-            }
+            };
           };
+
+          connectWs();
         }
       } catch (e: any) {
         console.error('Init error', e);
@@ -315,7 +367,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="text-[10px] font-mono text-white/40 flex items-center gap-1">
             <RefreshCw size={10} className={loading ? "animate-spin" : ""} />
-            {loading ? "Scanning Market..." : `Updated: ${lastUpdate.toLocaleTimeString()}`}
+            {loading ? `Scanning Market... ${loadingProgress.total > 0 ? `(${loadingProgress.current}/${loadingProgress.total})` : ''}` : `Updated: ${lastUpdate.toLocaleTimeString()}`}
           </div>
         </div>
       </div>
@@ -347,7 +399,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
             {loading && displaySignals.length === 0 ? (
               <div className="p-8 text-center text-white/40 text-xs flex flex-col items-center justify-center gap-2">
                 <RefreshCw size={24} className="animate-spin text-emerald-500/50" />
-                <span>Analyzing all USDT Futures pairs...</span>
+                <span>Analyzing all USDT Futures pairs... {loadingProgress.total > 0 ? `(${loadingProgress.current}/${loadingProgress.total})` : ''}</span>
               </div>
             ) : displaySignals.length === 0 ? (
               <div className="p-8 text-center text-white/40 text-xs">No active signals found.</div>
