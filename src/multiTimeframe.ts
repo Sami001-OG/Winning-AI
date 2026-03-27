@@ -5,7 +5,7 @@ import { detectBOS, detectLiquidityGrab, detectRsiDivergence, calculateOrderFlow
 import { calculateVolumeProfile } from './volumeProfile';
 import { detectPatterns } from './patterns';
 
-const createNoTradeResult = (reason: string): AnalysisResult => ({
+export const createNoTradeResult = (reason: string): AnalysisResult => ({
   signal: 'NO TRADE',
   confidence: 0,
   indicators: [{
@@ -19,7 +19,7 @@ const createNoTradeResult = (reason: string): AnalysisResult => ({
   layers: { marketCondition: 0, trend: 0, entry: 0, confirmation: 0, structure: 0, volatility: 0 }
 });
 
-const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' => {
+export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' => {
   if (data.length < 200) return 'NEUTRAL';
   const closes = data.map(d => d.close);
   const highs = data.map(d => d.high);
@@ -88,7 +88,7 @@ const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' => {
   return 'NEUTRAL';
 };
 
-const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): { isValid: boolean, reason: string } => {
+export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): { isValid: boolean, reason: string } => {
   if (data.length < 20) return { isValid: false, reason: 'Not enough data' };
   const closes = data.map(d => d.close);
   const volumes = data.map(d => d.volume);

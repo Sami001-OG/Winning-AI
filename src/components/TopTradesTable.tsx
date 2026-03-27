@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { analyzeMultiTimeframe } from '../analysis';
+import { analyzeChart } from '../analysis';
+import { getHTFDirection, validateLTFEntry, createNoTradeResult } from '../multiTimeframe';
 import { Candle, AnalysisResult, Trade } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 import { formatPrice } from '../utils/format';
+import { sendTelegramAlert } from '../services/telegramService';
 
 const TIMEFRAMES = ['4h', '15m', '5m'];
 
@@ -43,6 +45,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const klinesDataRef = useRef<Record<string, Record<string, Candle[]>>>({});
   const wsRefs = useRef<WebSocket[]>([]);
   const prevEntriesRef = useRef<Record<string, number>>({});
+  const pushedSignalsRef = useRef<Record<string, number>>({});
   const lastSessionAlertRef = useRef<string>('');
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
@@ -95,18 +98,89 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     }
   };
 
-  const updateSignals = () => {
+  type PipelineState = {
+    bias4h: 'LONG' | 'SHORT' | 'NEUTRAL';
+    analysis15m: AnalysisResult | null;
+    entry5m: { isValid: boolean, reason: string } | null;
+  };
+  const pipelineStateRef = useRef<Record<string, PipelineState>>({});
+
+  const run4HBiasEngine = (symbol?: string) => {
+    const symbols = symbol ? [symbol] : Object.keys(klinesDataRef.current);
+    symbols.forEach(sym => {
+      const data4h = klinesDataRef.current[sym]?.['4h'];
+      if (data4h && data4h.length > 0) {
+        if (!pipelineStateRef.current[sym]) {
+          pipelineStateRef.current[sym] = { bias4h: 'NEUTRAL', analysis15m: null, entry5m: null };
+        }
+        pipelineStateRef.current[sym].bias4h = getHTFDirection(data4h);
+      }
+    });
+  };
+
+  const run15MRankingEngine = (symbol?: string) => {
+    const symbols = symbol ? [symbol] : Object.keys(klinesDataRef.current);
+    symbols.forEach(sym => {
+      const data15m = klinesDataRef.current[sym]?.['15m'];
+      if (data15m && data15m.length > 0) {
+        if (!pipelineStateRef.current[sym]) {
+          pipelineStateRef.current[sym] = { bias4h: 'NEUTRAL', analysis15m: null, entry5m: null };
+        }
+        pipelineStateRef.current[sym].analysis15m = analyzeChart(data15m, DEFAULT_RELIABILITY, trades, sym);
+      }
+    });
+  };
+
+  const run5MEntryEngine = (symbol: string) => {
+    const data5m = klinesDataRef.current[symbol]?.['5m'];
+    const state = pipelineStateRef.current[symbol];
+    if (data5m && data5m.length > 0 && state && state.analysis15m && state.analysis15m.signal !== 'NO TRADE') {
+      state.entry5m = validateLTFEntry(data5m, state.analysis15m.signal as 'LONG' | 'SHORT');
+    }
+  };
+
+  const updateTable = () => {
     const newSignals: TradeSignal[] = [];
-    for (const [symbol, tfData] of Object.entries(klinesDataRef.current)) {
-      if (!tfData['4h'] || !tfData['15m'] || !tfData['5m']) continue;
-      if (tfData['4h'].length === 0 || tfData['15m'].length === 0 || tfData['5m'].length === 0) continue;
-
-      const lastPrice = tfData['5m'][tfData['5m'].length - 1].close;
+    
+    for (const [symbol, state] of Object.entries(pipelineStateRef.current) as [string, PipelineState][]) {
+      if (!state.analysis15m) continue;
       
-      const analysis = analyzeMultiTimeframe(tfData['4h'], tfData['15m'], tfData['5m'], DEFAULT_RELIABILITY, trades, symbol);
-
-      if (analysis.signal !== 'NO TRADE') {
-        const currentEntry = analysis.suggestedEntry;
+      let finalAnalysis: AnalysisResult;
+      
+      if (state.bias4h !== 'NEUTRAL' && state.bias4h !== state.analysis15m.signal) {
+        finalAnalysis = createNoTradeResult(`4h Trend (${state.bias4h}) opposes 15m Setup (${state.analysis15m.signal})`);
+      } else if (state.analysis15m.signal === 'NO TRADE') {
+        finalAnalysis = state.analysis15m;
+      } else if (!state.entry5m || !state.entry5m.isValid) {
+        finalAnalysis = createNoTradeResult(`5m Entry Invalid: ${state.entry5m?.reason || 'Waiting for close'}`);
+      } else {
+        let combinedConfidence = state.analysis15m.confidence;
+        if (state.bias4h === state.analysis15m.signal) {
+          combinedConfidence += 15;
+        }
+        combinedConfidence = Math.min(99, combinedConfidence);
+        
+        finalAnalysis = { ...state.analysis15m, confidence: combinedConfidence };
+        const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === 'System Logic');
+        const alignmentDesc = `Top-Down Aligned: 4h Trend (${state.bias4h}) → 15m Setup (${state.analysis15m.signal}) → 5m Trigger (Valid).`;
+        
+        if (sysLogicIdx >= 0) {
+          finalAnalysis.indicators[sysLogicIdx] = {
+            ...finalAnalysis.indicators[sysLogicIdx],
+            description: alignmentDesc
+          };
+        } else {
+          finalAnalysis.indicators.push({
+            name: 'System Logic',
+            value: 'ALIGNED',
+            signal: finalAnalysis.signal === 'LONG' ? 'bullish' : 'bearish',
+            description: alignmentDesc
+          });
+        }
+      }
+      
+      if (finalAnalysis.signal !== 'NO TRADE') {
+        const currentEntry = finalAnalysis.suggestedEntry;
         const prevEntry = prevEntriesRef.current[symbol];
         
         let entryDirection: 'up' | 'down' | 'none' = 'none';
@@ -119,10 +193,39 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           prevEntriesRef.current[symbol] = currentEntry;
         }
 
+        const data5m = klinesDataRef.current[symbol]?.['5m'];
+        const lastPrice = data5m && data5m.length > 0 ? data5m[data5m.length - 1].close : 0;
+        const lastCandleTime = data5m && data5m.length > 0 ? data5m[data5m.length - 1].time : 0;
+
+        if (lastCandleTime > 0 && pushedSignalsRef.current[symbol] !== lastCandleTime && finalAnalysis.confidence >= 75) {
+          pushedSignalsRef.current[symbol] = lastCandleTime;
+          
+          let orderType = 'Market';
+          let entryPriceStr = finalAnalysis.suggestedEntry?.toFixed(4) || 'N/A';
+          
+          if (finalAnalysis.entryStrategy === 'Limit (Pullback)') {
+            orderType = 'Limit';
+            entryPriceStr = finalAnalysis.limitEntry?.toFixed(4) || 'N/A';
+          } else if (finalAnalysis.entryStrategy === 'Split (50/50)') {
+            orderType = 'Split (50% Market, 50% Limit)';
+            entryPriceStr = `Market: ${finalAnalysis.suggestedEntry?.toFixed(4) || 'N/A'}, Limit: ${finalAnalysis.limitEntry?.toFixed(4) || 'N/A'}`;
+          }
+          
+          const message = `🚨 <b>${symbol}</b> Signal Alert 🚨
+Direction: <b>${finalAnalysis.signal}</b>
+Order Type: <b>${orderType}</b>
+Entry: <b>${entryPriceStr}</b>
+TP: <b>${finalAnalysis.tp?.toFixed(4) || 'N/A'}</b>
+SL: <b>${finalAnalysis.sl?.toFixed(4) || 'N/A'}</b>
+Confidence: <b>${finalAnalysis.confidence.toFixed(1)}%</b>`;
+
+          sendTelegramAlert(message);
+        }
+
         newSignals.push({
           symbol,
-          analysis,
-          lastPrice: tfData['5m'][tfData['5m'].length - 1].close,
+          analysis: finalAnalysis,
+          lastPrice,
           entryDirection
         });
       }
@@ -146,10 +249,17 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
     });
   };
 
-  const updateSignalsRef = useRef(updateSignals);
+  const updateTableRef = useRef(updateTable);
+  const run4HBiasEngineRef = useRef(run4HBiasEngine);
+  const run15MRankingEngineRef = useRef(run15MRankingEngine);
+  const run5MEntryEngineRef = useRef(run5MEntryEngine);
+
   useEffect(() => {
-    updateSignalsRef.current = updateSignals;
-  }, [updateSignals]);
+    updateTableRef.current = updateTable;
+    run4HBiasEngineRef.current = run4HBiasEngine;
+    run15MRankingEngineRef.current = run15MRankingEngine;
+    run5MEntryEngineRef.current = run5MEntryEngine;
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -199,7 +309,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         }
 
         for (const chunk of chunks) {
-          await asyncPool(5, chunk, async (sym) => {
+          await asyncPool<string>(5, chunk, async (sym) => {
             klinesDataRef.current[sym] = {};
             try {
               // Fetch timeframes sequentially for each symbol to reduce burst
@@ -224,7 +334,13 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         }
 
         if (!isMounted) return;
-        updateSignalsRef.current();
+        
+        // Initial run of the pipeline
+        run4HBiasEngineRef.current();
+        run15MRankingEngineRef.current();
+        Object.keys(klinesDataRef.current).forEach(sym => run5MEntryEngineRef.current(sym));
+        updateTableRef.current();
+        
         setLoading(false);
 
         // Setup WS
@@ -295,6 +411,12 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
                     data.push(candle);
                     if (data.length > 250) data.shift();
                   }
+
+                  // 5M Entry Engine Trigger
+                  if (interval === '5m' && kline.x) {
+                    run5MEntryEngineRef.current(symbol);
+                    updateTableRef.current();
+                  }
                 }
               }
             };
@@ -313,13 +435,25 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
 
     init();
 
-    const timerId = window.setInterval(() => {
-      updateSignalsRef.current();
-    }, 2000); // Update table every 2 seconds
+    const timer4h = window.setInterval(() => {
+      run4HBiasEngineRef.current();
+      updateTableRef.current();
+    }, 10 * 60 * 1000); // 10 minutes
+
+    const timer15m = window.setInterval(() => {
+      run15MRankingEngineRef.current();
+      updateTableRef.current();
+    }, 60 * 1000); // 1 minute
+
+    const timerTable = window.setInterval(() => {
+      updateTableRef.current();
+    }, 2000); // Update table every 2 seconds for price updates
 
     return () => {
       isMounted = false;
-      window.clearInterval(timerId);
+      window.clearInterval(timer4h);
+      window.clearInterval(timer15m);
+      window.clearInterval(timerTable);
       wsRefs.current.forEach(ws => ws.close());
     };
   }, []);

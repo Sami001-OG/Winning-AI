@@ -2,12 +2,51 @@ import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
 import { analyzeMultiTimeframe } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
 import { Candle, Trade } from "./src/types";
 
 const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.2, rsi: 1.5, vol: 1.2, obv: 1.2, exception: 2.0 };
+
+function getBinanceSignature(queryString: string, secret: string) {
+  return crypto.createHmac('sha256', secret).update(queryString).digest('hex');
+}
+
+async function binanceFuturesRequest(method: string, endpoint: string, params: Record<string, any> = {}) {
+  const apiKey = process.env.BINANCE_API_KEY;
+  const apiSecret = process.env.BINANCE_SECRET_KEY;
+  
+  if (!apiKey || !apiSecret) {
+    throw new Error('Binance API keys not configured');
+  }
+
+  params.timestamp = Date.now();
+  params.recvWindow = 10000;
+  
+  const queryString = Object.entries(params)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&');
+    
+  const signature = getBinanceSignature(queryString, apiSecret);
+  const url = `https://fapi.binance.com${endpoint}?${queryString}&signature=${signature}`;
+  
+  const response = await fetch(url, {
+    method,
+    headers: {
+      'X-MBX-APIKEY': apiKey,
+      'Content-Type': 'application/json'
+    }
+  });
+  
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`Binance API Error: ${JSON.stringify(data)}`);
+  }
+  
+  return data;
+}
 
 async function sendTelegramSignal(botToken: string, chatId: string, message: string, imageUrl?: string) {
   const cleanToken = botToken.replace(/^["']|["']$/g, '').trim();
@@ -199,6 +238,93 @@ async function startServer() {
     } catch (error) {
       console.error('Error in debug endpoint:', error);
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  let exchangeInfoCache: any = null;
+
+  app.post("/api/trade/execute", async (req, res) => {
+    try {
+      const { symbol, side, orderType, price, stopLoss, takeProfit, riskFraction = 1.0 } = req.body;
+      
+      if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY) {
+        return res.status(400).json({ error: "Binance API keys not configured in .env" });
+      }
+
+      // 1. Fetch Exchange Info (Cached)
+      if (!exchangeInfoCache) {
+        exchangeInfoCache = await binanceFuturesRequest('GET', '/fapi/v1/exchangeInfo');
+      }
+      const symbolInfo = exchangeInfoCache.symbols.find((s: any) => s.symbol === symbol);
+      if (!symbolInfo) throw new Error(`Symbol ${symbol} not found`);
+      
+      const qtyPrecision = symbolInfo.quantityPrecision;
+      const pricePrecision = symbolInfo.pricePrecision;
+
+      // 2. Risk Calculation Engine
+      const accountInfo = await binanceFuturesRequest('GET', '/fapi/v2/account');
+      const usdtBalance = accountInfo.assets.find((a: any) => a.asset === 'USDT')?.availableBalance || 0;
+      
+      const riskPercentage = 0.01 * riskFraction; // 1% risk per trade * fraction
+      const riskAmount = parseFloat(usdtBalance) * riskPercentage;
+      
+      if (riskAmount <= 0) throw new Error("Insufficient balance for risk calculation");
+      
+      let rawQty = riskAmount / Math.abs(price - stopLoss);
+      
+      // Apply leverage (e.g., 10x)
+      const leverage = 10;
+      await binanceFuturesRequest('POST', '/fapi/v1/leverage', { symbol, leverage });
+      
+      // Format quantity and prices
+      const quantity = parseFloat(rawQty.toFixed(qtyPrecision));
+      const formattedPrice = parseFloat(price).toFixed(pricePrecision);
+      const formattedSL = parseFloat(stopLoss).toFixed(pricePrecision);
+      const formattedTP = parseFloat(takeProfit).toFixed(pricePrecision);
+
+      if (quantity <= 0) throw new Error("Calculated quantity is too small");
+
+      // 3. Place Main Order
+      const orderParams: any = {
+        symbol,
+        side,
+        type: orderType,
+        quantity,
+      };
+      
+      if (orderType === 'LIMIT') {
+        orderParams.price = formattedPrice;
+        orderParams.timeInForce = 'GTC';
+      }
+      
+      const orderRes = await binanceFuturesRequest('POST', '/fapi/v1/order', orderParams);
+      
+      // 4. Place Stop Loss
+      if (stopLoss) {
+        await binanceFuturesRequest('POST', '/fapi/v1/order', {
+          symbol,
+          side: side === 'BUY' ? 'SELL' : 'BUY',
+          type: 'STOP_MARKET',
+          stopPrice: formattedSL,
+          closePosition: true
+        });
+      }
+      
+      // 5. Place Take Profit
+      if (takeProfit) {
+        await binanceFuturesRequest('POST', '/fapi/v1/order', {
+          symbol,
+          side: side === 'BUY' ? 'SELL' : 'BUY',
+          type: 'TAKE_PROFIT_MARKET',
+          stopPrice: formattedTP,
+          closePosition: true
+        });
+      }
+      
+      res.json({ success: true, order: orderRes, riskAmount, quantity });
+    } catch (error: any) {
+      console.error('Trade Execution Error:', error);
+      res.status(500).json({ error: error.message });
     }
   });
 
