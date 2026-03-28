@@ -438,33 +438,36 @@ async function startServer() {
             // --- ACTIVE TRADE MONITORING (24/7) ---
             const activeTrade = activeTrades[symbol];
             if (activeTrade && klines3m.length > 0) {
-              const lastPrice = klines3m[klines3m.length - 1].close;
+              const currentCandle = klines3m[klines3m.length - 1];
+              const currentHigh = currentCandle.high;
+              const currentLow = currentCandle.low;
+              
               if (activeTrade.direction === 'LONG') {
-                if (lastPrice <= activeTrade.sl) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(lastPrice)}</code>`);
+                if (currentLow <= activeTrade.sl) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code>`);
                   delete activeTrades[symbol];
-                } else if (activeTrade.achieved < 3 && lastPrice >= activeTrade.tp3) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP3 Achieved at <code>${formatPrice(lastPrice)}</code>`);
+                } else if (activeTrade.achieved < 3 && currentHigh >= activeTrade.tp3) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)})`);
                   delete activeTrades[symbol];
-                } else if (activeTrade.achieved < 2 && lastPrice >= activeTrade.tp2) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP2 Achieved at <code>${formatPrice(lastPrice)}</code>`);
+                } else if (activeTrade.achieved < 2 && currentHigh >= activeTrade.tp2) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)})`);
                   activeTrade.achieved = 2;
-                } else if (activeTrade.achieved < 1 && lastPrice >= activeTrade.tp1) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP1 Achieved at <code>${formatPrice(lastPrice)}</code>`);
+                } else if (activeTrade.achieved < 1 && currentHigh >= activeTrade.tp1) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)})`);
                   activeTrade.achieved = 1;
                 }
               } else if (activeTrade.direction === 'SHORT') {
-                if (lastPrice >= activeTrade.sl) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(lastPrice)}</code>`);
+                if (currentHigh >= activeTrade.sl) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code>`);
                   delete activeTrades[symbol];
-                } else if (activeTrade.achieved < 3 && lastPrice <= activeTrade.tp3) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP3 Achieved at <code>${formatPrice(lastPrice)}</code>`);
+                } else if (activeTrade.achieved < 3 && currentLow <= activeTrade.tp3) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)})`);
                   delete activeTrades[symbol];
-                } else if (activeTrade.achieved < 2 && lastPrice <= activeTrade.tp2) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP2 Achieved at <code>${formatPrice(lastPrice)}</code>`);
+                } else if (activeTrade.achieved < 2 && currentLow <= activeTrade.tp2) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)})`);
                   activeTrade.achieved = 2;
-                } else if (activeTrade.achieved < 1 && lastPrice <= activeTrade.tp1) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP1 Achieved at <code>${formatPrice(lastPrice)}</code>`);
+                } else if (activeTrade.achieved < 1 && currentLow <= activeTrade.tp1) {
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)})`);
                   activeTrade.achieved = 1;
                 }
               }
@@ -486,7 +489,7 @@ async function startServer() {
             if (!ltfValidation.isValid) continue;
 
             // 5. Combine and Send
-            if (mtfAnalysis.confidence >= 85) {
+            if (mtfAnalysis.confidence >= 75) {
               const now = Date.now();
               const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
               const lastSent = lastSentSignals[signalKey];
@@ -501,14 +504,32 @@ async function startServer() {
                 // --- STALE SIGNAL PREVENTION ---
                 // If the current 3m price has already hit TP1 or SL (calculated from 15m), it's a stale signal.
                 let isStale = false;
+                
+                // 1. Current Price Check & R:R Check
+                const risk = Math.abs(entryPrice - sl);
+                const rewardToTp1 = Math.abs(tp1 - entryPrice);
+
                 if (mtfAnalysis.signal === 'LONG') {
                   if (entryPrice >= tp1 || entryPrice <= sl) isStale = true;
+                  if (rewardToTp1 < risk * 0.5) isStale = true; // Price already moved too far up
                 } else if (mtfAnalysis.signal === 'SHORT') {
                   if (entryPrice <= tp1 || entryPrice >= sl) isStale = true;
+                  if (rewardToTp1 < risk * 0.5) isStale = true; // Price already moved too far down
+                }
+
+                // 2. Extended Wick Check (Last 45 minutes)
+                // If the price has already wicked to TP1 or SL recently, the move is over.
+                const recentCandles = klines3m.slice(-15);
+                for (const c of recentCandles) {
+                  if (mtfAnalysis.signal === 'LONG') {
+                    if (c.high >= tp1 || c.low <= sl) isStale = true;
+                  } else if (mtfAnalysis.signal === 'SHORT') {
+                    if (c.low <= tp1 || c.high >= sl) isStale = true;
+                  }
                 }
 
                 if (isStale) {
-                  console.log(`Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Current Price: ${entryPrice}, TP1: ${tp1}, SL: ${sl}`);
+                  console.log(`Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Entry: ${entryPrice}, TP1: ${tp1}, SL: ${sl}`);
                   continue;
                 }
                 // -------------------------------
