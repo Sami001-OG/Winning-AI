@@ -121,7 +121,7 @@ async function fetchTopSymbols() {
       )
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
       .slice(0, 300) // Fetch top 300
-      .slice(0, 30) // Filter to top 30
+      .slice(0, 50) // Filter to top 50
       .map((t: any) => t.symbol);
   } catch (e) {
     return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];

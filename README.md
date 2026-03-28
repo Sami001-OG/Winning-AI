@@ -9,7 +9,7 @@ The bot operates on a robust, data-driven architecture designed to maximize sign
 ### 1. The Tiered Filtering Funnel
 To efficiently analyze 300+ symbols without exceeding API rate limits, the bot employs a progressive filtering funnel:
 
-1.  **Liquidity Filter (300+ → 30)**: Filters the top 300 USDT pairs by 24h volume, selecting the top 30 most liquid symbols.
+1.  **Liquidity Filter (300+ → 50)**: Filters the top 300 USDT pairs by 24h volume, selecting the top 50 most liquid symbols.
 2.  **4H Bias Alignment (30 → 12)**: Analyzes the 4h timeframe to determine the dominant market trend. Symbols not aligned with the higher timeframe trend are discarded.
 3.  **15M Confirmation (12 → 6)**: Analyzes the 15m timeframe for setup quality, momentum, and confidence using the core indicator suite.
 4.  **5M Entry Trigger (6 → 2-3)**: Validates the final entry trigger on the 5m timeframe (e.g., liquidity sweeps, BOS, displacement).
