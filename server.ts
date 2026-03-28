@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
-import { analyzeMultiTimeframe } from "./src/multiTimeframe";
+import { analyzeMultiTimeframe, getHTFDirection, validateLTFEntry } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
 import { Candle, Trade } from "./src/types";
 
@@ -120,7 +120,8 @@ async function fetchTopSymbols() {
         !t.symbol.includes('BEARUSDT')
       )
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-      .slice(0, 100)
+      .slice(0, 300) // Fetch top 300
+      .slice(0, 30) // Filter to top 30
       .map((t: any) => t.symbol);
   } catch (e) {
     return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
@@ -429,20 +430,15 @@ async function startServer() {
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
         
-        await Promise.all(batch.map(async (symbol) => {
+        for (const symbol of symbols) {
           try {
-            // Fetch all 3 timeframes concurrently for this symbol
-            const [klines4h, klines15m, klines5m] = await Promise.all([
-              fetchKlines(symbol, '4h'),
-              fetchKlines(symbol, '15m'),
-              fetchKlines(symbol, '5m')
-            ]);
-            
-            const lastPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+            // 1. Fetch 5M for active trade monitoring
+            const klines5m = await fetchKlines(symbol, '5m');
             
             // --- ACTIVE TRADE MONITORING (24/7) ---
             const activeTrade = activeTrades[symbol];
-            if (activeTrade && lastPrice > 0) {
+            if (activeTrade && klines5m.length > 0) {
+              const lastPrice = klines5m[klines5m.length - 1].close;
               if (activeTrade.direction === 'LONG') {
                 if (lastPrice <= activeTrade.sl) {
                   await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(lastPrice)}</code>`);
@@ -475,61 +471,59 @@ async function startServer() {
             }
             // --- END ACTIVE TRADE MONITORING ---
 
-            const analysis = analyzeMultiTimeframe(klines4h, klines15m, klines5m, DEFAULT_RELIABILITY, [], symbol);
-            
-            if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 85) {
-              // Check if the previous candles also had the same signal to prevent continuous spam
-              const prevKlines1 = klines15m.slice(0, -1);
-              const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, [], symbol);
-              
-              const prevKlines2 = klines15m.slice(0, -2);
-              const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, [], symbol);
+            // 2. 4H Bias Alignment
+            const klines4h = await fetchKlines(symbol, '4h');
+            const htfDirection = getHTFDirection(klines4h);
+            if (htfDirection === 'NEUTRAL') continue;
 
-              const prevKlines3 = klines15m.slice(0, -3);
-              const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, [], symbol);
-              
-              const isContinuous = 
-                (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
-                (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
-                (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
+            // 3. 15M Confirmation (Confidence/Setup)
+            const klines15m = await fetchKlines(symbol, '15m');
+            const mtfAnalysis = analyzeChart(klines15m, DEFAULT_RELIABILITY, [], symbol);
+            if (mtfAnalysis.signal === 'NO TRADE' || htfDirection !== mtfAnalysis.signal) continue;
 
-              if (!isContinuous) {
-                const now = Date.now();
-                const signalKey = `${symbol}-Multi-TF (4h, 15m, 5m)`;
-                const lastSent = lastSentSignals[signalKey];
+            // 4. 5M Entry (already fetched klines5m)
+            const ltfValidation = validateLTFEntry(klines5m, mtfAnalysis.signal as 'LONG' | 'SHORT');
+            if (!ltfValidation.isValid) continue;
+
+            // 5. Combine and Send
+            if (mtfAnalysis.confidence >= 85) {
+              const now = Date.now();
+              const signalKey = `${symbol}-Multi-TF (4h, 15m, 5m)`;
+              const lastSent = lastSentSignals[signalKey];
+              
+              if (!lastSent || lastSent.direction !== mtfAnalysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+                lastSentSignals[signalKey] = {
+                  direction: mtfAnalysis.signal,
+                  timestamp: now
+                };
                 
-                if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-                  const lastPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
-                  if (!(analysis.signal === 'LONG' && (lastPrice >= (analysis.tp1 || 0) || lastPrice <= (analysis.sl || 0))) &&
-                      !(analysis.signal === 'SHORT' && (lastPrice <= (analysis.tp1 || 0) || lastPrice >= (analysis.sl || 0)))) {
-                    
-                    lastSentSignals[signalKey] = {
-                      direction: analysis.signal,
-                      timestamp: now
-                    };
-                    
-                    const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
-                    const tp1 = analysis.tp1 || 0;
-                    const tp2 = analysis.tp2 || 0;
-                    const tp3 = analysis.tp3 || analysis.tp || 0;
-                    const sl = analysis.sl || 0;
+                const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+                const tp1 = mtfAnalysis.tp1 || 0;
+                const tp2 = mtfAnalysis.tp2 || 0;
+                const tp3 = mtfAnalysis.tp3 || mtfAnalysis.tp || 0;
+                const sl = mtfAnalysis.sl || 0;
 
-                    activeTrades[symbol] = {
-                      symbol,
-                      direction: analysis.signal as 'LONG' | 'SHORT',
-                      entry: entryPrice,
-                      tp1, tp2, tp3, sl,
-                      achieved: 0
-                    };
+                activeTrades[symbol] = {
+                  symbol,
+                  direction: mtfAnalysis.signal as 'LONG' | 'SHORT',
+                  entry: entryPrice,
+                  tp1, tp2, tp3, sl,
+                  achieved: 0
+                };
 
-                    const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-                    const limitEntryStr = analysis.limitEntry ? `\n⏳ Limit (Pullback): ${formatPrice(analysis.limitEntry)}` : '';
-                    const strategyStr = analysis.entryStrategy ? `\n\n📝 Strategy: ${analysis.entryStrategy}` : '';
-                    
-                    const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
+                const directionEmoji = mtfAnalysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+                const limitEntryStr = mtfAnalysis.limitEntry ? `\n⏳ Limit (Pullback): ${formatPrice(mtfAnalysis.limitEntry)}` : '';
+                const strategyStr = mtfAnalysis.entryStrategy ? `\n\n📝 Strategy: ${mtfAnalysis.entryStrategy}` : '';
+                
+                const logicStr = mtfAnalysis.indicators
+                  .filter(i => i.signal === (mtfAnalysis.signal === 'LONG' ? 'bullish' : 'bearish'))
+                  .map(i => `• ${i.name}: ${i.description}`)
+                  .join('\n');
+
+                const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
 
 🪙 <b>Pair:</b> #${symbol}
-${directionEmoji} <b>Direction:</b> ${analysis.signal}
+${directionEmoji} <b>Direction:</b> ${mtfAnalysis.signal}
 ⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 5m)${strategyStr}
 
 🎯 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>${limitEntryStr}
@@ -538,21 +532,22 @@ ${directionEmoji} <b>Direction:</b> ${analysis.signal}
 ✅ <b>TP3:</b> <code>${formatPrice(tp3)}</code>
 ❌ <b>Stop Loss:</b> <code>${formatPrice(sl)}</code>
 
-🧠 <b>Confidence:</b> <code>${(analysis.confidence || 0).toFixed(1)}%</code>`;
+🧠 <b>Confidence:</b> <code>${(mtfAnalysis.confidence || 0).toFixed(1)}%</code>
 
-                    const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-                    const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-                    const imageUrl = analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
+💡 <b>Logic:</b>
+${logicStr}`;
 
-                    await sendTelegramSignal(botToken, chatId, message, imageUrl);
-                  }
-                }
+                const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+                const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+                const imageUrl = mtfAnalysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
+
+                await sendTelegramSignal(botToken, chatId, message, imageUrl);
               }
             }
           } catch (err) {
             console.error(`Error processing symbol ${symbol} in background loop:`, err);
           }
-        }));
+        }
         
         // Delay between batches to respect Binance API rate limits (2400 weight/minute)
         await new Promise(resolve => setTimeout(resolve, 500));
