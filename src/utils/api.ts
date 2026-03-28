@@ -12,8 +12,8 @@ const BINANCE_FUTURES_ENDPOINTS = [
 export const fetchWithRetry = async (
   url: string,
   retries = 3,
-  backoff = 1000,
-  timeout = 20000
+  backoff = 2000,
+  timeout = 30000
 ): Promise<Response> => {
   const isBinanceFutures = url.includes('fapi.binance.com');
   const isBinanceSpot = url.includes('api.binance.com') && !isBinanceFutures;

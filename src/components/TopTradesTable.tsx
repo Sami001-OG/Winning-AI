@@ -64,6 +64,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           !t.symbol.includes('BEARUSDT')
         )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+        .slice(0, 100)
         .map((t: any) => t.symbol);
       return usdtPairs;
     } catch (e) {

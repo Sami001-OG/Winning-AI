@@ -120,6 +120,7 @@ async function fetchTopSymbols() {
         !t.symbol.includes('BEARUSDT')
       )
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+      .slice(0, 100)
       .map((t: any) => t.symbol);
   } catch (e) {
     return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
@@ -389,7 +390,7 @@ async function startServer() {
           const key = `${session.name}_START_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
             const timeString = `${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC`;
-            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🟢 <b>${session.name} Session</b> is now OPEN.\n⏰ Time: ${timeString}`);
+            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n\n🟢 <b>${session.name} Session</b> is now OPEN.\n⏰ Time: <code>${timeString}</code>`);
             sentSessionNotifications.add(key);
           }
         }
@@ -407,7 +408,7 @@ async function startServer() {
           const key = `${session.name}_END_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
             const timeString = `${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC`;
-            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n🔴 <b>${session.name} Session</b> is now CLOSED.\n⏰ Time: ${timeString}`);
+            await sendTelegramSignal(botToken, chatId, `🌐 <b>MARKET UPDATE</b>\n\n🔴 <b>${session.name} Session</b> is now CLOSED.\n⏰ Time: <code>${timeString}</code>`);
             sentSessionNotifications.add(key);
           }
         }
@@ -444,30 +445,30 @@ async function startServer() {
             if (activeTrade && lastPrice > 0) {
               if (activeTrade.direction === 'LONG') {
                 if (lastPrice <= activeTrade.sl) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📈 Direction: LONG\n❌ Stop Loss Hit at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(lastPrice)}</code>`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 3 && lastPrice >= activeTrade.tp3) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📈 Direction: LONG\n✅✅✅ TP3 Achieved at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP3 Achieved at <code>${formatPrice(lastPrice)}</code>`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 2 && lastPrice >= activeTrade.tp2) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📈 Direction: LONG\n✅✅ TP2 Achieved at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP2 Achieved at <code>${formatPrice(lastPrice)}</code>`);
                   activeTrade.achieved = 2;
                 } else if (activeTrade.achieved < 1 && lastPrice >= activeTrade.tp1) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📈 Direction: LONG\n✅ TP1 Achieved at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP1 Achieved at <code>${formatPrice(lastPrice)}</code>`);
                   activeTrade.achieved = 1;
                 }
               } else if (activeTrade.direction === 'SHORT') {
                 if (lastPrice >= activeTrade.sl) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📉 Direction: SHORT\n❌ Stop Loss Hit at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(lastPrice)}</code>`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 3 && lastPrice <= activeTrade.tp3) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📉 Direction: SHORT\n✅✅✅ TP3 Achieved at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP3 Achieved at <code>${formatPrice(lastPrice)}</code>`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 2 && lastPrice <= activeTrade.tp2) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📉 Direction: SHORT\n✅✅ TP2 Achieved at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP2 Achieved at <code>${formatPrice(lastPrice)}</code>`);
                   activeTrade.achieved = 2;
                 } else if (activeTrade.achieved < 1 && lastPrice <= activeTrade.tp1) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 TRADE UPDATE 🚨\n\n🪙 Pair: #${symbol}\n📉 Direction: SHORT\n✅ TP1 Achieved at ${formatPrice(lastPrice)}`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP1 Achieved at <code>${formatPrice(lastPrice)}</code>`);
                   activeTrade.achieved = 1;
                 }
               }
@@ -476,8 +477,77 @@ async function startServer() {
 
             const analysis = analyzeMultiTimeframe(klines4h, klines15m, klines5m, DEFAULT_RELIABILITY, [], symbol);
             
-            if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 75) {
-              allSignals.push({ symbol, tf: 'Multi-TF (4h, 15m, 5m)', analysis, klines: klines15m });
+            if (analysis.signal !== 'NO TRADE' && analysis.confidence >= 85) {
+              // Check if the previous candles also had the same signal to prevent continuous spam
+              const prevKlines1 = klines15m.slice(0, -1);
+              const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, [], symbol);
+              
+              const prevKlines2 = klines15m.slice(0, -2);
+              const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, [], symbol);
+
+              const prevKlines3 = klines15m.slice(0, -3);
+              const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, [], symbol);
+              
+              const isContinuous = 
+                (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
+                (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
+                (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
+
+              if (!isContinuous) {
+                const now = Date.now();
+                const signalKey = `${symbol}-Multi-TF (4h, 15m, 5m)`;
+                const lastSent = lastSentSignals[signalKey];
+                
+                if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
+                  const lastPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+                  if (!(analysis.signal === 'LONG' && (lastPrice >= (analysis.tp1 || 0) || lastPrice <= (analysis.sl || 0))) &&
+                      !(analysis.signal === 'SHORT' && (lastPrice <= (analysis.tp1 || 0) || lastPrice >= (analysis.sl || 0)))) {
+                    
+                    lastSentSignals[signalKey] = {
+                      direction: analysis.signal,
+                      timestamp: now
+                    };
+                    
+                    const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+                    const tp1 = analysis.tp1 || 0;
+                    const tp2 = analysis.tp2 || 0;
+                    const tp3 = analysis.tp3 || analysis.tp || 0;
+                    const sl = analysis.sl || 0;
+
+                    activeTrades[symbol] = {
+                      symbol,
+                      direction: analysis.signal as 'LONG' | 'SHORT',
+                      entry: entryPrice,
+                      tp1, tp2, tp3, sl,
+                      achieved: 0
+                    };
+
+                    const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+                    const limitEntryStr = analysis.limitEntry ? `\n⏳ Limit (Pullback): ${formatPrice(analysis.limitEntry)}` : '';
+                    const strategyStr = analysis.entryStrategy ? `\n\n📝 Strategy: ${analysis.entryStrategy}` : '';
+                    
+                    const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
+
+🪙 <b>Pair:</b> #${symbol}
+${directionEmoji} <b>Direction:</b> ${analysis.signal}
+⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 5m)${strategyStr}
+
+🎯 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>${limitEntryStr}
+✅ <b>TP1:</b> <code>${formatPrice(tp1)}</code>
+✅ <b>TP2:</b> <code>${formatPrice(tp2)}</code>
+✅ <b>TP3:</b> <code>${formatPrice(tp3)}</code>
+❌ <b>Stop Loss:</b> <code>${formatPrice(sl)}</code>
+
+🧠 <b>Confidence:</b> <code>${(analysis.confidence || 0).toFixed(1)}%</code>`;
+
+                    const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+                    const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+                    const imageUrl = analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
+
+                    await sendTelegramSignal(botToken, chatId, message, imageUrl);
+                  }
+                }
+              }
             }
           } catch (err) {
             console.error(`Error processing symbol ${symbol} in background loop:`, err);
@@ -488,93 +558,6 @@ async function startServer() {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
 
-      // Sort by highest confidence
-      allSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
-
-      // Find the absolute best signals that aren't continuous spam
-      let signalsSentThisCycle = 0;
-      for (const sig of allSignals) {
-        const { symbol, tf, analysis, klines } = sig;
-        
-        // Check if the previous candles also had the same signal to prevent continuous spam
-        const prevKlines1 = klines.slice(0, -1);
-        const prevAnalysis1 = analyzeChart(prevKlines1, DEFAULT_RELIABILITY, [], symbol);
-        
-        const prevKlines2 = klines.slice(0, -2);
-        const prevAnalysis2 = analyzeChart(prevKlines2, DEFAULT_RELIABILITY, [], symbol);
-
-        const prevKlines3 = klines.slice(0, -3);
-        const prevAnalysis3 = analyzeChart(prevKlines3, DEFAULT_RELIABILITY, [], symbol);
-        
-        const isContinuous = 
-          (prevAnalysis1.signal === analysis.signal && prevAnalysis1.confidence >= 70) ||
-          (prevAnalysis2.signal === analysis.signal && prevAnalysis2.confidence >= 70) ||
-          (prevAnalysis3.signal === analysis.signal && prevAnalysis3.confidence >= 70);
-
-        if (!isContinuous) {
-          const now = Date.now();
-          const signalKey = `${symbol}-${tf}`;
-          const lastSent = lastSentSignals[signalKey];
-          
-          // Check if we should send:
-          // 1. Never sent before
-          // 2. Direction changed
-          // 3. Cooldown period passed
-          if (!lastSent || lastSent.direction !== analysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-            lastSentSignals[signalKey] = {
-              direction: analysis.signal,
-              timestamp: now
-            };
-            
-            const entryPrice = klines.length > 0 ? klines[klines.length - 1].close : 0;
-            const tp1 = analysis.tp1 || 0;
-            const tp2 = analysis.tp2 || 0;
-            const tp3 = analysis.tp3 || analysis.tp || 0;
-            const sl = analysis.sl || 0;
-
-            activeTrades[symbol] = {
-              symbol,
-              direction: analysis.signal as 'LONG' | 'SHORT',
-              entry: entryPrice,
-              tp1, tp2, tp3, sl,
-              achieved: 0
-            };
-
-            const directionEmoji = analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-            const directionIcon = analysis.signal === 'LONG' ? '📈' : '📉';
-            const limitEntryStr = analysis.limitEntry ? `\n⏳ Limit (Pullback): ${formatPrice(analysis.limitEntry)}` : '';
-            const strategyStr = analysis.entryStrategy ? `\n\n📝 Strategy: ${analysis.entryStrategy}` : '';
-            
-            const message = `⚡️ ENDELLION TRADE ⚡️
-
-🪙 Pair: #${symbol}
-${directionIcon} Direction: ${directionEmoji}
-⏱ Timeframe: Multi-TF (4h, 15m, 5m)${strategyStr}
-
-🎯 CMP Entry: ${formatPrice(entryPrice)}${limitEntryStr}
-✅ TP1: ${formatPrice(tp1)}
-✅ TP2: ${formatPrice(tp2)}
-✅ TP3: ${formatPrice(tp3)}
-❌ Stop Loss: ${formatPrice(sl)}
-
-🧠 Confidence: ${(analysis.confidence || 0).toFixed(1)}%`;
-
-            const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-            const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-            const imageUrl = analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
-
-            await sendTelegramSignal(botToken, chatId, message, imageUrl);
-            
-            signalsSentThisCycle++;
-            if (signalsSentThisCycle >= 5) {
-              break; // Limit to 5 signals per cycle to avoid spam
-            }
-            
-            // Small delay between telegram messages
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          }
-        }
-      }
     } catch (err) {
       console.error('Error in background loop:', err);
     } finally {
