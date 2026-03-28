@@ -148,7 +148,7 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
 export const analyzeMultiTimeframe = (
   data4h: Candle[], 
   data15m: Candle[], 
-  data5m: Candle[], 
+  data3m: Candle[], 
   indicatorReliability: Record<string, number>,
   trades: Trade[],
   symbol: string
@@ -170,12 +170,12 @@ export const analyzeMultiTimeframe = (
     return createNoTradeResult(`4h Trend (${htfDirection}) opposes 15m Setup (${mtfAnalysis.signal})`);
   }
 
-  // STEP 4: LTF Entry Trigger (5m) - Execution
-  // We don't need the 5m to be in a full trend, we just need a valid entry trigger
+  // STEP 4: LTF Entry Trigger (3m) - Execution
+  // We don't need the 3m to be in a full trend, we just need a valid entry trigger
   // (like a liquidity sweep, BOS, or strong displacement) in the direction of our trade.
-  const ltfValidation = validateLTFEntry(data5m, mtfAnalysis.signal as 'LONG' | 'SHORT');
+  const ltfValidation = validateLTFEntry(data3m, mtfAnalysis.signal as 'LONG' | 'SHORT');
   if (!ltfValidation.isValid) {
-    return createNoTradeResult(`5m Entry Invalid: ${ltfValidation.reason}`);
+    return createNoTradeResult(`3m Entry Invalid: ${ltfValidation.reason}`);
   }
   
   // STEP 5: Combine Confidence
@@ -196,7 +196,7 @@ export const analyzeMultiTimeframe = (
   
   // Update the System Logic indicator to reflect the professional MTF alignment
   const sysLogicIdx = finalAnalysis.indicators.findIndex(i => i.name === 'System Logic');
-  const alignmentDesc = `Top-Down Aligned: 4h Trend (${htfDirection}) → 15m Setup (${mtfAnalysis.signal}) → 5m Trigger (Valid).`;
+  const alignmentDesc = `Top-Down Aligned: 4h Trend (${htfDirection}) → 15m Setup (${mtfAnalysis.signal}) → 3m Trigger (Valid).`;
   
   if (sysLogicIdx !== -1) {
     finalAnalysis.indicators[sysLogicIdx].description = alignmentDesc;

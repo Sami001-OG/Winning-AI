@@ -432,13 +432,13 @@ async function startServer() {
         
         for (const symbol of symbols) {
           try {
-            // 1. Fetch 5M for active trade monitoring
-            const klines5m = await fetchKlines(symbol, '5m');
+            // 1. Fetch 3M for active trade monitoring and sniper entry
+            const klines3m = await fetchKlines(symbol, '3m');
             
             // --- ACTIVE TRADE MONITORING (24/7) ---
             const activeTrade = activeTrades[symbol];
-            if (activeTrade && klines5m.length > 0) {
-              const lastPrice = klines5m[klines5m.length - 1].close;
+            if (activeTrade && klines3m.length > 0) {
+              const lastPrice = klines3m[klines3m.length - 1].close;
               if (activeTrade.direction === 'LONG') {
                 if (lastPrice <= activeTrade.sl) {
                   await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(lastPrice)}</code>`);
@@ -481,25 +481,25 @@ async function startServer() {
             const mtfAnalysis = analyzeChart(klines15m, DEFAULT_RELIABILITY, [], symbol);
             if (mtfAnalysis.signal === 'NO TRADE' || htfDirection !== mtfAnalysis.signal) continue;
 
-            // 4. 5M Entry (already fetched klines5m)
-            const ltfValidation = validateLTFEntry(klines5m, mtfAnalysis.signal as 'LONG' | 'SHORT');
+            // 4. 3M Entry (already fetched klines3m)
+            const ltfValidation = validateLTFEntry(klines3m, mtfAnalysis.signal as 'LONG' | 'SHORT');
             if (!ltfValidation.isValid) continue;
 
             // 5. Combine and Send
             if (mtfAnalysis.confidence >= 85) {
               const now = Date.now();
-              const signalKey = `${symbol}-Multi-TF (4h, 15m, 5m)`;
+              const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
               const lastSent = lastSentSignals[signalKey];
               
               if (!lastSent || lastSent.direction !== mtfAnalysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-                const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+                const entryPrice = klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0;
                 const tp1 = mtfAnalysis.tp1 || 0;
                 const tp2 = mtfAnalysis.tp2 || 0;
                 const tp3 = mtfAnalysis.tp3 || mtfAnalysis.tp || 0;
                 const sl = mtfAnalysis.sl || 0;
 
                 // --- STALE SIGNAL PREVENTION ---
-                // If the current 5m price has already hit TP1 or SL (calculated from 15m), it's a stale signal.
+                // If the current 3m price has already hit TP1 or SL (calculated from 15m), it's a stale signal.
                 let isStale = false;
                 if (mtfAnalysis.signal === 'LONG') {
                   if (entryPrice >= tp1 || entryPrice <= sl) isStale = true;
@@ -539,12 +539,12 @@ async function startServer() {
 
 🪙 <b>Pair:</b> #${symbol}
 ${directionEmoji} <b>Direction:</b> ${mtfAnalysis.signal}
-⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 5m)${strategyStr}
+⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 3m)${strategyStr}
 
 🎯 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>${limitEntryStr}
 ✅ <b>TP1:</b> <code>${formatPrice(tp1)}</code>
 ✅ <b>TP2:</b> <code>${formatPrice(tp2)}</code>
-✅ <b>TP3:</b> <code>${formatPrice(tp3)}</code>
+✅ <b>TP3:</b> <code>${formatPrice(tp3)}</code> (Trail Stop)
 ❌ <b>Stop Loss:</b> <code>${formatPrice(sl)}</code>
 
 🧠 <b>Confidence:</b> <code>${(mtfAnalysis.confidence || 0).toFixed(1)}%</code>

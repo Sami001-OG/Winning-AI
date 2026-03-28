@@ -10,21 +10,21 @@ The bot operates on a robust, data-driven architecture designed to maximize sign
 To efficiently analyze 300+ symbols without exceeding API rate limits, the bot employs a progressive filtering funnel:
 
 1.  **Liquidity Filter (300+ → 50)**: Filters the top 300 USDT pairs by 24h volume, selecting the top 50 most liquid symbols.
-2.  **4H Bias Alignment (30 → 12)**: Analyzes the 4h timeframe to determine the dominant market trend. Symbols not aligned with the higher timeframe trend are discarded.
+2.  **4H Bias Alignment (50 → ~12)**: Analyzes the 4h timeframe to determine the dominant market trend. Symbols not aligned with the higher timeframe trend are discarded.
 3.  **15M Confirmation (12 → 6)**: Analyzes the 15m timeframe for setup quality, momentum, and confidence using the core indicator suite.
-4.  **5M Entry Trigger (6 → 2-3)**: Validates the final entry trigger on the 5m timeframe (e.g., liquidity sweeps, BOS, displacement).
+4.  **3M Sniper Entry Trigger (6 → 2-3)**: Validates the final entry trigger on the 3m timeframe (e.g., liquidity sweeps, BOS, displacement) for maximum R:R.
 
 ### 2. Multi-Timeframe Analysis
 The bot utilizes a top-down approach:
 - **4H (Trend Alignment)**: Aligns the trade with the major market bias.
 - **15M (Confidence Finding)**: Identifies the setup and calculates confidence based on momentum and structure.
-- **5M (Perfect Entry)**: Executes the entry based on short-term triggers.
+- **3M (Sniper Entry)**: Executes the entry based on short-term triggers to drastically improve Risk/Reward.
 
-### 3. Indicator & Analytical Suite
-The bot leverages over 30 distinct technical tools to generate signals:
+### 3. Indicator & Analytical Suite (Leading Focus)
+The bot leverages over 30 distinct technical tools to generate signals, but heavily weights **Leading Indicators** over lagging ones to predict reversals before they happen:
 
-- **Core Indicators**: EMA, SMA, MACD, RSI, Bollinger Bands, ATR, ADX, OBV, CCI, Stochastic.
-- **Structural Analysis**: Break of Structure (BOS), Liquidity Grabs, Fakeout Detection, Volume Spikes, ATR Expansion, Order Flow Analysis, RSI Divergence, Volume Profile (VAH/VAL/POC).
+- **Leading Indicators (Heavily Weighted)**: RSI Divergence, Break of Structure (BOS), Liquidity Grabs, Fakeout Detection, Volume Spikes, Order Flow Analysis, Volume Profile (VAH/VAL/POC).
+- **Lagging Indicators (Confirmation Only)**: EMA, SMA, MACD, Bollinger Bands, ATR, ADX.
 - **Pattern Recognition**: Candlestick patterns (Doji, Hammer, Engulfing) and Chart patterns (Triangles, Flags, Wedges, Head & Shoulders, Cup & Handle).
 
 ## Features

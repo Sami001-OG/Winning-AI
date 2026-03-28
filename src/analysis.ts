@@ -301,40 +301,42 @@ export const analyzeChart = (
   });
 
   // ==========================================
-  // ADAPTIVE WEIGHTS & FINAL SCORE
+  // ADAPTIVE WEIGHTS & FINAL SCORE (Leading Indicator Focus)
   // ==========================================
-  let w1 = 0.10; // Market Condition (10%)
-  let w2 = 0.10; // Trend (10% - Lagging)
-  let w3 = 0.20; // Entry Timing (20% - Sweeps/Displacement)
-  let w4 = 0.10; // Confirmation (10% - Volume)
-  let w5 = 0.30; // Structure (30% - BOS/Fakeouts)
-  let w6 = 0.20; // Volatility/Order Flow (20% - Institutional Footprint)
+  let w1 = 0.05; // Market Condition (5%)
+  let w2 = 0.05; // Trend (5% - Lagging)
+  let w3 = 0.25; // Entry Timing (25% - Sweeps/Displacement)
+  let w4 = 0.05; // Confirmation (5% - Volume)
+  let w5 = 0.35; // Structure (35% - BOS/Fakeouts/Divergence)
+  let w6 = 0.25; // Volatility/Order Flow (25% - Institutional Footprint)
 
   // Dynamic adjustment based on market state
   if (isTrending) {
     // Trending -> follow trend & structure
-    w2 += 0.10; // Increase Trend weight
-    w5 += 0.05; // Increase Structure weight
-    w3 -= 0.10; // Decrease Mean Reversion Entry weight
-    w6 += 0.05; // Increase Order Flow weight
+    w2 += 0.05; // Increase Trend weight slightly
+    w5 += 0.10; // Increase Structure weight heavily
+    w3 -= 0.05; // Decrease Mean Reversion Entry weight
+    w6 += 0.10; // Increase Order Flow weight
   } else if (isSideways) {
     // Sideways -> use oscillators & fakeouts
-    w3 += 0.15; // Increase Entry (Oscillators/Sweeps) weight
-    w5 += 0.10; // Increase Structure (Fakeouts) weight
-    w2 -= 0.10; // Decrease Trend weight
+    w3 += 0.20; // Increase Entry (Oscillators/Sweeps) weight heavily
+    w5 += 0.15; // Increase Structure (Fakeouts) weight heavily
+    w2 -= 0.05; // Decrease Trend weight
     w1 -= 0.05; // Decrease Market Condition weight
   }
   
   const trendStrength = Math.abs(layer1Score); // 0 to 1
 
-  // Structure Score
+  // Structure Score (Heavily weighted towards leading indicators)
   let structureScore = 0;
-  if (bos === 'bullish') structureScore += 0.4;
-  else if (bos === 'bearish') structureScore -= 0.4;
+  if (bos === 'bullish') structureScore += 0.3;
+  else if (bos === 'bearish') structureScore -= 0.3;
   if (liquidityGrab === 'bullish') structureScore += 0.4;
   else if (liquidityGrab === 'bearish') structureScore -= 0.4;
   if (fakeout === 'bullish') structureScore += 0.2;
   else if (fakeout === 'bearish') structureScore -= 0.2;
+  if (rsiDivergence === 'bullish') structureScore += 0.5; // Massive weight for RSI Divergence
+  else if (rsiDivergence === 'bearish') structureScore -= 0.5;
 
   // Volume/Volatility Score
   let volVolScore = 0;
