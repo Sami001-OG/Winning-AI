@@ -1,20 +1,29 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Endellion Trading Bot
 
-# Run and deploy your AI Studio app
+A high-performance trading bot designed for automated signal detection and Telegram notifications on Binance Futures.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/ea06b1d3-d283-4d4d-8896-58a400d7e2b7
+- **24/7 Market Monitoring**: Scans top 100 USDT leveraged pairs on Binance.
+- **Multi-Timeframe Analysis**: Analyzes 4h, 15m, and 5m timeframes for high-confidence signals.
+- **Instant Telegram Alerts**: Pushes trade signals and updates directly to Telegram.
+- **Trade Management**: Monitors active trades for Take Profit (TP) and Stop Loss (SL) triggers.
+- **Smart Filtering**: Includes cooldown periods and continuous signal spam prevention.
 
-## Run Locally
+## Configuration
 
-**Prerequisites:**  Node.js
+Ensure the following environment variables are set:
 
+- `BINANCE_API_KEY`: Your Binance API key.
+- `BINANCE_SECRET_KEY`: Your Binance API secret.
+- `VITE_TELEGRAM_BOT_TOKEN`: Your Telegram bot token.
+- `VITE_TELEGRAM_CHAT_ID`: Your Telegram chat ID.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Running the Bot
+
+To start the bot, use:
+
+```bash
+npm install
+npm run dev
+```
