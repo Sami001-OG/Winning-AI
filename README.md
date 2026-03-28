@@ -30,7 +30,11 @@ The bot leverages over 30 distinct technical tools to generate signals:
 ## Features
 
 - **24/7 Market Monitoring**: Continuous scanning of liquid Binance Futures pairs.
-- **Dynamic Risk Management**: Automatically calculates TP/SL levels based on ATR, market structure, and pattern-based strategies.
+- **Dynamic Risk Management (Intraday Optimized)**: The bot doesn't just use fixed percentages for Take Profit and Stop Loss. It uses a **Dynamic Intraday TP System** that blends three different strategies to ensure targets are highly achievable within a single trading session:
+    1.  **Quick Secure (1:1 R:R):** TP1 is always set to a strict 1:1 Risk/Reward ratio. This ensures that the bot quickly secures profits and moves the stop loss to breakeven, drastically increasing the win rate of the first target.
+    2.  **ATR Volatility Cap:** The bot calculates the maximum realistic distance the price can move in a single session based on current volatility (capped at 8x the 15m ATR). Even if the math suggests a massive target, the bot forces it down to reality.
+    3.  **Market Structure Targets:** The bot looks back 50 candles to find major liquidity pools (Swing Highs, Swing Lows, and Volume Profile Value Areas). It attempts to place TP3 exactly at these structural magnets.
+    *The Final Blend:* The bot calculates all three options and sets TP3 to the *most realistic* of the three, ensuring at least a 1:1 R:R but capping it at a maximum of 1:2 R:R or the ATR limit. TP2 is placed exactly halfway between TP1 and TP3. Stop losses are dynamically placed behind recent swing structures or beyond 2x ATR.
 - **Instant Telegram Alerts**: Pushes trade signals and updates directly to Telegram with HTML formatting, including:
     - Trade direction, entry, TP1/TP2/TP3, and SL.
     - Confidence score.

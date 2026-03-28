@@ -587,86 +587,84 @@ export const analyzeChart = (
   const swingHigh = Math.max(...recentCandles.map(c => c.high));
   const swingLow = Math.min(...recentCandles.map(c => c.low));
 
+  // For targets, look further back for major liquidity pools
+  const targetLookback = data.slice(-Math.min(50, data.length));
+  const majorSwingHigh = Math.max(...targetLookback.map(c => c.high));
+  const majorSwingLow = Math.min(...targetLookback.map(c => c.low));
+
   let risk = 0;
   if (signal === 'LONG') {
     const hasBullishPattern = patternNames.some(p => ['Bull Flag', 'Bull Pennant', 'Falling Wedge', 'Ascending Triangle', 'Double Bottom', 'Triple Bottom', 'Inverted Head and Shoulders', 'Cup and Handle'].includes(p));
     
     if (hasBullishPattern) {
-      // Strategy: Pattern-based breakout/reversal
       tpSlStrategy = 'Pattern-Based (Bullish)';
       sl = swingLow - (lastAtr * 0.5); // Tighter stop below recent swing low
       if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-      risk = entryPrice - sl;
-      tp = entryPrice + (risk * 2.5); // Higher reward for pattern setups
     } else if (entryPrice > volProfile.vaHigh) {
-      // Strategy 1: Volume Profile Breakout
       tpSlStrategy = 'Volume Profile Breakout';
       sl = volProfile.pocPrice; // Stop loss at Point of Control
       if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-      risk = entryPrice - sl;
-      tp = entryPrice + (risk * 2.5); // 1:2.5 RR based on POC risk
     } else if (isSideways && lastBB) {
-      // Strategy 2: Mean Reversion / Sideways
       tpSlStrategy = 'Bollinger Bands (Mean Reversion)';
       sl = Math.min(lastBB.lower - (lastAtr * 0.5), swingLow - (lastAtr * 0.2));
       if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-      risk = entryPrice - sl;
-      tp = lastBB.upper; // Target upper band
-      // Ensure minimum 1:1.5 RR
-      if ((tp - entryPrice) < (risk * 1.5)) {
-        tp = entryPrice + (risk * 1.5);
-      }
     } else {
-      // Strategy 3: Trend Following (ATR & Structure)
       tpSlStrategy = 'Trend Following (ATR & Structure)';
       const atrStop = entryPrice - (lastAtr * 2);
       const structureStop = swingLow - (lastAtr * 0.2);
-      // Use structure stop if it's not too far (within 3 ATR), otherwise use ATR stop
       sl = (entryPrice - structureStop <= lastAtr * 3) ? structureStop : atrStop;
       if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-      risk = entryPrice - sl;
-      tp = entryPrice + (risk * 2); // 1:2 RR
     }
+
+    risk = entryPrice - sl;
+
+    // DYNAMIC INTRADAY TP LOGIC (LONG)
+    // Option 1: Fixed R:R Cap (Max 1:2 for intraday realism)
+    const maxRrTp = entryPrice + (risk * 2.0);
+    // Option 2: ATR Volatility Cap (Max 8x 15m ATR for a single session)
+    const maxAtrTp = entryPrice + (lastAtr * 8);
+    // Option 3: Market Structure Target (Next major liquidity pool)
+    const structureTp = Math.max(majorSwingHigh, volProfile.vaHigh);
+
+    // TP3 is the most realistic of the three, ensuring at least 1:1 R:R
+    tp = Math.min(maxRrTp, maxAtrTp, Math.max(entryPrice + risk, structureTp));
+
   } else if (signal === 'SHORT') {
     const hasBearishPattern = patternNames.some(p => ['Bear Flag', 'Bear Pennant', 'Rising Wedge', 'Descending Triangle', 'Double Top', 'Triple Top', 'Head and Shoulders', 'Inverted Cup and Handle'].includes(p));
     
     if (hasBearishPattern) {
-      // Strategy: Pattern-based breakdown/reversal
       tpSlStrategy = 'Pattern-Based (Bearish)';
       sl = swingHigh + (lastAtr * 0.5); // Tighter stop above recent swing high
       if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-      risk = sl - entryPrice;
-      tp = Math.max(0.00000001, entryPrice - (risk * 2.5)); // Higher reward for pattern setups
     } else if (entryPrice < volProfile.vaLow) {
-      // Strategy 1: Volume Profile Breakout
       tpSlStrategy = 'Volume Profile Breakout';
       sl = volProfile.pocPrice; // Stop loss at Point of Control
       if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-      risk = sl - entryPrice;
-      tp = Math.max(0.00000001, entryPrice - (risk * 2.5));
     } else if (isSideways && lastBB) {
-      // Strategy 2: Mean Reversion / Sideways
       tpSlStrategy = 'Bollinger Bands (Mean Reversion)';
       sl = Math.max(lastBB.upper + (lastAtr * 0.5), swingHigh + (lastAtr * 0.2));
       if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-      risk = sl - entryPrice;
-      tp = lastBB.lower; // Target lower band
-      // Ensure minimum 1:1.5 RR
-      if ((entryPrice - tp) < (risk * 1.5)) {
-        tp = entryPrice - (risk * 1.5);
-      }
-      tp = Math.max(0.00000001, tp);
     } else {
-      // Strategy 3: Trend Following (ATR & Structure)
       tpSlStrategy = 'Trend Following (ATR & Structure)';
       const atrStop = entryPrice + (lastAtr * 2);
       const structureStop = swingHigh + (lastAtr * 0.2);
-      // Use structure stop if it's not too far (within 3 ATR), otherwise use ATR stop
       sl = (structureStop - entryPrice <= lastAtr * 3) ? structureStop : atrStop;
       if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-      risk = sl - entryPrice;
-      tp = Math.max(0.00000001, entryPrice - (risk * 2)); // 1:2 RR
     }
+
+    risk = sl - entryPrice;
+
+    // DYNAMIC INTRADAY TP LOGIC (SHORT)
+    // Option 1: Fixed R:R Cap (Max 1:2 for intraday realism)
+    const maxRrTp = entryPrice - (risk * 2.0);
+    // Option 2: ATR Volatility Cap (Max 8x 15m ATR for a single session)
+    const maxAtrTp = entryPrice - (lastAtr * 8);
+    // Option 3: Market Structure Target (Next major liquidity pool)
+    const structureTp = Math.min(majorSwingLow, volProfile.vaLow);
+
+    // TP3 is the most realistic of the three, ensuring at least 1:1 R:R
+    tp = Math.max(maxRrTp, maxAtrTp, Math.min(entryPrice - risk, structureTp));
+    tp = Math.max(0.00000001, tp);
   }
 
   let tp1: number | undefined;
@@ -674,9 +672,16 @@ export const analyzeChart = (
   let tp3: number | undefined;
 
   if (signal !== 'NO TRADE' && tp !== undefined && sl !== undefined) {
-    const totalReward = tp - entryPrice;
-    tp1 = entryPrice + (totalReward * 0.333);
-    tp2 = entryPrice + (totalReward * 0.666);
+    // TP1: Quick Secure (1:1 R:R)
+    tp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
+    
+    // Ensure TP1 isn't somehow beyond TP3 (edge cases)
+    if (signal === 'LONG' && tp1 > tp) tp1 = entryPrice + ((tp - entryPrice) * 0.5);
+    if (signal === 'SHORT' && tp1 < tp) tp1 = entryPrice - ((entryPrice - tp) * 0.5);
+
+    // TP2: Halfway between TP1 and TP3
+    tp2 = tp1 + ((tp - tp1) * 0.5);
+    
     tp3 = tp;
   }
 

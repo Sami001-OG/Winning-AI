@@ -492,16 +492,31 @@ async function startServer() {
               const lastSent = lastSentSignals[signalKey];
               
               if (!lastSent || lastSent.direction !== mtfAnalysis.signal || (now - lastSent.timestamp) > COOLDOWN_MS) {
-                lastSentSignals[signalKey] = {
-                  direction: mtfAnalysis.signal,
-                  timestamp: now
-                };
-                
                 const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
                 const tp1 = mtfAnalysis.tp1 || 0;
                 const tp2 = mtfAnalysis.tp2 || 0;
                 const tp3 = mtfAnalysis.tp3 || mtfAnalysis.tp || 0;
                 const sl = mtfAnalysis.sl || 0;
+
+                // --- STALE SIGNAL PREVENTION ---
+                // If the current 5m price has already hit TP1 or SL (calculated from 15m), it's a stale signal.
+                let isStale = false;
+                if (mtfAnalysis.signal === 'LONG') {
+                  if (entryPrice >= tp1 || entryPrice <= sl) isStale = true;
+                } else if (mtfAnalysis.signal === 'SHORT') {
+                  if (entryPrice <= tp1 || entryPrice >= sl) isStale = true;
+                }
+
+                if (isStale) {
+                  console.log(`Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Current Price: ${entryPrice}, TP1: ${tp1}, SL: ${sl}`);
+                  continue;
+                }
+                // -------------------------------
+
+                lastSentSignals[signalKey] = {
+                  direction: mtfAnalysis.signal,
+                  timestamp: now
+                };
 
                 activeTrades[symbol] = {
                   symbol,
