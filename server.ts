@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
-import { analyzeMultiTimeframe, getHTFDirection, validateLTFEntry } from "./src/multiTimeframe";
+import { getHTFDirection, validateLTFEntry } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
 import { Candle, Trade } from "./src/types";
 
@@ -425,15 +425,16 @@ async function startServer() {
       const symbols = await fetchTopSymbols();
       const allSignals: any[] = [];
 
-      // Process in batches of 30 to respect rate limits while completing faster
-      const BATCH_SIZE = 30;
+      // Process in batches of 10 to respect rate limits while completing faster
+      const BATCH_SIZE = 10;
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
         
-        for (const symbol of symbols) {
+        for (const symbol of batch) {
           try {
             // 1. Fetch 3M for active trade monitoring and sniper entry
             const klines3m = await fetchKlines(symbol, '3m');
+            await new Promise(resolve => setTimeout(resolve, 100)); // Delay between requests
             
             // --- ACTIVE TRADE MONITORING (24/7) ---
             const activeTrade = activeTrades[symbol];
@@ -476,11 +477,13 @@ async function startServer() {
 
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, '4h');
+            await new Promise(resolve => setTimeout(resolve, 100)); // Delay between requests
             const htfDirection = getHTFDirection(klines4h);
             if (htfDirection === 'NEUTRAL') continue;
 
             // 3. 15M Confirmation (Confidence/Setup)
             const klines15m = await fetchKlines(symbol, '15m');
+            await new Promise(resolve => setTimeout(resolve, 100)); // Delay between requests
             const mtfAnalysis = analyzeChart(klines15m, DEFAULT_RELIABILITY, [], symbol);
             if (mtfAnalysis.signal === 'NO TRADE' || htfDirection !== mtfAnalysis.signal) continue;
 

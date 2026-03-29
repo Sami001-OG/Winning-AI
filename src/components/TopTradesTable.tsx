@@ -5,7 +5,6 @@ import { Candle, AnalysisResult, Trade } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { fetchWithRetry } from '../utils/api';
 import { formatPrice } from '../utils/format';
-import { sendTelegramAlert } from '../services/telegramService';
 
 const TIMEFRAMES = ['4h', '15m', '5m'];
 
@@ -45,8 +44,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const klinesDataRef = useRef<Record<string, Record<string, Candle[]>>>({});
   const wsRefs = useRef<WebSocket[]>([]);
   const prevEntriesRef = useRef<Record<string, number>>({});
-  const pushedSignalsRef = useRef<Record<string, number>>({});
-  const lastSessionAlertRef = useRef<string>('');
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
   const fetchTopSymbols = async () => {
@@ -64,7 +61,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           !t.symbol.includes('BEARUSDT')
         )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .slice(0, 100)
+        .slice(0, 50)
         .map((t: any) => t.symbol);
       return usdtPairs;
     } catch (e) {
@@ -198,13 +195,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         const lastPrice = data5m && data5m.length > 0 ? data5m[data5m.length - 1].close : 0;
         const lastCandleTime = data5m && data5m.length > 0 ? data5m[data5m.length - 1].time : 0;
 
-        if (lastCandleTime > 0 && pushedSignalsRef.current[symbol] !== lastCandleTime && finalAnalysis.confidence >= 75) {
-          pushedSignalsRef.current[symbol] = lastCandleTime;
-          
-          // Telegram alerts are now handled exclusively by the 24/7 backend server loop
-          // to ensure TP/SL tracking and session alerts work even when the browser is closed.
-        }
-
         newSignals.push({
           symbol,
           analysis: finalAnalysis,
@@ -292,13 +282,14 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         }
 
         for (const chunk of chunks) {
-          await asyncPool<string>(5, chunk, async (sym) => {
+          await asyncPool<string>(2, chunk, async (sym) => {
             klinesDataRef.current[sym] = {};
             try {
               // Fetch timeframes sequentially for each symbol to reduce burst
               for (const tf of TIMEFRAMES) {
                 const klines = await fetchKlines(sym, tf);
                 klinesDataRef.current[sym][tf] = klines;
+                await new Promise(resolve => setTimeout(resolve, 150)); // Delay between TFs
               }
             } catch (e) {
               console.error(`Error fetching klines for ${sym}`, e);
@@ -311,8 +302,6 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           }
 
           // Small delay between chunks to respect rate limits
-          // 20 symbols * 3 TFs = 60 requests * 2 weight = 120 weight
-          // 120 weight / 3.5s = ~34 weight/s = ~2050 weight/min (safe margin below 2400 limit)
           await new Promise(resolve => setTimeout(resolve, 3500));
         }
 

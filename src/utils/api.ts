@@ -13,7 +13,7 @@ export const fetchWithRetry = async (
   url: string,
   retries = 3,
   backoff = 2000,
-  timeout = 30000
+  timeout = 60000
 ): Promise<Response> => {
   const isBinanceFutures = url.includes('fapi.binance.com');
   const isBinanceSpot = url.includes('api.binance.com') && !isBinanceFutures;
@@ -60,8 +60,8 @@ export const fetchWithRetry = async (
       }
     }
     
-    // Wait before retrying
-    await new Promise((resolve) => setTimeout(resolve, backoff * Math.pow(2, i)));
+    // Wait before retrying with jitter
+    await new Promise((resolve) => setTimeout(resolve, backoff * Math.pow(2, i) + Math.random() * 1000));
   }
   
   throw lastError || new Error('All endpoints failed');

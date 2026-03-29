@@ -79,15 +79,12 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('demo_trades', JSON.stringify(trades));
   }, [trades]);
-
-  const timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
-
   const fetchMultiTimeframeData = async (targetSymbol: string) => {
     setMultiAnalysis({}); // Clear old multi-timeframe analysis immediately
     const tfs = ['5m', '15m', '1h', '4h'];
     const results: Record<string, AnalysisResult> = {};
     
-    await Promise.all(tfs.map(async (tf) => {
+    for (const tf of tfs) {
       try {
         const response = await fetchWithRetry(`https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=300`);
         if (response.ok) {
@@ -102,10 +99,11 @@ export default function App() {
           }));
           results[tf] = analyzeChart(candles, DEFAULT_RELIABILITY, trades, symbol);
         }
+        await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between fetches
       } catch (e) {
         console.error(`Failed to fetch ${tf}`, e);
       }
-    }));
+    }
     
     setMultiAnalysis(results);
   };
