@@ -673,6 +673,60 @@ export const analyzeChart = (
   let tp2: number | undefined;
   let tp3: number | undefined;
 
+  // ==========================================
+  // SANITY CHECK: LIMIT ENTRY vs STOP LOSS
+  // ==========================================
+  if (limitEntry !== undefined && sl !== undefined) {
+    let limitIsInvalid = false;
+    
+    if (signal === 'LONG' && limitEntry <= sl) {
+      limitIsInvalid = true;
+    } else if (signal === 'SHORT' && limitEntry >= sl) {
+      limitIsInvalid = true;
+    }
+
+    if (limitIsInvalid) {
+      // Solution 2: Structural Stop
+      // If the limit entry is based on strong structure (like VAH/VAL), maybe the SL is too tight.
+      // We check if pushing the SL slightly wider (by 0.5 ATR) fixes the issue.
+      let newSl = sl;
+      if (signal === 'LONG') {
+        newSl = limitEntry - (lastAtr * 0.5);
+      } else {
+        newSl = limitEntry + (lastAtr * 0.5);
+      }
+      
+      // Check if the new SL is acceptable (doesn't increase risk too much)
+      const newRisk = Math.abs(entryPrice - newSl);
+      const oldRisk = Math.abs(entryPrice - sl);
+      
+      if (newRisk <= oldRisk * 1.5 && newRisk / entryPrice <= 0.15) {
+        // Accept the structural stop
+        sl = newSl;
+        risk = newRisk;
+        tpSlStrategy += ' (Adjusted for Structure)';
+      } else {
+        // Solution 1: Midpoint Fallback
+        // If pushing the SL is too risky, try to place the limit entry exactly halfway between Entry and SL.
+        const midpoint = signal === 'LONG' 
+          ? entryPrice - (oldRisk * 0.5)
+          : entryPrice + (oldRisk * 0.5);
+          
+        limitEntry = midpoint;
+        
+        // Solution 3: Strategy Downgrade
+        // If the midpoint is too close to the entry (< 0.2%), the SL is just too tight for a split strategy.
+        const distanceToMidpoint = Math.abs(entryPrice - midpoint) / entryPrice;
+        if (distanceToMidpoint < 0.002) {
+          entryStrategy = 'Market (CMP)';
+          limitEntry = undefined;
+        } else {
+          entryStrategy = 'Split (50/50)';
+        }
+      }
+    }
+  }
+
   if (signal !== 'NO TRADE' && tp !== undefined && sl !== undefined) {
     // TP1: Quick Secure (1:1 R:R)
     tp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
