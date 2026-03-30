@@ -628,8 +628,8 @@ export const analyzeChart = (
     // Option 3: Market Structure Target (Next major liquidity pool)
     const structureTp = Math.max(majorSwingHigh, volProfile.vaHigh);
 
-    // TP3 is the most realistic of the three, ensuring at least 1:1 R:R
-    tp = Math.min(maxRrTp, maxAtrTp, Math.max(entryPrice + risk, structureTp));
+    // TP3 is the most realistic of the three, ensuring at least 1.5:1 R:R if possible
+    tp = Math.min(maxRrTp, maxAtrTp, Math.max(entryPrice + (risk * 1.5), structureTp));
 
   } else if (signal === 'SHORT') {
     const hasBearishPattern = patternNames.some(p => ['Bear Flag', 'Bear Pennant', 'Rising Wedge', 'Descending Triangle', 'Double Top', 'Triple Top', 'Head and Shoulders', 'Inverted Cup and Handle'].includes(p));
@@ -664,8 +664,8 @@ export const analyzeChart = (
     // Option 3: Market Structure Target (Next major liquidity pool)
     const structureTp = Math.min(majorSwingLow, volProfile.vaLow);
 
-    // TP3 is the most realistic of the three, ensuring at least 1:1 R:R
-    tp = Math.max(maxRrTp, maxAtrTp, Math.min(entryPrice - risk, structureTp));
+    // TP3 is the most realistic of the three, ensuring at least 1.5:1 R:R if possible
+    tp = Math.max(maxRrTp, maxAtrTp, Math.min(entryPrice - (risk * 1.5), structureTp));
     tp = Math.max(0.00000001, tp);
   }
 
@@ -740,17 +740,19 @@ export const analyzeChart = (
   }
 
   if (signal !== 'NO TRADE' && tp !== undefined && sl !== undefined) {
-    // TP1: Quick Secure (1:1 R:R)
-    tp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
-    
-    // Ensure TP1 isn't somehow beyond TP3 (edge cases)
-    if (signal === 'LONG' && tp1 > tp) tp1 = entryPrice + ((tp - entryPrice) * 0.5);
-    if (signal === 'SHORT' && tp1 < tp) tp1 = entryPrice - ((entryPrice - tp) * 0.5);
-
-    // TP2: Halfway between TP1 and TP3
-    tp2 = tp1 + ((tp - tp1) * 0.5);
-    
     tp3 = tp;
+    const reward = Math.abs(tp3 - entryPrice);
+
+    // If the total reward is too close to 1:1 (or less), spread them proportionally
+    // to ensure TP1, TP2, and TP3 are always distinct targets.
+    if (reward <= risk * 1.2) {
+      tp1 = signal === 'LONG' ? entryPrice + (reward * 0.33) : entryPrice - (reward * 0.33);
+      tp2 = signal === 'LONG' ? entryPrice + (reward * 0.66) : entryPrice - (reward * 0.66);
+    } else {
+      // Standard: TP1 at 1:1 R:R, TP2 halfway to TP3
+      tp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
+      tp2 = tp1 + ((tp3 - tp1) * 0.5);
+    }
   }
 
   // Penalize excessive risk
