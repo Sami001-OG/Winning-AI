@@ -686,42 +686,54 @@ export const analyzeChart = (
     }
 
     if (limitIsInvalid) {
-      // Solution 2: Structural Stop
-      // If the limit entry is based on strong structure (like VAH/VAL), maybe the SL is too tight.
-      // We check if pushing the SL slightly wider (by 0.5 ATR) fixes the issue.
-      let newSl = sl;
-      if (signal === 'LONG') {
-        newSl = limitEntry - (lastAtr * 0.5);
-      } else {
-        newSl = limitEntry + (lastAtr * 0.5);
-      }
-      
-      // Check if the new SL is acceptable (doesn't increase risk too much)
-      const newRisk = Math.abs(entryPrice - newSl);
       const oldRisk = Math.abs(entryPrice - sl);
       
-      if (newRisk <= oldRisk * 1.5 && newRisk / entryPrice <= 0.15) {
-        // Accept the structural stop
-        sl = newSl;
-        risk = newRisk;
-        tpSlStrategy += ' (Adjusted for Structure)';
+      // ==========================================
+      // DYNAMIC DECISION TREE
+      // ==========================================
+      if (isStrongMomentum) {
+        // Scenario A: Extreme Momentum (FOMO)
+        // A deep pullback invalidates the momentum. Don't widen SL, don't catch a falling knife.
+        // -> Solution 3: Market Entry Only
+        entryStrategy = 'Market (CMP)';
+        limitEntry = undefined;
+        tpSlStrategy += ' (Limit Cancelled: Strong Momentum)';
+        
+      } else if (isTrending || isHighVolatility) {
+        // Scenario B: Trending or High Volatility
+        // Give the trade room to breathe around the structural limit entry.
+        // -> Solution 2: Widen Stop Loss (Structural Stop)
+        let newSl = signal === 'LONG' ? limitEntry - (lastAtr * 0.8) : limitEntry + (lastAtr * 0.8);
+        const newRisk = Math.abs(entryPrice - newSl);
+        
+        // Safety check: Max 12% risk
+        if (newRisk / entryPrice <= 0.12) {
+          sl = newSl;
+          risk = newRisk;
+          tpSlStrategy += ' (SL Widened for Volatility/Trend)';
+        } else {
+          // Fallback to Midpoint if widening is too dangerous
+          const midpoint = signal === 'LONG' ? entryPrice - (oldRisk * 0.5) : entryPrice + (oldRisk * 0.5);
+          limitEntry = midpoint;
+          entryStrategy = 'Split (50/50)';
+          tpSlStrategy += ' (Limit Adjusted: Max Risk Reached)';
+        }
+        
       } else {
-        // Solution 1: Midpoint Fallback
-        // If pushing the SL is too risky, try to place the limit entry exactly halfway between Entry and SL.
-        const midpoint = signal === 'LONG' 
-          ? entryPrice - (oldRisk * 0.5)
-          : entryPrice + (oldRisk * 0.5);
-          
+        // Scenario C: Sideways / Ranging Market
+        // Keep risk tight. Widening SL in a range means you're holding a breakout against you.
+        // -> Solution 1: Midpoint Fallback
+        const midpoint = signal === 'LONG' ? entryPrice - (oldRisk * 0.5) : entryPrice + (oldRisk * 0.5);
         limitEntry = midpoint;
         
-        // Solution 3: Strategy Downgrade
-        // If the midpoint is too close to the entry (< 0.2%), the SL is just too tight for a split strategy.
         const distanceToMidpoint = Math.abs(entryPrice - midpoint) / entryPrice;
         if (distanceToMidpoint < 0.002) {
           entryStrategy = 'Market (CMP)';
           limitEntry = undefined;
+          tpSlStrategy += ' (Limit Cancelled: Range Too Tight)';
         } else {
           entryStrategy = 'Split (50/50)';
+          tpSlStrategy += ' (Limit Adjusted to Midpoint: Range Market)';
         }
       }
     }
