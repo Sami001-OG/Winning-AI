@@ -81,13 +81,30 @@ async function sendTelegramSignal(botToken: string, chatId: string, message: str
     };
   }
   
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
   });
+  
+  if (!response.ok && imageUrl) {
+    // Fallback to text message if photo fails (e.g. quickchart.io is down)
+    url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+    body = {
+      chat_id: cleanChatId,
+      text: message,
+      parse_mode: 'HTML',
+    };
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  }
   
   return response.ok;
 }
@@ -128,6 +145,8 @@ async function fetchTopSymbols() {
   }
 }
 
+let rateLimitNotified = false;
+
 async function fetchKlines(symbol: string, tf: string) {
   try {
     const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250&_t=${Date.now()}`);
@@ -135,6 +154,11 @@ async function fetchKlines(symbol: string, tf: string) {
     
     if (!Array.isArray(data)) {
       console.warn(`[Binance API Warning] Expected array for ${symbol} ${tf}, got:`, data);
+      if (data && data.code === -1003 && process.env.VITE_TELEGRAM_BOT_TOKEN && process.env.VITE_TELEGRAM_CHAT_ID && !rateLimitNotified) {
+         rateLimitNotified = true;
+         sendTelegramSignal(process.env.VITE_TELEGRAM_BOT_TOKEN, process.env.VITE_TELEGRAM_CHAT_ID, "⚠️ <b>Binance API Rate Limit Hit!</b>\nScanner is temporarily missing data.").catch(console.error);
+         setTimeout(() => { rateLimitNotified = false; }, 3600000); // Reset after 1 hour
+      }
       return [];
     }
 
@@ -349,6 +373,7 @@ async function startServer() {
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
+  let hasSentStartupNotification = false;
 
   const runBackgroundLoop = async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
@@ -363,6 +388,15 @@ async function startServer() {
       return;
     }
     hasLoggedMissingTokens = false; // Reset if tokens are added later
+
+    if (!hasSentStartupNotification) {
+      sendTelegramSignal(
+        botToken, 
+        chatId, 
+        "🚀 <b>Endellion Trade Bot Started</b>\n\nScanner is now active and monitoring markets 24/7."
+      ).catch(console.error);
+      hasSentStartupNotification = true;
+    }
 
     try {
       // --- Session Notifications ---

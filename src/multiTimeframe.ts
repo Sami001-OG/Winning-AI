@@ -82,8 +82,8 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   if (rsiDivergence === 'bearish') shortScore += 1.5;
 
   // Require a strong conviction for HTF trend
-  if (longScore >= 5.5 && shortScore <= 2) return 'LONG';
-  if (shortScore >= 5.5 && longScore <= 2) return 'SHORT';
+  if (longScore >= 4.5 && shortScore <= 2.5) return 'LONG';
+  if (shortScore >= 4.5 && longScore <= 2.5) return 'SHORT';
   
   return 'NEUTRAL';
 };
@@ -124,7 +124,7 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isBullishDivergence = rsiDivergence === 'bullish';
     
     if (!isBullishCandle) return { isValid: false, reason: 'LTF No bullish candle confirmation' };
-    if (!volumeSpike && !isBullishOrderFlow) return { isValid: false, reason: 'LTF No volume spike or bullish order flow' };
+    if (!volumeSpike && !isBullishOrderFlow && !isDisplacementUp) return { isValid: false, reason: 'LTF No volume spike, order flow, or displacement' };
     if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep && !isBullishDivergence) {
       return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, or Divergence)' };
     }
@@ -136,7 +136,7 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isBearishDivergence = rsiDivergence === 'bearish';
     
     if (!isBearishCandle) return { isValid: false, reason: 'LTF No bearish candle confirmation' };
-    if (!volumeSpike && !isBearishOrderFlow) return { isValid: false, reason: 'LTF No volume spike or bearish order flow' };
+    if (!volumeSpike && !isBearishOrderFlow && !isDisplacementDown) return { isValid: false, reason: 'LTF No volume spike, order flow, or displacement' };
     if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep && !isBearishDivergence) {
       return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, or Divergence)' };
     }
