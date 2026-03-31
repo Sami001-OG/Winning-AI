@@ -59,3 +59,5 @@ To start the bot, use:
 npm install
 npm run dev
 ```
+
+application link : https://endelliontrade.vercel.app/
