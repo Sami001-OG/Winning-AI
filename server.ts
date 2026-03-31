@@ -149,7 +149,7 @@ let rateLimitNotified = false;
 
 async function fetchKlines(symbol: string, tf: string) {
   try {
-    const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=250&_t=${Date.now()}`);
+    const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=1000&_t=${Date.now()}`);
     const data = await res.json();
     
     if (!Array.isArray(data)) {
