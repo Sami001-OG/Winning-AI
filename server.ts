@@ -526,7 +526,7 @@ async function startServer() {
             if (!ltfValidation.isValid) continue;
 
             // 5. Combine and Send
-            if (mtfAnalysis.confidence >= 75) {
+            if (mtfAnalysis.confidence >= 85) {
               const now = Date.now();
               const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
               const lastSent = lastSentSignals[signalKey];
