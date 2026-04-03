@@ -6,6 +6,13 @@ import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
 import { getHTFDirection, validateLTFEntry } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
+
+function calculatePnL(entry: number, exit: number, direction: 'LONG' | 'SHORT') {
+  const pnl = direction === 'LONG' 
+    ? ((exit - entry) / entry) * 100 * 10 
+    : ((entry - exit) / entry) * 100 * 10;
+  return pnl >= 0 ? `+${pnl.toFixed(2)}%` : `${pnl.toFixed(2)}%`;
+}
 import { Candle, Trade } from "./src/types";
 
 const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.2, rsi: 1.5, vol: 1.2, obv: 1.2, exception: 2.0 };
@@ -479,30 +486,30 @@ async function startServer() {
               
               if (activeTrade.direction === 'LONG') {
                 if (currentLow <= activeTrade.sl) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code>`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code> (PnL: ${calculatePnL(activeTrade.entry, currentLow, 'LONG')})`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 3 && currentHigh >= activeTrade.tp3) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)})`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp3, 'LONG')})`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 2 && currentHigh >= activeTrade.tp2) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)})`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp2, 'LONG')})`);
                   activeTrade.achieved = 2;
                 } else if (activeTrade.achieved < 1 && currentHigh >= activeTrade.tp1) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)})`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, 'LONG')})`);
                   activeTrade.achieved = 1;
                 }
               } else if (activeTrade.direction === 'SHORT') {
                 if (currentHigh >= activeTrade.sl) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code>`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code> (PnL: ${calculatePnL(activeTrade.entry, currentHigh, 'SHORT')})`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 3 && currentLow <= activeTrade.tp3) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)})`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp3, 'SHORT')})`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 2 && currentLow <= activeTrade.tp2) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)})`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp2, 'SHORT')})`);
                   activeTrade.achieved = 2;
                 } else if (activeTrade.achieved < 1 && currentLow <= activeTrade.tp1) {
-                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)})`);
+                  await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, 'SHORT')})`);
                   activeTrade.achieved = 1;
                 }
               }
