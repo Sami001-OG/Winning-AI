@@ -486,6 +486,7 @@ async function startServer() {
               
               if (activeTrade.direction === 'LONG') {
                 if (currentLow <= activeTrade.sl) {
+                  console.log(`[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`);
                   await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code> (PnL: ${calculatePnL(activeTrade.entry, currentLow, 'LONG')})`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 3 && currentHigh >= activeTrade.tp3) {
@@ -500,6 +501,7 @@ async function startServer() {
                 }
               } else if (activeTrade.direction === 'SHORT') {
                 if (currentHigh >= activeTrade.sl) {
+                  console.log(`[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`);
                   await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code> (PnL: ${calculatePnL(activeTrade.entry, currentHigh, 'SHORT')})`);
                   delete activeTrades[symbol];
                 } else if (activeTrade.achieved < 3 && currentLow <= activeTrade.tp3) {
