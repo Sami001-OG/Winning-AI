@@ -97,7 +97,7 @@ export default function App() {
             close: parseFloat(k[4]),
             volume: parseFloat(k[5])
           }));
-          results[tf] = analyzeChart(candles, DEFAULT_RELIABILITY, trades, symbol);
+          results[tf] = analyzeChart(candles, DEFAULT_RELIABILITY, trades, symbol, tf);
         }
         await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between fetches
       } catch (e) {
@@ -114,7 +114,7 @@ export default function App() {
 
   useEffect(() => {
     if (data.length > 0) {
-      setAnalysis(analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol));
+      setAnalysis(analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol, interval));
     } else {
       setAnalysis(null);
     }

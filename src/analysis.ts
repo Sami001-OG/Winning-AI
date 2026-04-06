@@ -20,9 +20,11 @@ import {
   detectVolumeSpike, 
   detectAtrExpansion, 
   calculateOrderFlow,
-  detectRsiDivergence
+  detectAllRsiDivergences,
+  detectMacdDivergences
 } from './structure';
 import { calculateVolumeProfile } from './volumeProfile';
+import { calculateSupertrend } from './indicators';
 
 // Pattern Detection Helpers
 const isDoji = (c: Candle) => Math.abs(c.close - c.open) <= (c.high - c.low) * 0.1;
@@ -41,7 +43,8 @@ export const analyzeChart = (
   data: Candle[], 
   indicatorReliability: Record<string, number> = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 },
   trades: Trade[] = [],
-  symbol: string
+  symbol: string,
+  timeframe: string = '15m'
 ): AnalysisResult => {
   const closes = data.map(d => d.close);
   const highs = data.map(d => d.high);
@@ -113,21 +116,30 @@ export const analyzeChart = (
   // CALCULATE INDICATORS
   // ==========================================
   
+  const TF_CONFIG: Record<string, { ema: number[], bb: [number, number], adx: number, orderFlow: number }> = {
+    '5m': { ema: [10, 30, 100], bb: [20, 2.5], adx: 7, orderFlow: 3 },
+    '15m': { ema: [20, 50, 200], bb: [30, 2], adx: 20, orderFlow: 5 },
+    '1h': { ema: [9, 21, 50], bb: [30, 2], adx: 10, orderFlow: 5 },
+    '4h': { ema: [9, 21, 50], bb: [30, 2], adx: 20, orderFlow: 10 },
+    '1d': { ema: [20, 50, 200], bb: [20, 2.5], adx: 20, orderFlow: 20 },
+  };
+  const config = TF_CONFIG[timeframe] || { ema: [20, 50, 200], bb: [20, 2], adx: 14, orderFlow: 14 };
+
   // Volatility & Market Condition
   const atr = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
   const lastAtr = atr[atr.length - 1] || 0;
   
-  const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: 14 });
+  const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: config.adx });
   const lastAdx = adx[adx.length - 1];
   
-  const bb = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
+  const bb = BollingerBands.calculate({ values: closes, period: config.bb[0], stdDev: config.bb[1] });
   const lastBB = bb[bb.length - 1];
   const prevBB = bb[bb.length - 2];
 
   // Trend
-  const ema20 = EMA.calculate({ values: closes, period: 20 });
-  const ema50 = EMA.calculate({ values: closes, period: 50 });
-  const ema200 = EMA.calculate({ values: closes, period: 200 });
+  const ema20 = EMA.calculate({ values: closes, period: config.ema[0] });
+  const ema50 = EMA.calculate({ values: closes, period: config.ema[1] });
+  const ema200 = EMA.calculate({ values: closes, period: config.ema[2] });
   const lastEma20 = ema20[ema20.length - 1];
   const lastEma50 = ema50[ema50.length - 1];
   const lastEma200 = ema200[ema200.length - 1];
@@ -137,6 +149,8 @@ export const analyzeChart = (
     SimpleMAOscillator: false, SimpleMASignal: false
   });
   const lastMacd = macd[macd.length - 1];
+  const prevMacd = macd[macd.length - 2];
+  const prevPrevMacd = macd[macd.length - 3];
 
   // Momentum / Entry
   const rsi = RSI.calculate({ values: closes, period: 14 });
@@ -159,9 +173,28 @@ export const analyzeChart = (
   const fakeout = detectFakeout(data);
   const volumeSpike = detectVolumeSpike(data);
   const atrExpansion = detectAtrExpansion(data, atr);
-  const orderFlow = calculateOrderFlow(data);
-  const rsiDivergence = detectRsiDivergence(data, rsi);
+  const orderFlow = calculateOrderFlow(data, config.orderFlow);
   const volProfile = calculateVolumeProfile(data);
+
+  let rsiDivergence = 'none';
+  let macdDivergence = 'none';
+  let lastSupertrend = null;
+  let supertrendSignal = 'neutral';
+
+  if (timeframe === '15m') {
+    rsiDivergence = detectAllRsiDivergences(data, rsi);
+    const macd15m = MACD.calculate({
+      values: closes, fastPeriod: 5, slowPeriod: 34, signalPeriod: 5,
+      SimpleMAOscillator: false, SimpleMASignal: false
+    });
+    const macdHistValues = macd15m.map(m => m.histogram || 0);
+    macdDivergence = detectMacdDivergences(data, macdHistValues);
+    
+    const st15m = calculateSupertrend(data, atr, 7, 3);
+    lastSupertrend = st15m[st15m.length - 1];
+    supertrendSignal = lastSupertrend?.trend === 1 ? 'bullish' : lastSupertrend?.trend === -1 ? 'bearish' : 'neutral';
+  }
+
   // Using existing ema20, ema50, bb variables
   const lastEma20Val = lastEma20;
   const lastEma50Val = lastEma50;
@@ -198,7 +231,7 @@ export const analyzeChart = (
   });
 
   // ==========================================
-  // LAYER 2: TREND DIRECTION
+  // LAYER 2: TREND DIRECTION & MACD LEADING MOMENTUM
   // ==========================================
   let emaScore = 0;
   if (lastClose > lastEma20 && lastEma20 > lastEma50 && lastEma50 > lastEma200) emaScore = 1;
@@ -207,15 +240,62 @@ export const analyzeChart = (
   else if (lastClose < lastEma50) emaScore = -0.5;
 
   let macdScore = 0;
-  if (lastMacd) {
-    if (lastMacd.MACD! > lastMacd.signal! && lastMacd.MACD! > 0) macdScore = 1;
-    else if (lastMacd.MACD! < lastMacd.signal! && lastMacd.MACD! < 0) macdScore = -1;
-    else if (lastMacd.MACD! > lastMacd.signal!) macdScore = 0.5;
-    else if (lastMacd.MACD! < lastMacd.signal!) macdScore = -0.5;
+  let macdDescription = 'Neutral';
+  let macdSignal: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+
+  if (lastMacd && prevMacd && prevPrevMacd) {
+    const hist = lastMacd.histogram || 0;
+    const prevHist = prevMacd.histogram || 0;
+    const prevPrevHist = prevPrevMacd.histogram || 0;
+
+    // MACD Crossover Logic
+    if (prevHist < 0 && hist > 0) {
+      macdScore = 1.5; // Strong leading crossover
+      macdSignal = 'bullish';
+      macdDescription = 'Bullish Crossover (Histogram crossed 0)';
+    } else if (prevHist > 0 && hist < 0) {
+      macdScore = -1.5; // Strong leading crossover
+      macdSignal = 'bearish';
+      macdDescription = 'Bearish Crossover (Histogram crossed 0)';
+    } else if (hist > 0) {
+      // Uptrend (Green Histogram)
+      if (hist > prevHist && prevHist > prevPrevHist) {
+        // Deep Green: Momentum increasing
+        macdScore = 1;
+        macdSignal = 'bullish';
+        macdDescription = 'Strong Bullish Momentum (Deep Green)';
+      } else if (hist < prevHist) {
+        // Light Green: Momentum shifting/weakening
+        macdScore = -0.5; // Leading indicator of weakness
+        macdSignal = 'bearish';
+        macdDescription = 'Bullish Momentum Weakening (Light Green)';
+      } else {
+        macdScore = 0.5;
+        macdSignal = 'bullish';
+        macdDescription = 'Bullish Momentum';
+      }
+    } else if (hist < 0) {
+      // Downtrend (Red Histogram)
+      if (hist < prevHist && prevHist < prevPrevHist) {
+        // Deep Red: Momentum increasing downwards
+        macdScore = -1;
+        macdSignal = 'bearish';
+        macdDescription = 'Strong Bearish Momentum (Deep Red)';
+      } else if (hist > prevHist) {
+        // Light Red: Momentum shifting/weakening
+        macdScore = 0.5; // Leading indicator of strength
+        macdSignal = 'bullish';
+        macdDescription = 'Bearish Momentum Weakening (Light Red)';
+      } else {
+        macdScore = -0.5;
+        macdSignal = 'bearish';
+        macdDescription = 'Bearish Momentum';
+      }
+    }
   }
 
   const emaRel = adjustedReliability.ema;
-  const macdRel = adjustedReliability.macd;
+  const macdRel = adjustedReliability.macd * 2; // Increase weight since it's now a leading indicator
   const layer2Score = (emaScore * emaRel + macdScore * macdRel) / (emaRel + macdRel);
 
   indicators.push({
@@ -223,6 +303,13 @@ export const analyzeChart = (
     value: layer2Score > 0.5 ? 'STRONG BULL' : layer2Score < -0.5 ? 'STRONG BEAR' : 'MIXED',
     signal: layer2Score > 0 ? 'bullish' : layer2Score < 0 ? 'bearish' : 'neutral',
     description: 'EMA Alignment'
+  });
+
+  indicators.push({
+    name: 'MACD Momentum',
+    value: macdDescription,
+    signal: macdSignal,
+    description: 'Leading Indicator based on Histogram shifts'
   });
 
   // ==========================================
@@ -293,11 +380,14 @@ export const analyzeChart = (
     description: 'Volume & OBV Flow'
   });
 
+  const totalFlow = orderFlow.buyingPressure + orderFlow.sellingPressure;
+  const flowIntensity = totalFlow > 0 ? Math.abs(orderFlow.netFlow) / totalFlow : 0;
+
   indicators.push({
     name: 'Order Flow',
     value: orderFlow.signal === 'bullish' ? 'BUYING PRESSURE' : orderFlow.signal === 'bearish' ? 'SELLING PRESSURE' : 'NEUTRAL',
     signal: orderFlow.signal,
-    description: `Net Flow: ${orderFlow.netFlow > 0 ? '+' : ''}${(orderFlow.netFlow / 1000).toFixed(1)}k`
+    description: `Net Flow: ${orderFlow.netFlow > 0 ? '+' : ''}${(orderFlow.netFlow / 1000).toFixed(1)}k (${(flowIntensity * 100).toFixed(1)}% Intensity)`
   });
 
   // ==========================================
@@ -335,13 +425,25 @@ export const analyzeChart = (
   else if (liquidityGrab === 'bearish') structureScore -= 0.4;
   if (fakeout === 'bullish') structureScore += 0.2;
   else if (fakeout === 'bearish') structureScore -= 0.2;
-  if (rsiDivergence === 'bullish') structureScore += 0.5; // Massive weight for RSI Divergence
-  else if (rsiDivergence === 'bearish') structureScore -= 0.5;
+
+  if (timeframe === '15m') {
+    if (rsiDivergence === 'regular_bullish') structureScore += 0.5;
+    else if (rsiDivergence === 'regular_bearish') structureScore -= 0.5;
+    else if (rsiDivergence === 'hidden_bullish') structureScore += 0.3;
+    else if (rsiDivergence === 'hidden_bearish') structureScore -= 0.3;
+
+    if (macdDivergence === 'regular_bullish') structureScore += 0.5;
+    else if (macdDivergence === 'regular_bearish') structureScore -= 0.5;
+    else if (macdDivergence === 'hidden_bullish') structureScore += 0.3;
+    else if (macdDivergence === 'hidden_bearish') structureScore -= 0.3;
+  }
 
   // Volume/Volatility Score
   let volVolScore = 0;
-  if (orderFlow.signal === 'bullish') volVolScore += 0.5;
-  else if (orderFlow.signal === 'bearish') volVolScore -= 0.5;
+  
+  if (orderFlow.signal === 'bullish') volVolScore += 0.5 + (flowIntensity * 0.5); // Up to 1.0
+  else if (orderFlow.signal === 'bearish') volVolScore -= 0.5 + (flowIntensity * 0.5); // Down to -1.0
+  
   if (volumeSpike > 1.5) volVolScore += 0.3;
   if (atrExpansion > 1.2) volVolScore += 0.2;
 
@@ -447,8 +549,7 @@ export const analyzeChart = (
     l3: number,
     l4: number,
     sScore: number,
-    vvScore: number,
-    divergence: string
+    vvScore: number
   ): boolean => {
     const direction = Math.sign(score);
     if (direction === 0) return false;
@@ -457,14 +558,11 @@ export const analyzeChart = (
     const layers = [l1, l2, l3, l4, sScore, vvScore];
     const allAgree = layers.every(l => Math.sign(l) === direction || l === 0);
     
-    // 2. RSI Divergence must align
-    const hasDivergence = divergence === (direction > 0 ? 'bullish' : 'bearish');
-
     // 3. High confidence threshold
-    return allAgree && hasDivergence && Math.abs(score) > 0.3;
+    return allAgree && Math.abs(score) > 0.3;
   };
 
-  const perfect = isPerfectConfirmation(finalScore, layer1Score, layer2Score, layer3Score, layer4Score, structureScore, volVolScore, rsiDivergence);
+  const perfect = isPerfectConfirmation(finalScore, layer1Score, layer2Score, layer3Score, layer4Score, structureScore, volVolScore);
 
   // Removed strict conflict check to allow structure to override trend
   // const isConflict = Math.sign(layer2Score) !== Math.sign(structureScore) && Math.abs(layer2Score) > 0.5 && Math.abs(structureScore) > 0.5;
@@ -850,28 +948,22 @@ export const analyzeChart = (
     description: 'Momentum Oscillator'
   });
   indicators.push({
-    name: 'EMA 20',
+    name: `EMA ${config.ema[0]}`,
     value: lastEma20Val !== undefined ? formatPrice(lastEma20Val) : 'N/A',
     signal: lastClose > lastEma20Val ? 'bullish' : 'bearish',
     description: 'Short-term Trend'
   });
   indicators.push({
-    name: 'EMA 50',
+    name: `EMA ${config.ema[1]}`,
     value: lastEma50Val !== undefined ? formatPrice(lastEma50Val) : 'N/A',
     signal: lastClose > lastEma50Val ? 'bullish' : 'bearish',
     description: 'Medium-term Trend'
   });
   indicators.push({
-    name: 'Bollinger Bands (20, 2)',
+    name: `Bollinger Bands (${config.bb[0]}, ${config.bb[1]})`,
     value: lastBBVal ? `Upper: ${formatPrice(lastBBVal.upper)}, Lower: ${formatPrice(lastBBVal.lower)}` : 'N/A',
     signal: lastBBVal && lastClose < lastBBVal.lower ? 'bullish' : lastBBVal && lastClose > lastBBVal.upper ? 'bearish' : 'neutral',
     description: 'Volatility/Mean Reversion'
-  });
-  indicators.push({
-    name: 'RSI Divergence',
-    value: rsiDivergence,
-    signal: rsiDivergence,
-    description: 'RSI Price Divergence'
   });
   indicators.push({
     name: 'Volume Profile (POC)',
@@ -879,6 +971,28 @@ export const analyzeChart = (
     signal: lastClose > volProfile.vaHigh ? 'bullish' : lastClose < volProfile.vaLow ? 'bearish' : 'neutral',
     description: `VA: ${volProfile.vaLow ? formatPrice(volProfile.vaLow) : 'N/A'} - ${volProfile.vaHigh ? formatPrice(volProfile.vaHigh) : 'N/A'}`
   });
+
+  if (timeframe === '15m') {
+    indicators.push({
+      name: 'RSI Divergence',
+      value: rsiDivergence,
+      signal: rsiDivergence === 'regular_bullish' || rsiDivergence === 'hidden_bullish' ? 'bullish' : rsiDivergence === 'regular_bearish' || rsiDivergence === 'hidden_bearish' ? 'bearish' : 'neutral',
+      description: 'RSI Price Divergence'
+    });
+    indicators.push({
+      name: 'MACD Divergence',
+      value: macdDivergence,
+      signal: macdDivergence === 'regular_bullish' || macdDivergence === 'hidden_bullish' ? 'bullish' : macdDivergence === 'regular_bearish' || macdDivergence === 'hidden_bearish' ? 'bearish' : 'neutral',
+      description: 'MACD Histogram Divergence'
+    });
+    indicators.push({
+      name: 'Supertrend (7, 3)',
+      value: lastSupertrend ? formatPrice(lastSupertrend.value) : 'N/A',
+      signal: supertrendSignal as 'bullish' | 'bearish' | 'neutral',
+      description: 'Directional Trend Filter'
+    });
+  }
+
   indicators.push({
     name: 'MACD',
     value: lastMacd?.MACD !== undefined ? formatPrice(lastMacd.MACD) : 'N/A',

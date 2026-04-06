@@ -89,30 +89,107 @@ export const calculateOrderFlow = (data: Candle[], period: number = 14): { buyin
   };
 };
 
-export const detectRsiDivergence = (data: Candle[], rsi: number[]): 'bullish' | 'bearish' | 'neutral' => {
-  if (data.length < 20 || rsi.length < 20) return 'neutral';
+export type DivergenceType = 'regular_bullish' | 'regular_bearish' | 'hidden_bullish' | 'hidden_bearish' | 'none';
+
+export const detectAllRsiDivergences = (data: Candle[], rsi: number[]): DivergenceType => {
+  if (data.length < 50 || rsi.length < 50) return 'none';
+
+  // Find local pivots (highs/lows)
+  const pivots: { price: number, rsi: number, index: number, type: 'high' | 'low' }[] = [];
+  const prices = data.map(c => c.close);
+  const lookback = 5; // Increased lookback for more significant pivots
+  for (let i = lookback; i < prices.length - lookback; i++) {
+      let isHigh = true;
+      let isLow = true;
+      for (let j = 1; j <= lookback; j++) {
+          if (prices[i] <= prices[i-j] || prices[i] <= prices[i+j]) isHigh = false;
+          if (prices[i] >= prices[i-j] || prices[i] >= prices[i+j]) isLow = false;
+      }
+      if (isHigh) pivots.push({ price: prices[i], rsi: rsi[i], index: i, type: 'high' });
+      if (isLow) pivots.push({ price: prices[i], rsi: rsi[i], index: i, type: 'low' });
+  }
   
-  const last = data[data.length - 1];
-  const lastRsi = rsi[rsi.length - 1];
+  if (pivots.length < 2) return 'none';
+
+  const lastPivot = pivots[pivots.length - 1];
+  const prevPivot = pivots[pivots.length - 2];
+
+  // Regular Bullish: Price LL, RSI HL
+  if (lastPivot.type === 'low' && prevPivot.type === 'low' && lastPivot.price < prevPivot.price && lastPivot.rsi > prevPivot.rsi) return 'regular_bullish';
+  // Regular Bearish: Price HH, RSI LH
+  if (lastPivot.type === 'high' && prevPivot.type === 'high' && lastPivot.price > prevPivot.price && lastPivot.rsi < prevPivot.rsi) return 'regular_bearish';
+  // Hidden Bullish: Price HL, RSI LL
+  if (lastPivot.type === 'low' && prevPivot.type === 'low' && lastPivot.price > prevPivot.price && lastPivot.rsi < prevPivot.rsi) return 'hidden_bullish';
+  // Hidden Bearish: Price LH, RSI HH
+  if (lastPivot.type === 'high' && prevPivot.type === 'high' && lastPivot.price < prevPivot.price && lastPivot.rsi > prevPivot.rsi) return 'hidden_bearish';
+
+  return 'none';
+};
+
+export const detectMacdDivergences = (data: Candle[], macdHist: number[]): DivergenceType => {
+  if (data.length < 50 || macdHist.length < 50) return 'none';
+
+  const pivots: { price: number, val: number, index: number, type: 'high' | 'low' }[] = [];
+  const prices = data.map(c => c.close);
+  const lookback = 5; 
   
-  const recentData = data.slice(-10, -1);
-  const recentRsi = rsi.slice(-10, -1);
+  // Identify peaks and troughs in the MACD histogram
+  for (let i = lookback; i < macdHist.length - lookback; i++) {
+      let isHistHigh = true;
+      let isHistLow = true;
+      for (let j = 1; j <= lookback; j++) {
+          if (macdHist[i] <= macdHist[i-j] || macdHist[i] <= macdHist[i+j]) isHistHigh = false;
+          if (macdHist[i] >= macdHist[i-j] || macdHist[i] >= macdHist[i+j]) isHistLow = false;
+      }
+      
+      // Only consider histogram highs above 0 and lows below 0
+      if (isHistHigh && macdHist[i] > 0) {
+          pivots.push({ price: prices[i], val: macdHist[i], index: i, type: 'high' });
+      }
+      if (isHistLow && macdHist[i] < 0) {
+          pivots.push({ price: prices[i], val: macdHist[i], index: i, type: 'low' });
+      }
+  }
   
-  const currentLow = last.low;
-  const prevLow = Math.min(...recentData.map(c => c.low));
+  if (pivots.length < 2) return 'none';
+
+  const highs = pivots.filter(p => p.type === 'high');
+  const lows = pivots.filter(p => p.type === 'low');
   
-  const currentRsiLow = lastRsi;
-  const prevRsiLow = Math.min(...recentRsi);
-  
-  if (currentLow < prevLow && currentRsiLow > prevRsiLow) return 'bullish';
-  
-  const currentHigh = last.high;
-  const prevHigh = Math.max(...recentData.map(c => c.high));
-  
-  const currentRsiHigh = lastRsi;
-  const prevRsiHigh = Math.max(...recentRsi);
-  
-  if (currentHigh > prevHigh && currentRsiHigh < prevRsiHigh) return 'bearish';
-  
-  return 'neutral';
+  let divergence: DivergenceType = 'none';
+  let lastPivotIndex = -1;
+
+  // Check Highs (Bearish Divergences)
+  if (highs.length >= 2) {
+      const lastHigh = highs[highs.length - 1];
+      const prevHigh = highs[highs.length - 2];
+      
+      // Regular Bearish: Price HH, Hist LH
+      if (lastHigh.price > prevHigh.price && lastHigh.val < prevHigh.val) {
+          divergence = 'regular_bearish';
+          lastPivotIndex = lastHigh.index;
+      }
+      // Hidden Bearish: Price LH, Hist HH
+      else if (lastHigh.price < prevHigh.price && lastHigh.val > prevHigh.val) {
+          divergence = 'hidden_bearish';
+          lastPivotIndex = lastHigh.index;
+      }
+  }
+
+  // Check Lows (Bullish Divergences)
+  if (lows.length >= 2) {
+      const lastLow = lows[lows.length - 1];
+      const prevLow = lows[lows.length - 2];
+      
+      // Regular Bullish: Price LL, Hist HL
+      if (lastLow.price < prevLow.price && lastLow.val > prevLow.val) {
+          if (lastLow.index > lastPivotIndex) divergence = 'regular_bullish';
+      }
+      // Hidden Bullish: Price HL, Hist LL
+      else if (lastLow.price > prevLow.price && lastLow.val < prevLow.val) {
+          if (lastLow.index > lastPivotIndex) divergence = 'hidden_bullish';
+      }
+  }
+
+  return divergence;
 };

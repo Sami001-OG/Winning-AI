@@ -1,9 +1,10 @@
 import { Candle, AnalysisResult, Trade } from './types';
 import { analyzeChart } from './analysis';
 import { EMA, MACD, ADX, RSI, SMA, ATR } from 'technicalindicators';
-import { detectBOS, detectLiquidityGrab, detectRsiDivergence, calculateOrderFlow } from './structure';
+import { detectBOS, detectLiquidityGrab, detectAllRsiDivergences, detectMacdDivergences, calculateOrderFlow } from './structure';
 import { calculateVolumeProfile } from './volumeProfile';
 import { detectPatterns } from './patterns';
+import { calculateSupertrend } from './indicators';
 
 export const createNoTradeResult = (reason: string): AnalysisResult => ({
   signal: 'NO TRADE',
@@ -25,10 +26,12 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   const highs = data.map(d => d.high);
   const lows = data.map(d => d.low);
   
+  const ema9 = EMA.calculate({ values: closes, period: 9 });
+  const ema21 = EMA.calculate({ values: closes, period: 21 });
   const ema50 = EMA.calculate({ values: closes, period: 50 });
-  const ema200 = EMA.calculate({ values: closes, period: 200 });
+  const lastEma9 = ema9[ema9.length - 1];
+  const lastEma21 = ema21[ema21.length - 1];
   const lastEma50 = ema50[ema50.length - 1];
-  const lastEma200 = ema200[ema200.length - 1];
   const lastClose = closes[closes.length - 1];
 
   const macd = MACD.calculate({
@@ -36,27 +39,40 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
     SimpleMAOscillator: false, SimpleMASignal: false
   });
   const lastMacd = macd[macd.length - 1];
+  const prevMacd = macd[macd.length - 2];
+  const prevPrevMacd = macd[macd.length - 3];
 
-  const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: 14 });
+  const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: 20 });
   const lastAdx = adx[adx.length - 1];
 
   const bos = detectBOS(data);
   const volProfile = calculateVolumeProfile(data);
-  const orderFlow = calculateOrderFlow(data, 20);
-  const rsi = RSI.calculate({ values: closes, period: 14 });
-  const rsiDivergence = detectRsiDivergence(data, rsi);
+  const orderFlow = calculateOrderFlow(data, 10);
   const liquidityGrab = detectLiquidityGrab(data);
 
   let longScore = 0;
   let shortScore = 0;
 
   // 1. Trend Alignment (High Weight)
-  if (lastClose > lastEma50 && lastEma50 > lastEma200) longScore += 2;
-  if (lastClose < lastEma50 && lastEma50 < lastEma200) shortScore += 2;
+  if (lastClose > lastEma9 && lastEma9 > lastEma21 && lastEma21 > lastEma50) longScore += 2;
+  if (lastClose < lastEma9 && lastEma9 < lastEma21 && lastEma21 < lastEma50) shortScore += 2;
 
-  // 2. Momentum
-  if (lastMacd && lastMacd.MACD! > lastMacd.signal!) longScore += 1;
-  if (lastMacd && lastMacd.MACD! < lastMacd.signal!) shortScore += 1;
+  // 2. Momentum (MACD as Leading Indicator)
+  if (lastMacd && prevMacd && prevPrevMacd) {
+    const hist = lastMacd.histogram || 0;
+    const prevHist = prevMacd.histogram || 0;
+    const prevPrevHist = prevPrevMacd.histogram || 0;
+
+    if (hist > 0) {
+      if (hist > prevHist && prevHist > prevPrevHist) longScore += 1.5; // Deep Green
+      else if (hist < prevHist) shortScore += 1; // Light Green (Weakening)
+      else longScore += 0.5;
+    } else if (hist < 0) {
+      if (hist < prevHist && prevHist < prevPrevHist) shortScore += 1.5; // Deep Red
+      else if (hist > prevHist) longScore += 1; // Light Red (Weakening)
+      else shortScore += 0.5;
+    }
+  }
 
   if (lastAdx && lastAdx.adx > 25) {
     if (lastAdx.pdi > lastAdx.mdi) longScore += 1.5;
@@ -77,9 +93,7 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   if (orderFlow.signal === 'bullish') longScore += 1;
   if (orderFlow.signal === 'bearish') shortScore += 1;
 
-  // 5. Divergence (Leading Indicator)
-  if (rsiDivergence === 'bullish') longScore += 1.5;
-  if (rsiDivergence === 'bearish') shortScore += 1.5;
+  // 5. Divergence (Removed from 4h, handled in 15m)
 
   // Require a strong conviction for HTF trend
   if (longScore >= 4.5 && shortScore <= 2.5) return 'LONG';
@@ -101,14 +115,22 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
 
   const bos = detectBOS(data);
   const liquidityGrab = detectLiquidityGrab(data);
-  const orderFlow = calculateOrderFlow(data, 5); // Short term order flow
-  const rsi = RSI.calculate({ values: closes, period: 14 });
-  const rsiDivergence = detectRsiDivergence(data, rsi);
-  
-  const lastCandle = data[data.length - 1];
+  const orderFlow = calculateOrderFlow(data, 3); // Short term order flow
   
   const atr = ATR.calculate({ high: data.map(d => d.high), low: data.map(d => d.low), close: closes, period: 14 });
   const lastAtr = atr[atr.length - 1];
+
+  const ema10 = EMA.calculate({ values: closes, period: 10 });
+  const ema30 = EMA.calculate({ values: closes, period: 30 });
+  const ema100 = EMA.calculate({ values: closes, period: 100 });
+  const lastEma10 = ema10[ema10.length - 1];
+  const lastEma30 = ema30[ema30.length - 1];
+  const lastEma100 = ema100[ema100.length - 1];
+
+  const adx = ADX.calculate({ high: data.map(d => d.high), low: data.map(d => d.low), close: closes, period: 7 });
+  const lastAdx = adx[adx.length - 1];
+  
+  const lastCandle = data[data.length - 1];
 
   const lastCandleBody = Math.abs(lastCandle.close - lastCandle.open);
   const isDisplacementUp = lastCandle.close > lastCandle.open && lastCandleBody > (lastAtr * 0.8) && lastVol > lastVolSma;
@@ -117,28 +139,32 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
   const volumeSpike = lastVol > lastVolSma * 1.5 || prevVol > lastVolSma * 1.5 || prevVol2 > lastVolSma * 1.5;
 
   if (direction === 'LONG') {
+    const isEmaAligned = lastCandle.close > lastEma10 && lastEma10 > lastEma30;
+    const isMomentumUp = lastAdx && lastAdx.adx > 20 && lastAdx.pdi > lastAdx.mdi;
+
     const isBullishCandle = lastCandle.close > lastCandle.open;
     const isMicroBOS = bos === 'bullish';
     const isLiquiditySweep = liquidityGrab === 'bullish';
     const isBullishOrderFlow = orderFlow.signal === 'bullish';
-    const isBullishDivergence = rsiDivergence === 'bullish';
     
     if (!isBullishCandle) return { isValid: false, reason: 'LTF No bullish candle confirmation' };
     if (!volumeSpike && !isBullishOrderFlow && !isDisplacementUp) return { isValid: false, reason: 'LTF No volume spike, order flow, or displacement' };
-    if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep && !isBullishDivergence) {
-      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, or Divergence)' };
+    if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep && !isEmaAligned && !isMomentumUp) {
+      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, EMA Alignment, or Momentum)' };
     }
   } else {
+    const isEmaAligned = lastCandle.close < lastEma10 && lastEma10 < lastEma30;
+    const isMomentumDown = lastAdx && lastAdx.adx > 20 && lastAdx.mdi > lastAdx.pdi;
+
     const isBearishCandle = lastCandle.close < lastCandle.open;
     const isMicroBOS = bos === 'bearish';
     const isLiquiditySweep = liquidityGrab === 'bearish';
     const isBearishOrderFlow = orderFlow.signal === 'bearish';
-    const isBearishDivergence = rsiDivergence === 'bearish';
     
     if (!isBearishCandle) return { isValid: false, reason: 'LTF No bearish candle confirmation' };
     if (!volumeSpike && !isBearishOrderFlow && !isDisplacementDown) return { isValid: false, reason: 'LTF No volume spike, order flow, or displacement' };
-    if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep && !isBearishDivergence) {
-      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, or Divergence)' };
+    if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep && !isEmaAligned && !isMomentumDown) {
+      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, EMA Alignment, or Momentum)' };
     }
   }
 

@@ -61,7 +61,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           !t.symbol.includes('BEARUSDT')
         )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .slice(0, 50)
+        .slice(0, 100)
         .map((t: any) => t.symbol);
       return usdtPairs;
     } catch (e) {
@@ -124,7 +124,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
         if (!pipelineStateRef.current[sym]) {
           pipelineStateRef.current[sym] = { bias4h: 'NEUTRAL', analysis15m: null, entry5m: null };
         }
-        pipelineStateRef.current[sym].analysis15m = analyzeChart(data15m, DEFAULT_RELIABILITY, trades, sym);
+        pipelineStateRef.current[sym].analysis15m = analyzeChart(data15m, DEFAULT_RELIABILITY, trades, sym, '15m');
       }
     });
   };
