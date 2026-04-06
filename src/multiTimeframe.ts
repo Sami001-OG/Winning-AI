@@ -102,6 +102,67 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   return 'NEUTRAL';
 };
 
+export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { state: 'CONTINUATION' | 'EXHAUSTION' | 'VETO', reason: string } => {
+  if (data.length < 50) return { state: 'VETO', reason: 'Not enough data' };
+  
+  const closes = data.map(d => d.close);
+  const ema20 = EMA.calculate({ values: closes, period: 20 });
+  const ema50 = EMA.calculate({ values: closes, period: 50 });
+  const lastEma20 = ema20[ema20.length - 1];
+  const lastEma50 = ema50[ema50.length - 1];
+  
+  const macd = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+  const hist = macd[macd.length - 1].histogram || 0;
+  const prevHist = macd[macd.length - 2].histogram || 0;
+  
+  const rsi = RSI.calculate({ values: closes, period: 14 });
+  const lastRsi = rsi[rsi.length - 1];
+  const lastClose = closes[closes.length - 1];
+
+  if (htfBias === 'LONG') {
+    // VETO: Strong counter-trend momentum (Dark Red MACD)
+    if (hist < 0 && hist < prevHist) {
+      return { state: 'VETO', reason: 'Strong Bearish Pullback (Dark Red MACD)' };
+    }
+    
+    // CONTINUATION: Aligned momentum (Dark Green MACD), RSI > 50, Price > EMAs
+    if (hist > 0 && hist > prevHist && lastRsi > 50 && lastClose > lastEma20) {
+      return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Green MACD)' };
+    }
+    
+    // EXHAUSTION: Pullback is losing steam (Light Red MACD) or minor dip (Light Green MACD)
+    if (hist < 0 && hist > prevHist) {
+      return { state: 'EXHAUSTION', reason: 'Bearish Exhaustion (Light Red MACD)' };
+    }
+    if (hist > 0 && hist < prevHist && lastRsi > 40) {
+      return { state: 'EXHAUSTION', reason: 'Minor Pullback (Light Green MACD)' };
+    }
+    
+    return { state: 'VETO', reason: 'No clear 1H alignment' };
+  } else {
+    // SHORT BIAS
+    // VETO: Strong counter-trend momentum (Dark Green MACD)
+    if (hist > 0 && hist > prevHist) {
+      return { state: 'VETO', reason: 'Strong Bullish Pullback (Dark Green MACD)' };
+    }
+    
+    // CONTINUATION: Aligned momentum (Dark Red MACD), RSI < 50, Price < EMAs
+    if (hist < 0 && hist < prevHist && lastRsi < 50 && lastClose < lastEma20) {
+      return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Red MACD)' };
+    }
+    
+    // EXHAUSTION: Pullback is losing steam (Light Green MACD) or minor pump (Light Red MACD)
+    if (hist > 0 && hist < prevHist) {
+      return { state: 'EXHAUSTION', reason: 'Bullish Exhaustion (Light Green MACD)' };
+    }
+    if (hist < 0 && hist > prevHist && lastRsi < 60) {
+      return { state: 'EXHAUSTION', reason: 'Minor Pullback (Light Red MACD)' };
+    }
+    
+    return { state: 'VETO', reason: 'No clear 1H alignment' };
+  }
+};
+
 export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): { isValid: boolean, reason: string } => {
   if (data.length < 20) return { isValid: false, reason: 'Not enough data' };
   const closes = data.map(d => d.close);

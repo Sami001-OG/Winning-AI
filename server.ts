@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
-import { getHTFDirection, validateLTFEntry } from "./src/multiTimeframe";
+import { getHTFDirection, validateLTFEntry, get1HControlState } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
 
 function calculatePnL(entry: number, exit: number, direction: 'LONG' | 'SHORT') {
@@ -274,6 +274,41 @@ async function startServer() {
     }
   });
 
+  // Proxy endpoints for frontend to bypass CORS/Adblockers
+  app.get("/api/proxy/fapi/*", async (req, res) => {
+    try {
+      const endpoint = req.params[0];
+      const query = new URLSearchParams(req.query as any).toString();
+      const targetUrl = `https://fapi.binance.com/fapi/${endpoint}${query ? '?' + query : ''}`;
+      
+      const response = await fetch(targetUrl);
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Binance API error: ${response.statusText}` });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/proxy/api/*", async (req, res) => {
+    try {
+      const endpoint = req.params[0];
+      const query = new URLSearchParams(req.query as any).toString();
+      const targetUrl = `https://api.binance.com/api/${endpoint}${query ? '?' + query : ''}`;
+      
+      const response = await fetch(targetUrl);
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Binance API error: ${response.statusText}` });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   let exchangeInfoCache: any = null;
 
   app.post("/api/trade/execute", async (req, res) => {
@@ -524,6 +559,12 @@ async function startServer() {
             const htfDirection = getHTFDirection(klines4h);
             if (htfDirection === 'NEUTRAL') continue;
 
+            // 2.5 1H Control Layer (Veto Filter)
+            const klines1h = await fetchKlines(symbol, '1h');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const control1H = get1HControlState(klines1h, htfDirection);
+            if (control1H.state === 'VETO') continue;
+
             // 3. 15M Confirmation (Confidence/Setup)
             const klines15m = await fetchKlines(symbol, '15m');
             await new Promise(resolve => setTimeout(resolve, 100)); // Delay between requests
@@ -606,7 +647,8 @@ async function startServer() {
 
 🪙 <b>Pair:</b> #${symbol}
 ${directionEmoji} <b>Direction:</b> ${mtfAnalysis.signal}
-⏱ <b>Timeframe:</b> Multi-TF (4h, 15m, 3m)${strategyStr}
+⏱ <b>Timeframe:</b> Multi-TF (4h, 1h, 15m, 3m)${strategyStr}
+🛡 <b>1H State:</b> ${control1H.state} (${control1H.reason})
 
 🎯 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>${limitEntryStr}
 ✅ <b>TP1:</b> <code>${formatPrice(tp1)}</code>

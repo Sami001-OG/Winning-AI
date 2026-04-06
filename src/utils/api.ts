@@ -15,14 +15,21 @@ export const fetchWithRetry = async (
   backoff = 2000,
   timeout = 60000
 ): Promise<Response> => {
-  const isBinanceFutures = url.includes('fapi.binance.com');
-  const isBinanceSpot = url.includes('api.binance.com') && !isBinanceFutures;
-  
-  const fetchWithTimeout = async (targetUrl: string) => {
+  // Rewrite Binance URLs to use our backend proxy
+  let targetUrl = url;
+  if (url.includes('fapi.binance.com/fapi/')) {
+    const pathAndQuery = url.split('fapi.binance.com/fapi/')[1];
+    targetUrl = `/api/proxy/fapi/${pathAndQuery}`;
+  } else if (url.includes('api.binance.com/api/')) {
+    const pathAndQuery = url.split('api.binance.com/api/')[1];
+    targetUrl = `/api/proxy/api/${pathAndQuery}`;
+  }
+
+  const fetchWithTimeout = async (fetchUrl: string) => {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
-      const response = await fetch(targetUrl, { signal: controller.signal });
+      const response = await fetch(fetchUrl, { signal: controller.signal });
       clearTimeout(id);
       return response;
     } catch (error) {
@@ -32,32 +39,23 @@ export const fetchWithRetry = async (
   };
 
   let lastError: any;
-  const isBinance = isBinanceSpot || isBinanceFutures;
-  const endpoints = isBinanceSpot ? BINANCE_ENDPOINTS : (isBinanceFutures ? BINANCE_FUTURES_ENDPOINTS : [url]);
-  
-  // Correctly extract the path based on the domain
-  const domain = isBinanceFutures ? 'fapi.binance.com' : 'api.binance.com';
-  const path = isBinance ? url.split(domain)[1] : url;
 
   for (let i = 0; i <= retries; i++) {
-    for (const endpoint of endpoints) {
-      try {
-        const targetUrl = isBinance ? `${endpoint}${path}` : endpoint;
-        console.log(`Fetching: ${targetUrl}`);
-        const response = await fetchWithTimeout(targetUrl);
-        
-        if (response.status === 418) {
-          throw new Error('Rate limited (418)');
-        }
-        
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response;
-      } catch (error) {
-        console.error(`Error fetching ${endpoint}${path}:`, error);
-        lastError = error;
+    try {
+      console.log(`Fetching: ${targetUrl}`);
+      const response = await fetchWithTimeout(targetUrl);
+      
+      if (response.status === 418) {
+        throw new Error('Rate limited (418)');
       }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return response;
+    } catch (error) {
+      console.error(`Error fetching ${targetUrl}:`, error);
+      lastError = error;
     }
     
     // Wait before retrying with jitter
