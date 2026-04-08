@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
 import { getHTFDirection, validateLTFEntry, get1HControlState } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
+import { EMA } from "technicalindicators";
 
 function calculatePnL(entry: number, exit: number, direction: 'LONG' | 'SHORT') {
   const pnl = direction === 'LONG' 
@@ -15,7 +16,7 @@ function calculatePnL(entry: number, exit: number, direction: 'LONG' | 'SHORT') 
 }
 import { Candle, Trade } from "./src/types";
 
-const DEFAULT_RELIABILITY = { ema: 1.5, macd: 0.2, rsi: 1.5, vol: 1.2, obv: 1.2, exception: 2.0 };
+const DEFAULT_RELIABILITY = { ema: 1.5, macd: 1.0, rsi: 1.5, vol: 1.2, obv: 1.2, exception: 2.0 };
 
 function getBinanceSignature(queryString: string, secret: string) {
   return crypto.createHmac('sha256', secret).update(queryString).digest('hex');
@@ -145,7 +146,7 @@ async function fetchTopSymbols() {
       )
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
       .slice(0, 300) // Fetch top 300
-      .slice(0, 50) // Filter to top 50
+      .slice(0, 150) // Upgrade 1: Expanded universe to top 150
       .map((t: any) => t.symbol);
   } catch (e) {
     return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
@@ -498,8 +499,30 @@ async function startServer() {
       }
       // -----------------------------
 
+      // Upgrade 4: Time-of-Day / Volume Weighting
+      const currentHour = new Date().getUTCHours();
+      const isAsianSession = currentHour >= 21 || currentHour < 8;
+      const requiredConfidence = isAsianSession ? 92 : 85;
+      const sessionName = isAsianSession ? 'Asian (Low Vol)' : 'London/NY (High Vol)';
+
       const symbols = await fetchTopSymbols();
       const allSignals: any[] = [];
+
+      // Upgrade 1: King Filter (BTC 1H Trend)
+      let btcTrend = 'NEUTRAL';
+      try {
+        const btcKlines1h = await fetchKlines('BTCUSDT', '1h');
+        if (btcKlines1h.length >= 50) {
+          const btcCloses = btcKlines1h.map(k => k.close);
+          const btcEma20 = EMA.calculate({ values: btcCloses, period: 20 });
+          const btcEma50 = EMA.calculate({ values: btcCloses, period: 50 });
+          const lastBtcEma20 = btcEma20[btcEma20.length - 1];
+          const lastBtcEma50 = btcEma50[btcEma50.length - 1];
+          btcTrend = lastBtcEma20 > lastBtcEma50 ? 'LONG' : (lastBtcEma20 < lastBtcEma50 ? 'SHORT' : 'NEUTRAL');
+        }
+      } catch (e) {
+        console.error("Failed to fetch BTC 1H trend for King Filter:", e);
+      }
 
       // Process in batches of 10 to respect rate limits while completing faster
       const BATCH_SIZE = 10;
@@ -571,12 +594,75 @@ async function startServer() {
             const mtfAnalysis = analyzeChart(klines15m, DEFAULT_RELIABILITY, [], symbol);
             if (mtfAnalysis.signal === 'NO TRADE' || htfDirection !== mtfAnalysis.signal) continue;
 
+            // Upgrade 1: King Filter Application
+            if (symbol !== 'BTCUSDT' && btcTrend !== 'NEUTRAL') {
+              if (btcTrend === 'LONG' && mtfAnalysis.signal === 'SHORT') continue;
+              if (btcTrend === 'SHORT' && mtfAnalysis.signal === 'LONG') continue;
+            }
+
             // 4. 3M Entry (already fetched klines3m)
             const ltfValidation = validateLTFEntry(klines3m, mtfAnalysis.signal as 'LONG' | 'SHORT');
             if (!ltfValidation.isValid) continue;
 
+            // Upgrade 3: VWAP & Liquidity Sniping (Limit Entry)
+            const closes3m = klines3m.map(k => k.close);
+            const ema20_3m = EMA.calculate({ values: closes3m, period: 20 });
+            const lastEma20_3m = ema20_3m[ema20_3m.length - 1] || closes3m[closes3m.length - 1];
+            
+            let cumulativeTypicalVolume = 0;
+            let cumulativeVolume = 0;
+            // Calculate rolling VWAP over last 100 3m candles (5 hours)
+            for (const candle of klines3m.slice(-100)) {
+              const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+              cumulativeTypicalVolume += typicalPrice * candle.volume;
+              cumulativeVolume += candle.volume;
+            }
+            const vwap3m = cumulativeVolume > 0 ? cumulativeTypicalVolume / cumulativeVolume : closes3m[closes3m.length - 1];
+
+            if (mtfAnalysis.signal === 'LONG') {
+              mtfAnalysis.limitEntry = Math.min(lastEma20_3m, vwap3m);
+            } else {
+              mtfAnalysis.limitEntry = Math.max(lastEma20_3m, vwap3m);
+            }
+            mtfAnalysis.entryStrategy = 'Limit (3M VWAP/EMA20 Pullback)';
+
+            // Premium Upgrades: OI and Funding Rate
+            let premiumLogicStr = '';
+            try {
+              if (control1H.state === 'CONTINUATION') {
+                const oiRes = await fetchWithTimeout(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`);
+                const oiData = await oiRes.json();
+                if (Array.isArray(oiData) && oiData.length === 2) {
+                  const prev = parseFloat(oiData[0].sumOpenInterestValue);
+                  const curr = parseFloat(oiData[1].sumOpenInterestValue);
+                  if (prev > 0) {
+                    const oiChange = (curr - prev) / prev;
+                    if (oiChange > 0.001) { // > 0.1% increase in 15m
+                      mtfAnalysis.confidence += 10;
+                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising (+10% Confidence)`;
+                    }
+                  }
+                }
+              } else if (control1H.state === 'EXHAUSTION') {
+                const frRes = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`);
+                const frData = await frRes.json();
+                const fundingRate = parseFloat(frData.lastFundingRate);
+                
+                if (mtfAnalysis.signal === 'LONG' && fundingRate < -0.0001) {
+                  mtfAnalysis.confidence += 15;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate (+15% Confidence)`;
+                } else if (mtfAnalysis.signal === 'SHORT' && fundingRate > 0.0005) {
+                  mtfAnalysis.confidence += 15;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate (+15% Confidence)`;
+                }
+              }
+            } catch (e) {
+              console.error(`Failed to fetch premium data for ${symbol}:`, e);
+            }
+            (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
+
             // 5. Combine and Send
-            if (mtfAnalysis.confidence >= 85) {
+            if (mtfAnalysis.confidence >= requiredConfidence) {
               const now = Date.now();
               const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
               const lastSent = lastSentSignals[signalKey];
@@ -641,7 +727,7 @@ async function startServer() {
                 const logicStr = mtfAnalysis.indicators
                   .filter(i => i.signal === (mtfAnalysis.signal === 'LONG' ? 'bullish' : 'bearish'))
                   .map(i => `• ${i.name}: ${i.description}`)
-                  .join('\n');
+                  .join('\n') + ((mtfAnalysis as any).premiumLogicStr || '');
 
                 const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
 
@@ -649,6 +735,8 @@ async function startServer() {
 ${directionEmoji} <b>Direction:</b> ${mtfAnalysis.signal}
 ⏱ <b>Timeframe:</b> Multi-TF (4h, 1h, 15m, 3m)${strategyStr}
 🛡 <b>1H State:</b> ${control1H.state} (${control1H.reason})
+👑 <b>BTC Trend:</b> ${btcTrend}
+🕒 <b>Session:</b> ${sessionName}
 
 🎯 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>${limitEntryStr}
 ✅ <b>TP1:</b> <code>${formatPrice(tp1)}</code>

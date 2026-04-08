@@ -44,7 +44,8 @@ export const analyzeChart = (
   indicatorReliability: Record<string, number> = { ema: 1.5, macd: 0.5, rsi: 1.5, stoch: 0.5, cci: 0.25, vol: 1.2, obv: 1.2 },
   trades: Trade[] = [],
   symbol: string,
-  timeframe: string = '15m'
+  timeframe: string = '15m',
+  customWeights?: number[]
 ): AnalysisResult => {
   const closes = data.map(d => d.close);
   const highs = data.map(d => d.high);
@@ -391,28 +392,35 @@ export const analyzeChart = (
   });
 
   // ==========================================
-  // ADAPTIVE WEIGHTS & FINAL SCORE (Leading Indicator Focus)
+  // ADAPTIVE WEIGHTS & FINAL SCORE (Refined & Balanced)
   // ==========================================
-  let w1 = 0.05; // Market Condition (5%)
-  let w2 = 0.05; // Trend (5% - Lagging)
-  let w3 = 0.25; // Entry Timing (25% - Sweeps/Displacement)
-  let w4 = 0.05; // Confirmation (5% - Volume)
-  let w5 = 0.35; // Structure (35% - BOS/Fakeouts/Divergence)
-  let w6 = 0.25; // Volatility/Order Flow (25% - Institutional Footprint)
+  // Base Weights (Optimized via Brute Force Backtest)
+  let w1 = customWeights ? customWeights[0] : 0.23; // Market Condition (23% - ADX/Volatility)
+  let w2 = customWeights ? customWeights[1] : 0.03; // Trend (3% - Lagging EMAs are penalized)
+  let w3 = customWeights ? customWeights[2] : 0.17; // Entry Timing (17% - RSI/Sweeps)
+  let w4 = customWeights ? customWeights[3] : 0.18; // Confirmation (18% - Volume/OBV)
+  let w5 = customWeights ? customWeights[4] : 0.38; // Structure (38% - BOS/Fakeouts/Divergence)
+  let w6 = customWeights ? customWeights[5] : 0.01; // Volatility/Order Flow (1% - Minimized noise)
 
   // Dynamic adjustment based on market state
   if (isTrending) {
-    // Trending -> follow trend & structure
-    w2 += 0.05; // Increase Trend weight slightly
-    w5 += 0.10; // Increase Structure weight heavily
-    w3 -= 0.05; // Decrease Mean Reversion Entry weight
-    w6 += 0.10; // Increase Order Flow weight
+    // Trending -> follow trend & momentum
+    w2 += 0.10; // Trend matters more
+    w1 += 0.05; // Market condition (ADX strength) matters more
+    w5 += 0.05; // Structure (BOS) matters more
+    w3 -= 0.10; // Mean reversion (RSI extremes) is less reliable
   } else if (isSideways) {
     // Sideways -> use oscillators & fakeouts
-    w3 += 0.20; // Increase Entry (Oscillators/Sweeps) weight heavily
-    w5 += 0.15; // Increase Structure (Fakeouts) weight heavily
-    w2 -= 0.05; // Decrease Trend weight
-    w1 -= 0.05; // Decrease Market Condition weight
+    w3 += 0.15; // Entry timing (Oscillators/Sweeps) rules sideways markets
+    w5 += 0.10; // Structure (Fakeouts/Liquidity Grabs) are common
+    w2 -= 0.15; // Trend (EMAs) will whip-saw and give false signals
+    w1 -= 0.05; // Market condition is flat
+  }
+
+  // Volatility Modifier
+  if (isHighVolatility) {
+    w6 += 0.10; // Order flow and volatility footprint matter more
+    w4 += 0.05; // Volume confirmation is crucial during high volatility
   }
   
   const trendStrength = Math.abs(layer1Score); // 0 to 1
