@@ -125,6 +125,11 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
       return { state: 'VETO', reason: 'Strong Bearish Pullback (Dark Red MACD)' };
     }
     
+    // NEW VETO: RSI too high (late to the party)
+    if (lastRsi > 65) {
+      return { state: 'VETO', reason: '1H RSI Overbought (>65) - Too late to enter LONG' };
+    }
+    
     // CONTINUATION: Aligned momentum (Dark Green MACD), RSI > 50, Price > EMAs
     if (hist > 0 && hist > prevHist && lastRsi > 50 && lastClose > lastEma20) {
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Green MACD)' };
@@ -144,6 +149,11 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
     // VETO: Strong counter-trend momentum (Dark Green MACD)
     if (hist > 0 && hist > prevHist) {
       return { state: 'VETO', reason: 'Strong Bullish Pullback (Dark Green MACD)' };
+    }
+    
+    // NEW VETO: RSI too low (late to the party)
+    if (lastRsi < 35) {
+      return { state: 'VETO', reason: '1H RSI Oversold (<35) - Too late to enter SHORT' };
     }
     
     // CONTINUATION: Aligned momentum (Dark Red MACD), RSI < 50, Price < EMAs

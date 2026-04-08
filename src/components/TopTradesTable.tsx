@@ -46,6 +46,19 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const prevEntriesRef = useRef<Record<string, number>>({});
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
+const MEME_COINS = new Set([
+  'DOGEUSDT', 'SHIBUSDT', '1000SHIBUSDT', 'PEPEUSDT', '1000PEPEUSDT', 
+  'FLOKIUSDT', '1000FLOKIUSDT', 'BONKUSDT', '1000BONKUSDT', 'WIFUSDT', 
+  'BOMEUSDT', 'MEMEUSDT', 'MYROUSDT', 'POPCATUSDT', 'MEWUSDT', 
+  'BRETTUSDT', 'NEIROUSDT', 'PNUTUSDT', 'TURBOUSDT', 'MOGUSDT', 
+  'CATIUSDT', 'DOGSUSDT', 'BABYDOGEUSDT', '1MBABYDOGEUSDT',
+  'MOODENGUSDT', 'GOATUSDT', 'ACTUSDT', 'PEOPLEUSDT', 'SLERFUSDT',
+  'WENUSDT', 'COQUSDT', 'PORKUSDT', 'MUMUUSDT', 'DEGENUSDT', 'TOSHIUSDT',
+  'FOXYUSDT', 'PONKEUSDT', 'SUNDOGUSDT', 'HMSTRUSDT', 'CATUSDT', 
+  'SIMONCATUSDT', 'HIPPOUSDT', 'PENGUUSDT', 'SATSUSDT', '1000SATSUSDT', 
+  'RATSUSDT', 'NOTUSDT'
+]);
+
   const fetchTopSymbols = async () => {
     try {
       const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`);
@@ -58,7 +71,8 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
           !t.symbol.includes('UPUSDT') &&
           !t.symbol.includes('DOWNUSDT') &&
           !t.symbol.includes('BULLUSDT') &&
-          !t.symbol.includes('BEARUSDT')
+          !t.symbol.includes('BEARUSDT') &&
+          !MEME_COINS.has(t.symbol)
         )
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
         .slice(0, 100)

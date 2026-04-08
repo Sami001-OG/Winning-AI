@@ -131,6 +131,19 @@ async function fetchWithTimeout(url: string, options: any = {}) {
   }
 }
 
+const MEME_COINS = new Set([
+  'DOGEUSDT', 'SHIBUSDT', '1000SHIBUSDT', 'PEPEUSDT', '1000PEPEUSDT', 
+  'FLOKIUSDT', '1000FLOKIUSDT', 'BONKUSDT', '1000BONKUSDT', 'WIFUSDT', 
+  'BOMEUSDT', 'MEMEUSDT', 'MYROUSDT', 'POPCATUSDT', 'MEWUSDT', 
+  'BRETTUSDT', 'NEIROUSDT', 'PNUTUSDT', 'TURBOUSDT', 'MOGUSDT', 
+  'CATIUSDT', 'DOGSUSDT', 'BABYDOGEUSDT', '1MBABYDOGEUSDT',
+  'MOODENGUSDT', 'GOATUSDT', 'ACTUSDT', 'PEOPLEUSDT', 'SLERFUSDT',
+  'WENUSDT', 'COQUSDT', 'PORKUSDT', 'MUMUUSDT', 'DEGENUSDT', 'TOSHIUSDT',
+  'FOXYUSDT', 'PONKEUSDT', 'SUNDOGUSDT', 'HMSTRUSDT', 'CATUSDT', 
+  'SIMONCATUSDT', 'HIPPOUSDT', 'PENGUUSDT', 'SATSUSDT', '1000SATSUSDT', 
+  'RATSUSDT', 'NOTUSDT'
+]);
+
 async function fetchTopSymbols() {
   try {
     const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`);
@@ -142,14 +155,15 @@ async function fetchTopSymbols() {
         !t.symbol.includes('UPUSDT') &&
         !t.symbol.includes('DOWNUSDT') &&
         !t.symbol.includes('BULLUSDT') &&
-        !t.symbol.includes('BEARUSDT')
+        !t.symbol.includes('BEARUSDT') &&
+        !MEME_COINS.has(t.symbol)
       )
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
       .slice(0, 300) // Fetch top 300
       .slice(0, 150) // Upgrade 1: Expanded universe to top 150
       .map((t: any) => t.symbol);
   } catch (e) {
-    return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
+    return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
   }
 }
 
@@ -502,7 +516,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = isAsianSession ? 92 : 85;
+      const requiredConfidence = isAsianSession ? 92 : 90;
       const sessionName = isAsianSession ? 'Asian (Low Vol)' : 'London/NY (High Vol)';
 
       const symbols = await fetchTopSymbols();
@@ -660,6 +674,9 @@ async function startServer() {
               console.error(`Failed to fetch premium data for ${symbol}:`, e);
             }
             (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
+            
+            // Cap confidence at 100 after premium upgrades
+            mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
 
             // 5. Combine and Send
             if (mtfAnalysis.confidence >= requiredConfidence) {

@@ -394,13 +394,13 @@ export const analyzeChart = (
   // ==========================================
   // ADAPTIVE WEIGHTS & FINAL SCORE (Refined & Balanced)
   // ==========================================
-  // Base Weights (Optimized via Brute Force Backtest)
-  let w1 = customWeights ? customWeights[0] : 0.23; // Market Condition (23% - ADX/Volatility)
-  let w2 = customWeights ? customWeights[1] : 0.03; // Trend (3% - Lagging EMAs are penalized)
-  let w3 = customWeights ? customWeights[2] : 0.17; // Entry Timing (17% - RSI/Sweeps)
-  let w4 = customWeights ? customWeights[3] : 0.18; // Confirmation (18% - Volume/OBV)
-  let w5 = customWeights ? customWeights[4] : 0.38; // Structure (38% - BOS/Fakeouts/Divergence)
-  let w6 = customWeights ? customWeights[5] : 0.01; // Volatility/Order Flow (1% - Minimized noise)
+  // Base Weights (User Requested Distribution)
+  let w1 = customWeights ? customWeights[0] : 0.25; // Market Condition (25% - ADX/Volatility)
+  let w2 = customWeights ? customWeights[1] : 0.07; // Trend (7% - Lagging EMAs)
+  let w3 = customWeights ? customWeights[2] : 0.10; // Entry Timing (10% - RSI/Sweeps)
+  let w4 = customWeights ? customWeights[3] : 0.20; // Confirmation (20% - Volume/OBV)
+  let w5 = customWeights ? customWeights[4] : 0.35; // Structure (35% - BOS/Fakeouts/Divergence)
+  let w6 = customWeights ? customWeights[5] : 0.03; // Volatility/Order Flow (3% - Institutional Footprint)
 
   // Dynamic adjustment based on market state
   if (isTrending) {
@@ -718,9 +718,9 @@ export const analyzeChart = (
       if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
     } else {
       tpSlStrategy = 'Trend Following (ATR & Structure)';
-      const atrStop = entryPrice - (lastAtr * 2);
+      const atrStop = entryPrice - (lastAtr * 1.5);
       const structureStop = swingLow - (lastAtr * 0.2);
-      sl = (entryPrice - structureStop <= lastAtr * 3) ? structureStop : atrStop;
+      sl = (entryPrice - structureStop <= lastAtr * 2) ? structureStop : atrStop;
       if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
     }
 
@@ -754,9 +754,9 @@ export const analyzeChart = (
       if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
     } else {
       tpSlStrategy = 'Trend Following (ATR & Structure)';
-      const atrStop = entryPrice + (lastAtr * 2);
+      const atrStop = entryPrice + (lastAtr * 1.5);
       const structureStop = swingHigh + (lastAtr * 0.2);
-      sl = (structureStop - entryPrice <= lastAtr * 3) ? structureStop : atrStop;
+      sl = (structureStop - entryPrice <= lastAtr * 2) ? structureStop : atrStop;
       if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
     }
 
