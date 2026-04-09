@@ -3,9 +3,9 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
-import { analyzeChart } from "./src/analysis";
-import { getHTFDirection, validateLTFEntry, get1HControlState } from "./src/multiTimeframe";
-import { formatPrice } from "./src/utils/format";
+import { analyzeChart } from "./src/analysis.ts";
+import { getHTFDirection, validateLTFEntry, get1HControlState } from "./src/multiTimeframe.ts";
+import { formatPrice } from "./src/utils/format.ts";
 import { EMA, MACD, RSI } from "technicalindicators";
 
 function calculatePnL(entry: number, exit: number, direction: 'LONG' | 'SHORT') {
