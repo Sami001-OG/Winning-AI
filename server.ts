@@ -6,7 +6,7 @@ import crypto from "crypto";
 import { analyzeChart } from "./src/analysis";
 import { getHTFDirection, validateLTFEntry, get1HControlState } from "./src/multiTimeframe";
 import { formatPrice } from "./src/utils/format";
-import { EMA } from "technicalindicators";
+import { EMA, MACD, RSI } from "technicalindicators";
 
 function calculatePnL(entry: number, exit: number, direction: 'LONG' | 'SHORT') {
   const pnl = direction === 'LONG' 
@@ -555,7 +555,56 @@ async function startServer() {
               const currentCandle = klines3m[klines3m.length - 1];
               const currentHigh = currentCandle.high;
               const currentLow = currentCandle.low;
+              const currentClose = currentCandle.close;
               
+              // Soft Exit Logic (Momentum Reversal)
+              let softExit = false;
+              let softExitReason = '';
+              try {
+                const klines15mForExit = await fetchKlines(symbol, '15m');
+                await new Promise(resolve => setTimeout(resolve, 100));
+                if (klines15mForExit.length >= 30) {
+                  const closes15m = klines15mForExit.map(k => k.close);
+                  const macd15m = MACD.calculate({ values: closes15m, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+                  const rsi15m = RSI.calculate({ values: closes15m, period: 14 });
+                  
+                  if (macd15m.length >= 2 && rsi15m.length >= 1) {
+                    const lastMacd = macd15m[macd15m.length - 1];
+                    const prevMacd = macd15m[macd15m.length - 2];
+                    const lastRsi = rsi15m[rsi15m.length - 1];
+                    
+                    const avgVol = klines15mForExit.slice(-10).reduce((sum, c) => sum + c.volume, 0) / 10;
+                    const lastVol = klines15mForExit[klines15mForExit.length - 1].volume;
+                    const lossOfVolume = lastVol < avgVol * 0.8;
+
+                    if (activeTrade.direction === 'LONG') {
+                      const macdFading = (lastMacd.histogram || 0) < (prevMacd.histogram || 0) && (lastMacd.histogram || 0) < 0;
+                      const rsiLeavingTrend = lastRsi < 45;
+                      if (macdFading && rsiLeavingTrend && lossOfVolume) {
+                        softExit = true;
+                        softExitReason = 'Momentum Reversed (MACD Fading, RSI < 45, Volume Dropping)';
+                      }
+                    } else if (activeTrade.direction === 'SHORT') {
+                      const macdFading = (lastMacd.histogram || 0) > (prevMacd.histogram || 0) && (lastMacd.histogram || 0) > 0;
+                      const rsiLeavingTrend = lastRsi > 55;
+                      if (macdFading && rsiLeavingTrend && lossOfVolume) {
+                        softExit = true;
+                        softExitReason = 'Momentum Reversed (MACD Fading, RSI > 55, Volume Dropping)';
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error(`Failed to check soft exit for ${symbol}:`, e);
+              }
+
+              if (softExit) {
+                console.log(`[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`);
+                await sendTelegramSignal(botToken, chatId, `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === 'LONG' ? '📈' : '📉'} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`);
+                delete activeTrades[symbol];
+                continue; // Skip the rest of the loop for this symbol
+              }
+
               if (activeTrade.direction === 'LONG') {
                 if (currentLow <= activeTrade.sl) {
                   console.log(`[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`);

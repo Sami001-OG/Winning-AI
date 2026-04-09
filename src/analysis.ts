@@ -702,27 +702,16 @@ export const analyzeChart = (
 
   let risk = 0;
   if (signal === 'LONG') {
-    const hasBullishPattern = patternNames.some(p => ['Bull Flag', 'Bull Pennant', 'Falling Wedge', 'Ascending Triangle', 'Double Bottom', 'Triple Bottom', 'Inverted Head and Shoulders', 'Cup and Handle'].includes(p));
+    tpSlStrategy = 'Structural Invalidation (Sweep + ATR Buffer)';
+    // Find the true swing low from the recent structure
+    const recentLows = data.slice(-15).map(d => d.low);
+    const trueSwingLow = Math.min(...recentLows);
     
-    if (hasBullishPattern) {
-      tpSlStrategy = 'Pattern-Based (Bullish)';
-      sl = swingLow - (lastAtr * 0.5); // Tighter stop below recent swing low
-      if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-    } else if (entryPrice > volProfile.vaHigh) {
-      tpSlStrategy = 'Volume Profile Breakout';
-      sl = volProfile.pocPrice; // Stop loss at Point of Control
-      if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-    } else if (isSideways && lastBB) {
-      tpSlStrategy = 'Bollinger Bands (Mean Reversion)';
-      sl = Math.min(lastBB.lower - (lastAtr * 0.5), swingLow - (lastAtr * 0.2));
-      if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-    } else {
-      tpSlStrategy = 'Trend Following (ATR & Structure)';
-      const atrStop = entryPrice - (lastAtr * 1.5);
-      const structureStop = swingLow - (lastAtr * 0.2);
-      sl = (entryPrice - structureStop <= lastAtr * 2) ? structureStop : atrStop;
-      if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-    }
+    // Hard stop beyond the last valid market structure with a small ATR buffer
+    sl = trueSwingLow - (lastAtr * 0.5);
+    
+    // Fallback only if the structural stop is somehow above the entry price
+    if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
 
     risk = entryPrice - sl;
 
@@ -738,27 +727,16 @@ export const analyzeChart = (
     tp = Math.min(maxRrTp, maxAtrTp, Math.max(entryPrice + (risk * 1.5), structureTp));
 
   } else if (signal === 'SHORT') {
-    const hasBearishPattern = patternNames.some(p => ['Bear Flag', 'Bear Pennant', 'Rising Wedge', 'Descending Triangle', 'Double Top', 'Triple Top', 'Head and Shoulders', 'Inverted Cup and Handle'].includes(p));
+    tpSlStrategy = 'Structural Invalidation (Sweep + ATR Buffer)';
+    // Find the true swing high from the recent structure
+    const recentHighs = data.slice(-15).map(d => d.high);
+    const trueSwingHigh = Math.max(...recentHighs);
     
-    if (hasBearishPattern) {
-      tpSlStrategy = 'Pattern-Based (Bearish)';
-      sl = swingHigh + (lastAtr * 0.5); // Tighter stop above recent swing high
-      if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-    } else if (entryPrice < volProfile.vaLow) {
-      tpSlStrategy = 'Volume Profile Breakout';
-      sl = volProfile.pocPrice; // Stop loss at Point of Control
-      if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-    } else if (isSideways && lastBB) {
-      tpSlStrategy = 'Bollinger Bands (Mean Reversion)';
-      sl = Math.max(lastBB.upper + (lastAtr * 0.5), swingHigh + (lastAtr * 0.2));
-      if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-    } else {
-      tpSlStrategy = 'Trend Following (ATR & Structure)';
-      const atrStop = entryPrice + (lastAtr * 1.5);
-      const structureStop = swingHigh + (lastAtr * 0.2);
-      sl = (structureStop - entryPrice <= lastAtr * 2) ? structureStop : atrStop;
-      if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-    }
+    // Hard stop beyond the last valid market structure with a small ATR buffer
+    sl = trueSwingHigh + (lastAtr * 0.5);
+    
+    // Fallback only if the structural stop is somehow below the entry price
+    if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
 
     risk = sl - entryPrice;
 

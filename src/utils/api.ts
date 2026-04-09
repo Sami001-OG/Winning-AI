@@ -15,15 +15,7 @@ export const fetchWithRetry = async (
   backoff = 2000,
   timeout = 60000
 ): Promise<Response> => {
-  // Rewrite Binance URLs to use our backend proxy
-  let targetUrl = url;
-  if (url.includes('fapi.binance.com/fapi/')) {
-    const pathAndQuery = url.split('fapi.binance.com/fapi/')[1];
-    targetUrl = `/api/proxy/fapi/${pathAndQuery}`;
-  } else if (url.includes('api.binance.com/api/')) {
-    const pathAndQuery = url.split('api.binance.com/api/')[1];
-    targetUrl = `/api/proxy/api/${pathAndQuery}`;
-  }
+  const targetUrl = url;
 
   const fetchWithTimeout = async (fetchUrl: string) => {
     const controller = new AbortController();

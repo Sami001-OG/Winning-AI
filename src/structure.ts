@@ -12,13 +12,18 @@ export const detectBOS = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => 
 };
 
 export const detectLiquidityGrab = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
-  if (data.length < 10) return 'neutral';
-  const last = data[data.length - 1];
-  const prevLow = Math.min(...data.slice(-10, -1).map(c => c.low));
-  const prevHigh = Math.max(...data.slice(-10, -1).map(c => c.high));
+  if (data.length < 15) return 'neutral';
   
-  if (last.low < prevLow && last.close > prevLow) return 'bullish';
-  if (last.high > prevHigh && last.close < prevHigh) return 'bearish';
+  // Check the last 3 candles to see if any of them swept liquidity
+  for (let i = 1; i <= 3; i++) {
+    const candle = data[data.length - i];
+    const prevLow = Math.min(...data.slice(-15 - i, -i).map(c => c.low));
+    const prevHigh = Math.max(...data.slice(-15 - i, -i).map(c => c.high));
+    
+    if (candle.low < prevLow && candle.close > prevLow) return 'bullish';
+    if (candle.high > prevHigh && candle.close < prevHigh) return 'bearish';
+  }
+  
   return 'neutral';
 };
 

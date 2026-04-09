@@ -628,6 +628,16 @@ export default function App() {
 
           {/* Bottom Panel: Top Trades */}
           <TopTradesTable trades={trades} />
+
+          {/* Credit Section */}
+          <footer className="w-full text-center py-8 mt-4 border-t border-white/5 flex flex-col items-center justify-center gap-1">
+            <p className="text-xs font-mono text-white/40 tracking-widest">
+              ©All Right Reserve to Sami_001 ©
+            </p>
+            <p className="text-[10px] font-mono text-white/30">
+              since 2026
+            </p>
+          </footer>
         </div>
       </main>
 
