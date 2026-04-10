@@ -16,13 +16,13 @@ export const fetchWithRetry = async (
   timeout = 60000
 ): Promise<Response> => {
   // Rewrite Binance URLs to use our backend proxy to avoid CORS
-  let targetUrl = url;
+  let proxyUrl = url;
   if (url.includes('fapi.binance.com/fapi/')) {
     const pathAndQuery = url.split('fapi.binance.com/fapi/')[1];
-    targetUrl = `/api/proxy/fapi/${pathAndQuery}`;
+    proxyUrl = `/api/proxy/fapi/${pathAndQuery}`;
   } else if (url.includes('api.binance.com/api/')) {
     const pathAndQuery = url.split('api.binance.com/api/')[1];
-    targetUrl = `/api/proxy/api/${pathAndQuery}`;
+    proxyUrl = `/api/proxy/api/${pathAndQuery}`;
   }
 
   const fetchWithTimeout = async (fetchUrl: string) => {
@@ -42,8 +42,14 @@ export const fetchWithRetry = async (
 
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`Fetching: ${targetUrl}`);
-      const response = await fetchWithTimeout(targetUrl);
+      console.log(`Fetching via proxy: ${proxyUrl}`);
+      let response = await fetchWithTimeout(proxyUrl);
+      
+      // If proxy fails (e.g., Railway US IP blocked by Binance), fallback to direct fetch
+      if (!response.ok) {
+        console.warn(`Proxy failed with status ${response.status}, falling back to direct fetch: ${url}`);
+        response = await fetchWithTimeout(url);
+      }
       
       if (response.status === 418) {
         throw new Error('Rate limited (418)');
@@ -54,8 +60,19 @@ export const fetchWithRetry = async (
       }
       return response;
     } catch (error) {
-      console.error(`Error fetching ${targetUrl}:`, error);
+      console.error(`Error fetching:`, error);
       lastError = error;
+      
+      // If network error on proxy, try direct fetch immediately
+      try {
+        console.log(`Network error on proxy, trying direct fetch: ${url}`);
+        const directResponse = await fetchWithTimeout(url);
+        if (directResponse.ok) {
+          return directResponse;
+        }
+      } catch (directError) {
+        console.error(`Direct fetch also failed:`, directError);
+      }
     }
     
     // Wait before retrying with jitter
