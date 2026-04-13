@@ -213,13 +213,11 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isEmaAligned = lastCandle.close > lastEma10 && lastEma10 > lastEma30;
     const isMomentumUp = lastAdx && lastAdx.adx > 20 && lastAdx.pdi > lastAdx.mdi;
 
-    const isBullishCandle = lastCandle.close > lastCandle.open;
     const isMicroBOS = bos === 'bullish';
     const isLiquiditySweep = liquidityGrab === 'bullish';
     const isBullishOrderFlow = orderFlow.signal === 'bullish';
     
-    if (!isBullishCandle) return { isValid: false, reason: 'LTF No bullish candle confirmation' };
-    if (!volumeSpike && !isBullishOrderFlow && !isDisplacementUp) return { isValid: false, reason: 'LTF No volume spike, order flow, or displacement' };
+    if (!volumeSpike && !isBullishOrderFlow && !isDisplacementUp && !isEmaAligned) return { isValid: false, reason: 'LTF No volume, order flow, displacement, or EMA alignment' };
     if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep && !isEmaAligned && !isMomentumUp) {
       return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, EMA Alignment, or Momentum)' };
     }
@@ -227,13 +225,11 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isEmaAligned = lastCandle.close < lastEma10 && lastEma10 < lastEma30;
     const isMomentumDown = lastAdx && lastAdx.adx > 20 && lastAdx.mdi > lastAdx.pdi;
 
-    const isBearishCandle = lastCandle.close < lastCandle.open;
     const isMicroBOS = bos === 'bearish';
     const isLiquiditySweep = liquidityGrab === 'bearish';
     const isBearishOrderFlow = orderFlow.signal === 'bearish';
     
-    if (!isBearishCandle) return { isValid: false, reason: 'LTF No bearish candle confirmation' };
-    if (!volumeSpike && !isBearishOrderFlow && !isDisplacementDown) return { isValid: false, reason: 'LTF No volume spike, order flow, or displacement' };
+    if (!volumeSpike && !isBearishOrderFlow && !isDisplacementDown && !isEmaAligned) return { isValid: false, reason: 'LTF No volume, order flow, displacement, or EMA alignment' };
     if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep && !isEmaAligned && !isMomentumDown) {
       return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, EMA Alignment, or Momentum)' };
     }
