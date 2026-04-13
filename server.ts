@@ -169,9 +169,9 @@ async function fetchTopSymbols() {
 
 let rateLimitNotified = false;
 
-async function fetchKlines(symbol: string, tf: string) {
+async function fetchKlines(symbol: string, tf: string, limit: number = 100) {
   try {
-    const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=1000&_t=${Date.now()}`);
+    const res = await fetchWithTimeout(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`);
     const data = await res.json();
     
     if (!Array.isArray(data)) {
@@ -828,7 +828,7 @@ ${logicStr}`;
         }
         
         // Delay between batches to respect Binance API rate limits (2400 weight/minute)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
     } catch (err) {
