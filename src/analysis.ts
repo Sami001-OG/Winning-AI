@@ -213,6 +213,13 @@ export const analyzeChart = (
   const prevBbWidth = prevBB ? (prevBB.upper - prevBB.lower) / prevBB.middle : 0;
   const isHighVolatility = bbWidth > (prevBbWidth * 1.5); // Volatility expansion
 
+  // Squeeze Detection
+  const bbWidths = bb.map(b => (b.upper - b.lower) / b.middle);
+  const recentBbWidths = bbWidths.slice(-50);
+  const sortedBbWidths = [...recentBbWidths].sort((a, b) => a - b);
+  const bbWidth20thPercentile = sortedBbWidths[Math.floor(sortedBbWidths.length * 0.2)] || 0;
+  const isSqueeze = bbWidth < bbWidth20thPercentile;
+
   let adxScore = 0;
   if (isTrendingUp) adxScore = Math.min((lastAdx.adx - 15) / 25, 1); // ADX 40 = 1.0
   else if (isTrendingDown) adxScore = Math.max(-(lastAdx.adx - 15) / 25, -1);
@@ -395,12 +402,12 @@ export const analyzeChart = (
   // ADAPTIVE WEIGHTS & FINAL SCORE (Refined & Balanced)
   // ==========================================
   // Base Weights (User Requested Distribution)
-  let w1 = customWeights ? customWeights[0] : 0.25; // Market Condition (25% - ADX/Volatility)
+  let w1 = customWeights ? customWeights[0] : 0.15; // Market Condition (15% - ADX/Volatility)
   let w2 = customWeights ? customWeights[1] : 0.07; // Trend (7% - Lagging EMAs)
   let w3 = customWeights ? customWeights[2] : 0.10; // Entry Timing (10% - RSI/Sweeps)
   let w4 = customWeights ? customWeights[3] : 0.20; // Confirmation (20% - Volume/OBV)
-  let w5 = customWeights ? customWeights[4] : 0.35; // Structure (35% - BOS/Fakeouts/Divergence)
-  let w6 = customWeights ? customWeights[5] : 0.03; // Volatility/Order Flow (3% - Institutional Footprint)
+  let w5 = customWeights ? customWeights[4] : 0.33; // Structure (33% - BOS/Fakeouts/Divergence)
+  let w6 = customWeights ? customWeights[5] : 0.15; // Volatility/Order Flow (15% - Institutional Footprint)
 
   // Dynamic adjustment based on market state
   if (isTrending) {
@@ -435,8 +442,8 @@ export const analyzeChart = (
   else if (fakeout === 'bearish') structureScore -= 0.2;
 
   if (timeframe === '15m') {
-    if (rsiDivergence === 'regular_bullish') structureScore += 0.5;
-    else if (rsiDivergence === 'regular_bearish') structureScore -= 0.5;
+    if (rsiDivergence === 'regular_bullish') structureScore += (lastRsi < 25 ? 0.8 : 0.5);
+    else if (rsiDivergence === 'regular_bearish') structureScore -= (lastRsi > 75 ? 0.8 : 0.5);
     else if (rsiDivergence === 'hidden_bullish') structureScore += 0.3;
     else if (rsiDivergence === 'hidden_bearish') structureScore -= 0.3;
 
@@ -464,14 +471,16 @@ export const analyzeChart = (
   w5 /= total;
   w6 /= total;
 
-  const finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
+  let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
   let confidence = Math.abs(finalScore) * 100;
   
-  // High Volatility is often good for breakouts, removing the penalty
-  // if (isHighVolatility) {
-  //   confidence *= 0.8; 
-  // }
+  // Squeeze Multiplier
+  if (isSqueeze && orderFlow.netFlow > 0 && finalScore > 0) {
+    confidence *= 1.2;
+  } else if (isSqueeze && orderFlow.netFlow < 0 && finalScore < 0) {
+    confidence *= 1.2;
+  }
 
   // Session Logic - Based on UTC Time
   const latestCandle = data[data.length - 1];
@@ -527,12 +536,38 @@ export const analyzeChart = (
     confidence *= 0.90; // -10% penalty
   }
 
-  // 5. Indecision Candle Penalty (Doji)
-  // If the last candle has a very small body compared to its wick, it shows indecision
+  // 5. Indecision Candle Penalty (Doji) & VSA Absorption Filter
   const lastCandleBodySize = Math.abs(lastClose - latestCandle.open);
   const lastCandleRange = latestCandle.high - latestCandle.low;
+  
   if (lastCandleRange > 0 && lastCandleBodySize / lastCandleRange < 0.15) {
-    confidence *= 0.90; // -10% penalty
+    confidence *= 0.90; // -10% penalty for indecision
+  }
+
+  // VSA Absorption Filter
+  if (lastVol > lastVolSma * 1.5 && lastCandleRange > 0 && (lastCandleBodySize / lastCandleRange) < 0.3) {
+    const recentData50 = data.slice(-50);
+    const highestHigh50 = Math.max(...recentData50.map(d => d.high));
+    const lowestLow50 = Math.min(...recentData50.map(d => d.low));
+    
+    const isNearHigh = Math.abs(lastClose - highestHigh50) < (lastAtr * 2);
+    const isNearLow = Math.abs(lastClose - lowestLow50) < (lastAtr * 2);
+
+    if (isLong && isNearHigh) {
+      // Smart money is absorbing retail buying at the top. Fakeout.
+      finalScore = 0; // Kill the trade
+      confidence = 0;
+    } else if (isLong && isNearLow) {
+      // Smart money is absorbing retail selling at the bottom. Accumulation.
+      confidence *= 1.25;
+    } else if (isShort && isNearLow) {
+      // Smart money is absorbing retail selling at the bottom. Fakeout.
+      finalScore = 0; // Kill the trade
+      confidence = 0;
+    } else if (isShort && isNearHigh) {
+      // Smart money is absorbing retail buying at the top. Distribution.
+      confidence *= 1.25;
+    }
   }
 
   // 6. Volume Profile (Value Area) Boost
