@@ -4,7 +4,7 @@ A high-performance, automated trading bot designed for Binance Futures, utilizin
 
 ## Architecture & Methodology
 
-The bot operates on a robust, data-driven architecture designed to maximize signal quality while minimizing API load.
+The bot operates on a robust, data-driven architecture designed to maximize signal quality while minimizing API load. It has evolved from a signal generator into an **Elite Selection Engine**, designed to eliminate mediocre setups and only pass the absolute highest-quality trades.
 
 ### 1. The Tiered Filtering Funnel
 To efficiently analyze 300+ symbols without exceeding API rate limits, the bot employs a progressive filtering funnel:
@@ -15,44 +15,40 @@ To efficiently analyze 300+ symbols without exceeding API rate limits, the bot e
 4.  **15M Confirmation (12 → 6)**: Analyzes the 15m timeframe for setup quality, momentum, and confidence using the core indicator suite.
 5.  **3M Sniper Entry Trigger (6 → 2-3)**: Validates the final entry trigger on the 3m timeframe (e.g., liquidity sweeps, BOS, displacement) for maximum R:R.
 
-### 2. Multi-Timeframe Analysis
-The bot utilizes a top-down approach:
-- **4H (Trend Alignment)**: Aligns the trade with the major market bias.
-- **1H (Control Layer)**: Prevents entering trades against immediate aggressive momentum.
-- **15M (Confidence Finding)**: Identifies the setup and calculates confidence based on momentum and structure.
-- **3M (Sniper Entry)**: Executes the entry based on short-term triggers to drastically improve Risk/Reward.
+### 2. Elite Signal Selection & Elimination
+The bot aggressively filters out weak signals to maximize win rate:
+- **Correlation Grouping**: Coins are grouped by sector (BTC, ETH, AI, MEME, L1). If multiple coins in the same sector trigger simultaneously, the bot kills the weaker signals and only sends the single highest-confidence trade.
+- **King Filter (Macro Alignment)**: Altcoins are strictly bound to BTC's 1H trend. Altcoin LONGs are killed if BTC is bearish, and Altcoin SHORTs are killed unless BTC is also weak.
+- **Liquidity Zone Filter**: Trades are only permitted if they occur within 2 ATR of a major 50-candle Swing High or Swing Low. Trades in the "middle of nowhere" are rejected.
+- **R:R Filter**: The expected move to TP1 must be greater than or equal to the Stop Loss distance (Minimum 1:1 R:R).
+- **Hard Daily Limit**: The bot is restricted to a maximum of **5 signals per day**. If the market generates more than 3 signals in a single scan, it dynamically raises the threshold and only keeps the top 3.
 
 ### 3. Brute-Force Optimized Weighting Engine
-The core confidence scoring algorithm was optimized via brute-force backtesting over thousands of candles to find the mathematically highest win-rate distribution. The bot heavily prioritizes leading indicators over lagging ones:
+The core confidence scoring algorithm was optimized via brute-force backtesting over thousands of candles to find the mathematically highest win-rate distribution. The bot heavily prioritizes institutional order flow and structural breaks:
 
-- **Structure (35%)**: Break of Structure (BOS), Fakeouts, Divergence.
-- **Market Condition (25%)**: ADX, Volatility.
+- **Structure (33%)**: Break of Structure (BOS), Fakeouts, RSI/MACD Divergence. Divergence is scaled by depth (e.g., Bullish divergence at RSI < 25 is weighted much higher than at RSI 40).
 - **Confirmation (20%)**: Volume, OBV.
+- **Volatility / Order Flow (15%)**: Institutional Footprint, Net Buying/Selling Pressure.
+- **Market Condition (15%)**: ADX, Volatility.
 - **Entry Timing (10%)**: RSI, Sweeps.
 - **Trend (7%)**: EMAs.
-- **Order Flow (3%)**: Institutional Footprint.
 
-### 4. Premium Upgrades (Institutional Order Flow)
-When specific conditions are met, the bot queries premium Binance endpoints to confirm institutional participation:
-- **Trend Fuel (Open Interest)**: If OI increases by >0.1% in 15 minutes during a trend continuation, it adds a massive +10% confidence boost, confirming new money is entering the trend.
-- **Squeeze Hunter (Funding Rate)**: If the funding rate is heavily skewed against the bot's intended direction during an exhaustion phase, it adds a +15% confidence boost, anticipating a short/long squeeze.
+### 4. Advanced Market Mechanics
+- **VSA Absorption Filter (The Smart Money Trap)**: The bot detects Volume Spread Analysis anomalies. If volume spikes > 1.5x average but the candle body is tiny, it flags it as Absorption. If this happens at a swing high during a LONG signal, the trade is instantly killed (Retail Trap). If it happens at a swing low, confidence is boosted (Smart Money Accumulation).
+- **Volatility Squeeze Multiplier**: The bot tracks the 50-period Bollinger Band Width. If a breakout occurs while the BB Width is in the bottom 20% (a severe squeeze) and order flow aligns, it applies a massive 1.2x confidence multiplier to catch explosive moves early.
+- **Premium Upgrades (Institutional Order Flow)**: Queries premium Binance endpoints to confirm institutional participation (Trend Fuel via Open Interest, Squeeze Hunter via Funding Rates).
 
 ## Features
 
 - **24/7 Market Monitoring**: Continuous scanning of liquid Binance Futures pairs.
+- **Flawless TP/SL Tracking**: The Active Trade Monitoring system loops through the exact high and low of the last three 3-minute candles to ensure wicks are never missed, perfectly tracking TP1, TP2, TP3, and SL hits.
 - **VWAP & EMA20 Limit Entries**: Instead of entering at market price, the bot calculates the 3M VWAP and EMA20 to provide a highly precise Limit Order entry price on pullbacks.
-- **King Filter (BTC Alignment)**: Altcoins are strictly filtered against the current Bitcoin (BTC) trend. If BTC is dumping, long altcoin setups are vetoed.
-- **Dynamic Risk Management (Intraday Optimized)**: The bot doesn't just use fixed percentages for Take Profit and Stop Loss. It uses a **Dynamic Intraday TP System** that blends three different strategies to ensure targets are highly achievable within a single trading session:
-    1.  **Quick Secure (1:1 R:R):** TP1 is always set to a strict 1:1 Risk/Reward ratio. This ensures that the bot quickly secures profits and moves the stop loss to breakeven, drastically increasing the win rate of the first target.
-    2.  **ATR Volatility Cap:** The bot calculates the maximum realistic distance the price can move in a single session based on current volatility (capped at 8x the 15m ATR). Even if the math suggests a massive target, the bot forces it down to reality.
-    3.  **Market Structure Targets:** The bot looks back 50 candles to find major liquidity pools (Swing Highs, Swing Lows, and Volume Profile Value Areas). It attempts to place TP3 exactly at these structural magnets.
-    *The Final Blend:* The bot calculates all three options and sets TP3 to the *most realistic* of the three, ensuring at least a 1:1 R:R but capping it at a maximum of 1:2 R:R or the ATR limit. TP2 is placed exactly halfway between TP1 and TP3. Stop losses are dynamically placed behind recent swing structures or beyond 2x ATR.
+- **Dynamic Risk Management (Intraday Optimized)**: Blends three different strategies (Quick Secure 1:1, ATR Volatility Cap, and Market Structure Targets) to ensure targets are highly achievable within a single trading session.
 - **Instant Telegram Alerts**: Pushes trade signals and updates directly to Telegram with HTML formatting, including:
     - Trade direction, limit entry, TP1/TP2/TP3, and SL.
     - Confidence score (capped at 100%).
     - Logic breakdown explaining why the signal was triggered, including premium metrics.
-- **Active Trade Monitoring**: Tracks open positions for TP/SL hits.
-- **Smart Filtering**: Prevents notification spam using cooldown periods.
+- **Smart Filtering**: Prevents notification spam using 4-hour cooldown periods per coin.
 
 ## Configuration
 
