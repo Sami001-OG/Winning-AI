@@ -849,6 +849,31 @@ export const analyzeChart = (
       confidence *= 0.8; // Minor penalty for >8% stop loss
       reason += ' | High risk (SL > 8%)';
     }
+
+    // R:R Filter
+    if (tp1) {
+      const reward = Math.abs(tp1 - entryPrice);
+      if (reward / risk < 1.0) {
+        signal = 'NO TRADE';
+        reason = 'Poor Risk/Reward (< 1:1 to TP1)';
+      }
+    }
+  }
+
+  // Liquidity Zone Filter
+  if (signal !== 'NO TRADE') {
+    const recentData = data.slice(-50);
+    const highestHigh = Math.max(...recentData.map(d => d.high));
+    const lowestLow = Math.min(...recentData.map(d => d.low));
+    const zoneThreshold = lastAtr * 2;
+    
+    const isNearHigh = Math.abs(lastClose - highestHigh) < zoneThreshold;
+    const isNearLow = Math.abs(lastClose - lowestLow) < zoneThreshold;
+
+    if (!isNearHigh && !isNearLow) {
+      signal = 'NO TRADE';
+      reason = 'Not near strong liquidity zone (Swing High/Low)';
+    }
   }
 
   if (signal !== 'NO TRADE') {
