@@ -890,7 +890,7 @@ export const analyzeChart = (
       const reward = Math.abs(tp1 - entryPrice);
       if (reward / risk < 1.0) {
         signal = 'NO TRADE';
-        reason = 'Poor Risk/Reward (< 1:1 to TP1)';
+        reason = 'Poor Risk/Reward (under 1:1 to TP1)';
       }
     }
   }

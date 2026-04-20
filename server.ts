@@ -81,6 +81,7 @@ async function sendTelegramSignal(
   chatId: string,
   message: string,
   imageUrl?: string,
+  retries = 3
 ) {
   const cleanToken = botToken.replace(/^["']|["']$/g, "").trim();
   let cleanChatId = chatId.replace(/^["']|["']$/g, "").trim();
@@ -114,32 +115,72 @@ async function sendTelegramSignal(
     };
   }
 
-  let response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+  let response;
 
-  if (!response.ok && imageUrl) {
-    // Fallback to text message if photo fails (e.g. quickchart.io is down)
-    url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
-    body = {
-      chat_id: cleanChatId,
-      text: message,
-      parse_mode: "HTML",
-    };
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok && imageUrl) {
+        // Fallback to text message if photo fails (e.g. quickchart.io is down)
+        url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+        body = {
+          chat_id: cleanChatId,
+          text: message,
+          parse_mode: "HTML",
+        };
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+      }
+
+      if (response.ok) return true;
+      
+      const errorText = await response.text();
+      console.warn(`Telegram API error on attempt ${attempt}: ${response.status} - ${errorText}`);
+      
+      if (response.status === 400 && errorText.includes('parse entities')) {
+        // Unrecoverable formatting error. Try once completely without HTML parsing
+        if (body.parse_mode) {
+          body.parse_mode = undefined;
+          console.log(`Falling back to raw text (no HTML parse_mode) for Telegram...`);
+          const fallbackResponse = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (fallbackResponse.ok) return true;
+          console.warn(`Raw text fallback also failed: ${await fallbackResponse.text()}`);
+        }
+        return false;
+      }
+      
+      if (response.status === 429) {
+        // Rate limited
+        const data = JSON.parse(errorText);
+        const retryAfter = data.parameters?.retry_after || 5;
+        await sleep(retryAfter * 1000);
+      } else {
+        await sleep(attempt * 1000);
+      }
+    } catch (error) {
+      console.warn(`Telegram fetch error on attempt ${attempt}:`, error);
+      await sleep(attempt * 1000);
+    }
   }
 
-  return response.ok;
+  return false;
 }
 
 async function fetchWithTimeout(url: string, options: any = {}) {
@@ -839,7 +880,7 @@ async function startServer() {
                         if (macdFading && rsiLeavingTrend && lossOfVolume) {
                           softExit = true;
                           softExitReason =
-                            "Momentum Reversed (MACD Fading, RSI < 45, Volume Dropping)";
+                            "Momentum Reversed (MACD Fading, RSI under 45, Volume Dropping)";
                         }
                       } else if (activeTrade.direction === "SHORT") {
                         const macdFading =
@@ -850,7 +891,7 @@ async function startServer() {
                         if (macdFading && rsiLeavingTrend && lossOfVolume) {
                           softExit = true;
                           softExitReason =
-                            "Momentum Reversed (MACD Fading, RSI > 55, Volume Dropping)";
+                            "Momentum Reversed (MACD Fading, RSI over 55, Volume Dropping)";
                         }
                       }
                     }
@@ -964,7 +1005,7 @@ async function startServer() {
                 }
               }
             }
-            if (tradeClosed) continue; // Skip generating new signals if it just closed
+            if (activeTrade || tradeClosed) continue; // Skip generating new signals if a trade is already active or just closed
             // --- END ACTIVE TRADE MONITORING ---
 
             // 2. 4H Bias Alignment
@@ -1229,7 +1270,7 @@ async function startServer() {
             ? `\n\n📝 Strategy: ${sig.analysis.entryStrategy}`
             : "";
 
-          const logicStr =
+          const logicStrRaw =
             sig.analysis.indicators
               .filter(
                 (i: any) =>
@@ -1238,6 +1279,8 @@ async function startServer() {
               )
               .map((i: any) => `• ${i.name}: ${i.description}`)
               .join("\n") + ((sig.analysis as any).premiumLogicStr || "");
+              
+          const logicStr = logicStrRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
           const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
 

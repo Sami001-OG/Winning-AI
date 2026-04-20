@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { fetchWithRetry } from "./utils/api";
+import { formatPrice } from "./utils/format";
 import { LightweightChart } from "./LightweightChart";
 import { TopTradesTable } from "./components/TopTradesTable";
 import { analyzeChart } from "./analysis";
@@ -138,8 +139,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
 💰 <b>PnL:</b> ${pnl}% (10x Lev)
   
-🎯 <b>Entry:</b> <code>${trade.entry.toFixed(4)}</code>
-🏁 <b>Exit:</b> <code>${isWin ? trade.tp.toFixed(4) : trade.sl.toFixed(4)}</code>`;
+🎯 <b>Entry:</b> <code>${formatPrice(trade.entry)}</code>
+🏁 <b>Exit:</b> <code>${isWin ? formatPrice(trade.tp) : formatPrice(trade.sl)}</code>`;
 
       await fetch("/api/telegram/send", {
         method: "POST",
@@ -308,6 +309,14 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
     )
       return;
     if (data.length === 0) return;
+
+    // Prevent duplicate active trades for the same coin
+    const hasActiveTrade = trades.some(t => t.symbol === symbol && t.status === 'PENDING');
+    if (hasActiveTrade) {
+      alert(`There is already an active trade for ${symbol}. Please wait for it to finish or delete it before starting a new one.`);
+      setShowConfirmDialog(false);
+      return;
+    }
 
     const currentPrice = data[data.length - 1].close;
 
