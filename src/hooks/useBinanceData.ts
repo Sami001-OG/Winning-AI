@@ -87,7 +87,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
 
     if (!wsCache[key]) {
       const connectWs = () => {
-        const ws = new WebSocket(`wss://fstream.binance.com/ws/${key}`);
+        const ws = new WebSocket(`wss://fstream.binance.com/market/ws/${key}`);
         wsCache[key] = ws;
         
         ws.onopen = () => {

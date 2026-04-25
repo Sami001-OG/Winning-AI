@@ -339,7 +339,7 @@ const MEME_COINS = new Set([
           const connectionStreams = allStreams.slice(i, i + streamsPerConnection);
           
           const connectWs = () => {
-            const ws = new WebSocket(`wss://fstream.binance.com/ws`);
+            const ws = new WebSocket(`wss://fstream.binance.com/market/ws`);
             wsRefs.current.push(ws);
 
             ws.onopen = () => {
