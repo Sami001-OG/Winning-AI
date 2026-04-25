@@ -120,12 +120,13 @@ async function sendTelegramSignal(
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
+        timeout: 15000 // 15s timeout
       });
 
       if (!response.ok && imageUrl) {
@@ -136,12 +137,13 @@ async function sendTelegramSignal(
           text: message,
           parse_mode: "HTML",
         };
-        response = await fetch(url, {
+        response = await fetchWithTimeout(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(body),
+          timeout: 10000 // 10s timeout
         });
       }
 
@@ -155,10 +157,11 @@ async function sendTelegramSignal(
         if (body.parse_mode) {
           body.parse_mode = undefined;
           console.log(`Falling back to raw text (no HTML parse_mode) for Telegram...`);
-          const fallbackResponse = await fetch(url, {
+          const fallbackResponse = await fetchWithTimeout(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
+            timeout: 10000
           });
           if (fallbackResponse.ok) return true;
           console.warn(`Raw text fallback also failed: ${await fallbackResponse.text()}`);
@@ -488,6 +491,14 @@ async function startServer() {
     }
   });
 
+  app.get("/api/ping", (req, res) => {
+    res.json({
+      status: "running",
+      message: "Endellion Bot is active", 
+      time: new Date().toISOString()
+    });
+  });
+
   let exchangeInfoCache: any = null;
 
   app.post("/api/trade/execute", async (req, res) => {
@@ -666,7 +677,7 @@ async function startServer() {
 
   let dailySignalCount = 0;
   let currentDay = new Date().getUTCDate();
-  const DAILY_LIMIT = 5;
+  const DAILY_LIMIT = 30; // Increased daily limit
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
@@ -1237,13 +1248,6 @@ async function startServer() {
         }
 
         for (const sig of finalSignals) {
-          if (dailySignalCount >= DAILY_LIMIT) {
-            console.log(
-              `Daily limit reached (${DAILY_LIMIT}). Skipping signal for ${sig.symbol}`,
-            );
-            continue;
-          }
-
           const now = Date.now();
           lastSentSignals[sig.signalKey] = {
             direction: sig.analysis.signal,
@@ -1260,6 +1264,13 @@ async function startServer() {
             sl: sig.sl,
             achieved: 0,
           };
+
+          if (dailySignalCount >= DAILY_LIMIT) {
+            console.log(
+              `Daily limit reached (${DAILY_LIMIT}). Stored active trade but skipping Telegram signal for ${sig.symbol}`,
+            );
+            continue;
+          }
 
           const directionEmoji =
             sig.analysis.signal === "LONG" ? "🟢 LONG" : "🔴 SHORT";
