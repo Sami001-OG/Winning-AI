@@ -306,14 +306,14 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 250) {
       if (
         data &&
         data.code === -1003 &&
-        process.env.VITE_TELEGRAM_BOT_TOKEN &&
-        process.env.VITE_TELEGRAM_CHAT_ID &&
+        (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) &&
+        (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) &&
         !rateLimitNotified
       ) {
         rateLimitNotified = true;
         sendTelegramSignal(
-          process.env.VITE_TELEGRAM_BOT_TOKEN,
-          process.env.VITE_TELEGRAM_CHAT_ID,
+          (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) as string,
+          (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) as string,
           "⚠️ <b>Binance API Rate Limit Hit!</b>\nScanner is temporarily missing data.",
         ).catch(console.error);
         setTimeout(() => {
@@ -357,8 +357,8 @@ async function startServer() {
       let { botToken, chatId, message, imageUrl } = req.body;
 
       if (!botToken || !chatId) {
-        botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
-        chatId = process.env.VITE_TELEGRAM_CHAT_ID;
+        botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+        chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
       }
 
       if (!botToken || !chatId) {
@@ -673,8 +673,8 @@ async function startServer() {
   let hasSentStartupNotification = false;
 
   const runBackgroundLoop = async () => {
-    const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.VITE_TELEGRAM_CHAT_ID;
+    const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
 
     if (!botToken || !chatId) {
       if (!hasLoggedMissingTokens) {
