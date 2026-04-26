@@ -354,7 +354,7 @@ async function startServer() {
 
   app.post("/api/telegram/send", async (req, res) => {
     try {
-      let { botToken, chatId, message } = req.body;
+      let { botToken, chatId, message, imageUrl } = req.body;
 
       if (!botToken || !chatId) {
         botToken = process.env.VITE_TELEGRAM_BOT_TOKEN;
@@ -365,7 +365,7 @@ async function startServer() {
         return res.status(400).json({ error: "Missing botToken or chatId" });
       }
 
-      const success = await sendTelegramSignal(botToken, chatId, message);
+      const success = await sendTelegramSignal(botToken, chatId, message, imageUrl);
 
       if (!success) {
         return res.status(500).json({ error: "Failed to send message" });
@@ -780,7 +780,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = isAsianSession ? 88 : 85;
+      const requiredConfidence = 95;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";

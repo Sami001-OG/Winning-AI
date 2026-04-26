@@ -224,10 +224,10 @@ const MEME_COINS = new Set([
     setSignals(newSignals);
     setLastUpdate(new Date());
 
-    // Push signals to Telegram if confidence >= 85
+    // Push signals to Telegram if confidence >= 95
     const now = Date.now();
     newSignals.forEach(sig => {
-      if (sig.analysis.confidence >= 85) {
+      if (sig.analysis.confidence >= 95) {
         const key = `${sig.symbol}-${sig.analysis.signal}`;
         if (!lastSentRef.current[key] || now - lastSentRef.current[key] > 2 * 60 * 60 * 1000) { // 2 hours cooldown
            lastSentRef.current[key] = now;
@@ -238,17 +238,25 @@ const MEME_COINS = new Set([
              .join('\n');
            const logicStr = logicStrRaw.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-           const limitEntryStr = sig.analysis.suggestedEntry
-             ? `\n⏳ Limit (Pullback): ${sig.analysis.suggestedEntry}`
+           const limitEntryStr = sig.analysis.limitEntry
+             ? `\n⏳ <b>Limit (Pullback):</b> <code>${sig.analysis.limitEntry}</code>`
              : '';
            const directionEmoji = sig.analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
-
-           const message = `⚡️ <b>FRONTEND TRADE ALERT</b> ⚡️\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}\n⏱ <b>Timeframe:</b> 15m\n\n🎯 <b>Entry:</b> <code>${sig.analysis.suggestedEntry || sig.lastPrice}</code>${limitEntryStr}\n✅ <b>TP:</b> <code>${sig.analysis.tp || 'N/A'}</code>\n❌ <b>Stop Loss:</b> <code>${sig.analysis.sl || 'N/A'}</code>\n\n🧠 <b>Confidence:</b> <code>${sig.analysis.confidence.toFixed(1)}%</code>\n\n💡 <b>Logic:</b>\n${logicStr}`;
            
+           const currentHour = new Date().getUTCHours();
+           const isAsianSession = currentHour >= 21 || currentHour < 8;
+           const sessionName = isAsianSession ? "Asian (Low Vol)" : "London/NY (High Vol)";
+
+           const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}\n⏱ <b>Timeframe:</b> 15m\n\n📝 <b>Strategy:</b> ${sig.analysis.entryStrategy || 'Market'}\n🕒 <b>Session:</b> ${sessionName}\n\n🎯 <b>Entry:</b> <code>${sig.analysis.suggestedEntry || sig.lastPrice}</code>${limitEntryStr}\n✅ <b>TP1:</b> <code>${sig.analysis.tp1 || sig.analysis.tp || 'N/A'}</code>\n✅ <b>TP2:</b> <code>${sig.analysis.tp2 || sig.analysis.tp || 'N/A'}</code>\n✅ <b>TP3:</b> <code>${sig.analysis.tp3 || sig.analysis.tp || 'N/A'}</code> (Trail Stop)\n❌ <b>Stop Loss:</b> <code>${sig.analysis.sl || 'N/A'}</code>\n\n🧠 <b>Confidence:</b> <code>${sig.analysis.confidence.toFixed(1)}%</code>\n\n💡 <b>Logic:</b>\n${logicStr}`;
+           
+           const bullishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+           const bearishImageUrl = "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+           const imageUrl = sig.analysis.signal === 'LONG' ? bullishImageUrl : bearishImageUrl;
+
            fetch('/api/telegram/send', {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({ message: message })
+             body: JSON.stringify({ message: message, imageUrl: imageUrl })
            }).catch(err => console.error("Failed to push to telegram", err));
         }
       }
