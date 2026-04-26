@@ -348,7 +348,7 @@ async function startServer() {
   app.use(express.json());
 
   // API routes FIRST
-  app.get("/api/health", (req, res) => {
+  app.use("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
 
