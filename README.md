@@ -59,7 +59,22 @@ Ensure the following environment variables are set:
 - `VITE_TELEGRAM_BOT_TOKEN`: Your Telegram bot token.
 - `VITE_TELEGRAM_CHAT_ID`: Your Telegram chat ID.
 
-## Running the Bot
+## Deployment & Hosting
+
+This project is currently deployed on **Render**:
+🔗 **Live App:** [https://endellion-trade.onrender.com/](https://endellion-trade.onrender.com/)
+
+**Important note for free-tier hosting (Render / Vercel):**
+If you are using a free tier on Render, the server will go to "sleep" after 15 minutes of inactivity (meaning no one is opening the web app). Since this bot relies on the backend `server.ts` running 24/7 to scan the market and send Telegram signals, you must prevent the server from sleeping.
+
+**How to run it in the background 24/7 for free:**
+1. Create a free account on a pinging service like **UptimeRobot** (https://uptimerobot.com) or **cron-job.org** (https://cron-job.org).
+2. Set up a new HTTP(s) Monitor.
+3. Configure the monitor to ping your health endpoint every 5-10 minutes.
+   - URL to ping: `https://endellion-trade.onrender.com/api/health`
+4. This automated ping will keep your Render free instance awake permanently, ensuring your market scan loop continues to run in the background exactly as if someone had the site open.
+
+## Running the Bot Locally
 
 To start the bot, use:
 
