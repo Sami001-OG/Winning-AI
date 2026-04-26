@@ -1237,12 +1237,12 @@ async function startServer() {
         }
 
         for (const sig of finalSignals) {
-          if (dailySignalCount >= DAILY_LIMIT) {
-            console.log(
-              `Daily limit reached (${DAILY_LIMIT}). Skipping signal for ${sig.symbol}`,
-            );
-            continue;
-          }
+          // if (dailySignalCount >= DAILY_LIMIT) {
+          //   console.log(
+          //     `Daily limit reached (${DAILY_LIMIT}). Skipping signal for ${sig.symbol}`,
+          //   );
+          //   continue;
+          // }
 
           const now = Date.now();
           lastSentSignals[sig.signalKey] = {
@@ -1310,7 +1310,7 @@ ${logicStr}`;
             sig.analysis.signal === "LONG" ? bullishImageUrl : bearishImageUrl;
 
           await sendTelegramSignal(botToken, chatId, message, imageUrl);
-          dailySignalCount++;
+          // dailySignalCount++;
         }
       }
     } catch (err) {
