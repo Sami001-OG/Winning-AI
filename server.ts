@@ -115,20 +115,22 @@ async function sendTelegramSignal(
     };
   }
 
-  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   let response;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
+        timeout: 10000,
       });
 
       if (!response.ok && imageUrl) {
+        console.log(`[Telegram] Photo failed on attempt ${attempt}. Fallback to text...`);
         // Fallback to text message if photo fails (e.g. quickchart.io is down)
         url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
         body = {
@@ -136,46 +138,72 @@ async function sendTelegramSignal(
           text: message,
           parse_mode: "HTML",
         };
-        response = await fetch(url, {
+        response = await fetchWithTimeout(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(body),
+          timeout: 10000,
         });
       }
 
-      if (response.ok) return true;
-      
+      if (response.ok) {
+        console.log(`[Telegram] Message sent successfully to ${cleanChatId}`);
+        return true;
+      }
+
       const errorText = await response.text();
-      console.warn(`Telegram API error on attempt ${attempt}: ${response.status} - ${errorText}`);
-      
-      if (response.status === 400 && errorText.includes('parse entities')) {
+      console.warn(
+        `[Telegram API ERROR] Attempt ${attempt}: ${response.status} - ${errorText}`,
+      );
+
+      if (response.status === 400 && errorText.includes("parse entities")) {
         // Unrecoverable formatting error. Try once completely without HTML parsing
         if (body.parse_mode) {
           body.parse_mode = undefined;
-          console.log(`Falling back to raw text (no HTML parse_mode) for Telegram...`);
-          const fallbackResponse = await fetch(url, {
+          console.log(
+            `[Telegram] Falling back to raw text (no HTML parse_mode) for Telegram...`,
+          );
+          const fallbackResponse = await fetchWithTimeout(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
+            timeout: 10000,
           });
-          if (fallbackResponse.ok) return true;
-          console.warn(`Raw text fallback also failed: ${await fallbackResponse.text()}`);
+          if (fallbackResponse.ok) {
+            console.log(`[Telegram] Raw text message sent successfully.`);
+            return true;
+          }
+          console.warn(
+            `[Telegram] Raw text fallback also failed: ${await fallbackResponse.text()}`,
+          );
         }
         return false;
       }
-      
+
+      if (response.status === 404) {
+         console.warn(`[Telegram ERROR] Bot token is invalid or chat ID not found. (404 Not Found)`);
+         // No point in retrying
+         return false;
+      }
+
+      if (response.status === 401) {
+         console.warn(`[Telegram ERROR] Unauthorized. Bot token is incorrect. (401)`);
+         return false;
+      }
+
       if (response.status === 429) {
         // Rate limited
         const data = JSON.parse(errorText);
         const retryAfter = data.parameters?.retry_after || 5;
+        console.warn(`[Telegram] Rate limited. Waiting ${retryAfter} seconds...`);
         await sleep(retryAfter * 1000);
       } else {
         await sleep(attempt * 1000);
       }
-    } catch (error) {
-      console.warn(`Telegram fetch error on attempt ${attempt}:`, error);
+    } catch (error: any) {
+      console.warn(`[Telegram] Fetch error on attempt ${attempt}:`, error.message || error);
       await sleep(attempt * 1000);
     }
   }
@@ -350,6 +378,33 @@ async function startServer() {
   // API routes FIRST
   app.use("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.get("/api/telegram/test", async (req, res) => {
+    try {
+      const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+      const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+
+      if (!botToken || !chatId) {
+        return res.json({ 
+          status: "failed", 
+          error: "Missing credentials", 
+          botTokenResolved: !!botToken, 
+          chatIdResolved: !!chatId 
+        });
+      }
+
+      console.log(`[TEST ENDPOINT] Testing Telegram send to chat: ${chatId}`);
+      const success = await sendTelegramSignal(botToken, chatId, "🧪 <b>Bot Test</b>\n\nThis is a manual test from the /api/telegram/test endpoint. Your Telegram configuration is working!");
+
+      if (success) {
+        res.json({ status: "success", message: "A test message was sent to Telegram." });
+      } else {
+        res.json({ status: "failed", error: "Failed to send message. Check server logs." });
+      }
+    } catch (error: any) {
+      res.json({ status: "error", error: error.message });
+    }
   });
 
   app.post("/api/telegram/send", async (req, res) => {
