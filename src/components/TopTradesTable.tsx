@@ -44,6 +44,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = ({ trades }) => {
   const klinesDataRef = useRef<Record<string, Record<string, Candle[]>>>({});
   const wsRefs = useRef<WebSocket[]>([]);
   const prevEntriesRef = useRef<Record<string, number>>({});
+  const lastSentRef = useRef<Record<string, number>>({});
   const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
 const MEME_COINS = new Set([
@@ -222,6 +223,36 @@ const MEME_COINS = new Set([
     newSignals.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
     setSignals(newSignals);
     setLastUpdate(new Date());
+
+    // Push signals to Telegram if confidence >= 85
+    const now = Date.now();
+    newSignals.forEach(sig => {
+      if (sig.analysis.confidence >= 85) {
+        const key = `${sig.symbol}-${sig.analysis.signal}`;
+        if (!lastSentRef.current[key] || now - lastSentRef.current[key] > 2 * 60 * 60 * 1000) { // 2 hours cooldown
+           lastSentRef.current[key] = now;
+           
+           const logicStrRaw = sig.analysis.indicators
+             .filter(i => i.signal === (sig.analysis.signal === 'LONG' ? 'bullish' : 'bearish'))
+             .map(i => `• ${i.name}: ${i.description}`)
+             .join('\n');
+           const logicStr = logicStrRaw.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+           const limitEntryStr = sig.analysis.suggestedEntry
+             ? `\n⏳ Limit (Pullback): ${sig.analysis.suggestedEntry}`
+             : '';
+           const directionEmoji = sig.analysis.signal === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+
+           const message = `⚡️ <b>FRONTEND TRADE ALERT</b> ⚡️\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}\n⏱ <b>Timeframe:</b> 15m\n\n🎯 <b>Entry:</b> <code>${sig.analysis.suggestedEntry || sig.lastPrice}</code>${limitEntryStr}\n✅ <b>TP:</b> <code>${sig.analysis.tp || 'N/A'}</code>\n❌ <b>Stop Loss:</b> <code>${sig.analysis.sl || 'N/A'}</code>\n\n🧠 <b>Confidence:</b> <code>${sig.analysis.confidence.toFixed(1)}%</code>\n\n💡 <b>Logic:</b>\n${logicStr}`;
+           
+           fetch('/api/telegram/send', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ message: message })
+           }).catch(err => console.error("Failed to push to telegram", err));
+        }
+      }
+    });
   };
 
   const toggleFreeze = (symbol: string, entry: number) => {

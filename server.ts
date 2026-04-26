@@ -780,7 +780,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = isAsianSession ? 92 : 90;
+      const requiredConfidence = isAsianSession ? 88 : 85;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
