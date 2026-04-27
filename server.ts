@@ -299,7 +299,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 50) // background scanner will parse the top 50 volume pairs
+      .slice(0, 100) // background scanner will parse the top 100 volume pairs
       .map((t: any) => t.symbol);
   } catch (e) {
     return [
@@ -316,63 +316,158 @@ async function fetchTopSymbols() {
   }
 }
 
+import WebSocket from "ws";
+
+const klineCache: Record<string, Record<string, any[]>> = {};
+const subscribedStreams = new Set<string>();
+let binanceWs: WebSocket | null = null;
+let reconnectTimer: NodeJS.Timeout | null = null;
 let rateLimitNotified = false;
 
-async function fetchKlines(symbol: string, tf: string, limit: number = 100) {
-  try {
-    const res = await fetchWithTimeout(
-      `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
-    );
-    const data = await res.json();
+function initBinanceWs() {
+  if (binanceWs) return;
+  binanceWs = new WebSocket('wss://fstream.binance.com/stream');
 
-    if (!Array.isArray(data)) {
-      console.warn(
-        `[Binance API Warning] Expected array for ${symbol} ${tf}, got:`,
-        data,
-      );
-      if (
-        data &&
-        data.code === -1003 &&
-        (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) &&
-        (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) &&
-        !rateLimitNotified
-      ) {
-        rateLimitNotified = true;
-        sendTelegramSignal(
-          (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) as string,
-          (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) as string,
-          "⚠️ <b>Binance API Rate Limit Hit!</b>\nScanner is temporarily missing data.",
-        ).catch(console.error);
-        setTimeout(() => {
-          rateLimitNotified = false;
-        }, 3600000); // Reset after 1 hour
-      }
-      return [];
+  binanceWs.on('open', () => {
+    console.log('[Binance WS] Connected for background scanner');
+    if (subscribedStreams.size > 0) {
+      binanceWs!.send(JSON.stringify({
+        method: 'SUBSCRIBE',
+        params: Array.from(subscribedStreams),
+        id: Date.now()
+      }));
     }
+  });
 
-    return data.map((d: any) => ({
-      time: Math.floor(d[0] / 1000),
-      open: parseFloat(d[1]),
-      high: parseFloat(d[2]),
-      low: parseFloat(d[3]),
-      close: parseFloat(d[4]),
-      volume: parseFloat(d[5]),
-      isFinal: true,
-    }));
-  } catch (error) {
-    console.error(
-      `[Binance API Error] Failed to fetch klines for ${symbol} ${tf}:`,
-      error,
-    );
-    return [];
+  binanceWs.on('message', (data: WebSocket.Data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.data && msg.data.e === 'kline') {
+        const s = msg.data.s;
+        const i = msg.data.k.i;
+        const k = msg.data.k;
+        
+        if (klineCache[s] && klineCache[s][i]) {
+          const arr = klineCache[s][i];
+          const last = arr[arr.length - 1];
+          const openTime = Math.floor(k.t / 1000);
+          
+          const candleData = {
+            time: openTime,
+            open: parseFloat(k.o),
+            high: parseFloat(k.h),
+            low: parseFloat(k.l),
+            close: parseFloat(k.c),
+            volume: parseFloat(k.v),
+            isFinal: k.x
+          };
+
+          if (last && last.time === openTime) {
+            arr[arr.length - 1] = candleData;
+          } else if (last && openTime > last.time) {
+            arr.push(candleData);
+            if (arr.length > 300) arr.shift();
+          }
+        }
+      }
+    } catch (err) {
+      // safely ignore decode errors
+    }
+  });
+
+  binanceWs.on('close', () => {
+    console.log('[Binance WS] Disconnected, reconnecting...');
+    binanceWs = null;
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        initBinanceWs();
+      }, 5000);
+    }
+  });
+
+  binanceWs.on('error', (err: any) => {
+    console.error('[Binance WS] Error:', err.message);
+  });
+}
+
+function subscribeToWs(symbol: string, tf: string) {
+  const streamName = `${symbol.toLowerCase()}@kline_${tf}`;
+  if (!subscribedStreams.has(streamName)) {
+    subscribedStreams.add(streamName);
+    if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
+      binanceWs.send(JSON.stringify({
+        method: 'SUBSCRIBE',
+        params: [streamName],
+        id: Date.now()
+      }));
+    }
   }
 }
 
+async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
+  if (!binanceWs) initBinanceWs();
+
+  if (!klineCache[symbol]) klineCache[symbol] = {};
+  
+  if (!klineCache[symbol][tf]) {
+    try {
+      const res = await fetchWithTimeout(
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
+      );
+      const data = await res.json();
+
+      if (!Array.isArray(data)) {
+        console.warn(
+          `[Binance API Warning] Expected array for ${symbol} ${tf}, got:`,
+          data,
+        );
+        if (
+          data &&
+          data.code === -1003 &&
+          (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) &&
+          (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) &&
+          !rateLimitNotified
+        ) {
+          rateLimitNotified = true;
+          sendTelegramSignal(
+            (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) as string,
+            (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) as string,
+            "⚠️ <b>Binance API Rate Limit Hit!</b>\nScanner is temporarily missing data.",
+          ).catch(console.error);
+          setTimeout(() => {
+            rateLimitNotified = false;
+          }, 3600000); // Reset after 1 hour
+        }
+        return [];
+      }
+
+      klineCache[symbol][tf] = data.map((d: any) => ({
+        time: Math.floor(d[0] / 1000),
+        open: parseFloat(d[1]),
+        high: parseFloat(d[2]),
+        low: parseFloat(d[3]),
+        close: parseFloat(d[4]),
+        volume: parseFloat(d[5]),
+        isFinal: true,
+      }));
+      
+      subscribeToWs(symbol, tf);
+    } catch (e) {
+      console.error(`Error fetching REST klines for ${symbol} ${tf}`, e);
+      return [];
+    }
+  }
+  
+  return klineCache[symbol][tf].slice(-limit);
+}
+
 let globalFrontendTrades: any[] = [];
+let lastScanMetrics: any = { status: "not_started" };
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
   app.use(express.json());
 
@@ -383,6 +478,12 @@ async function startServer() {
 
   app.get("/api/top-trades", (req, res) => {
     res.json({ signals: globalFrontendTrades });
+  });
+
+  app.get("/api/scanner-status", (req, res) => {
+    res.json({
+      lastScanMetrics
+    });
   });
 
   app.get("/api/telegram/test", async (req, res) => {
@@ -731,6 +832,7 @@ async function startServer() {
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
   let hasSentStartupNotification = false;
+  let globalScanIndex = 0;
 
   const runBackgroundLoop = async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -840,7 +942,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 88;
+      const requiredConfidence = 85;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -874,21 +976,29 @@ async function startServer() {
         console.error("Failed to fetch BTC 1H trend for King Filter:", e);
       }
 
-      // Process in batches of 10 to respect rate limits while completing faster
-      const BATCH_SIZE = 10;
-      for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-        const batch = symbols.slice(i, i + BATCH_SIZE);
+      // Pre-heat all timeframes concurrently for better REST loop performance
+      await Promise.all(symbols.map(async (symbol) => {
+        try {
+          await Promise.all([
+            fetchKlines(symbol, "3m"),
+            fetchKlines(symbol, "15m"),
+            fetchKlines(symbol, "1h"),
+            fetchKlines(symbol, "4h")
+          ]);
+        } catch(e) {}
+      }));
 
-        for (const symbol of batch) {
-          try {
-            // 1. Fetch 3M for active trade monitoring and sniper entry
-            const klines3m = await fetchKlines(symbol, "3m");
-            await new Promise((resolve) => setTimeout(resolve, 200)); // Delay between requests
+      // Process symbols sequentially since WS cache avoids rate limits
+      let diagnosticCounts = { total: symbols.length, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };
+      for (const symbol of symbols) {
+        try {
+          // 1. Fetch 3M for active trade monitoring and sniper entry
+          const klines3m = await fetchKlines(symbol, "3m");
 
-            // --- ACTIVE TRADE MONITORING (24/7) ---
-            const activeTrade = activeTrades[symbol];
-            let tradeClosed = false;
-            if (activeTrade && klines3m.length > 0) {
+          // --- ACTIVE TRADE MONITORING (24/7) ---
+          const activeTrade = activeTrades[symbol];
+          let tradeClosed = false;
+          if (activeTrade && klines3m.length > 0) {
               // Check the last 3 candles to ensure we don't miss a quick wick
               const recentCandles = klines3m.slice(-3);
 
@@ -904,7 +1014,6 @@ async function startServer() {
                 let softExitReason = "";
                 try {
                   const klines15mForExit = await fetchKlines(symbol, "15m");
-                  await new Promise((resolve) => setTimeout(resolve, 200));
                   if (klines15mForExit.length >= 30) {
                     const closes15m = klines15mForExit.map((k) => k.close);
                     const macd15m = MACD.calculate({
@@ -1072,39 +1181,31 @@ async function startServer() {
 
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
-            await new Promise((resolve) => setTimeout(resolve, 200)); // Delay between requests
             const htfDirection = getHTFDirection(klines4h);
-            if (htfDirection === "NEUTRAL") continue;
+            if (htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; continue; }
 
             // 2.5 1H Control Layer (Veto Filter)
             const klines1h = await fetchKlines(symbol, "1h");
-            await new Promise((resolve) => setTimeout(resolve, 200));
             const control1H = get1HControlState(klines1h, htfDirection);
-            if (control1H.state === "VETO") continue;
+            if (control1H.state === "VETO") { diagnosticCounts.veto1h++; continue; }
 
             // 3. 15M Confirmation (Confidence/Setup)
             const klines15m = await fetchKlines(symbol, "15m");
-            await new Promise((resolve) => setTimeout(resolve, 200)); // Delay between requests
             const mtfAnalysis = analyzeChart(
               klines15m,
               DEFAULT_RELIABILITY,
               [],
               symbol,
             );
-            if (
-              mtfAnalysis.signal === "NO TRADE" ||
-              htfDirection !== mtfAnalysis.signal
-            )
-              continue;
+            if (mtfAnalysis.signal === "NO TRADE") { diagnosticCounts.mtfNoTrade++; continue; }
+            if (htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; continue; }
 
             // Upgrade 1: King Filter Application
             if (symbol !== "BTCUSDT") {
               // Altcoin LONG allowed only if BTC not bearish (LONG or NEUTRAL)
-              if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT")
-                continue;
+              if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { diagnosticCounts.btcConflict++; continue; }
               // Altcoin SHORT allowed only if BTC weak (SHORT)
-              if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT")
-                continue;
+              if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT") { diagnosticCounts.btcConflict++; continue; }
             }
 
             // 4. 3M Entry (already fetched klines3m)
@@ -1112,7 +1213,7 @@ async function startServer() {
               klines3m,
               mtfAnalysis.signal as "LONG" | "SHORT",
             );
-            if (!ltfValidation.isValid) continue;
+            if (!ltfValidation.isValid) { diagnosticCounts.ltfInvalid++; continue; }
 
             // Upgrade 3: VWAP & Liquidity Sniping (Limit Entry)
             const closes3m = klines3m.map((k) => k.close);
@@ -1139,7 +1240,7 @@ async function startServer() {
             } else {
               mtfAnalysis.limitEntry = Math.max(lastEma20_3m, vwap3m);
             }
-            mtfAnalysis.entryStrategy = "Limit (3M VWAP/EMA20 Pullback)";
+            mtfAnalysis.entryStrategy = "Limit (Pullback)";
 
             // Premium Upgrades: OI and Funding Rate
             let premiumLogicStr = "";
@@ -1260,6 +1361,8 @@ async function startServer() {
                   sessionName,
                 });
               }
+            } else {
+              diagnosticCounts.lowConfidence++;
             }
           } catch (err) {
             console.error(
@@ -1267,11 +1370,7 @@ async function startServer() {
               err,
             );
           }
-        }
-
-        // Delay between batches to respect Binance API rate limits (2400 weight/minute)
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+        } // End of for (const symbol of symbols)
 
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
@@ -1384,8 +1483,25 @@ ${logicStr}`;
       }
 
       // Update frontend table
-      currentFrontendTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
-      globalFrontendTrades = currentFrontendTrades.slice(0, 15);
+      const frontendTradesMap = new Map<string, any>();
+      for (const t of globalFrontendTrades) {
+        frontendTradesMap.set(t.symbol, t);
+      }
+      for (const t of currentFrontendTrades) {
+        frontendTradesMap.set(t.symbol, t);
+      }
+      const newGlobalTrades = Array.from(frontendTradesMap.values());
+      newGlobalTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
+      globalFrontendTrades = newGlobalTrades.slice(0, 15);
+      
+      lastScanMetrics = {
+          timestamp: Date.now(),
+          symbolsCount: symbols.length,
+          btcTrend,
+          diagnosticCounts,
+          signalCandidatesCount: allSignals.length
+      };
+
     } catch (err) {
       console.error("Error in background loop:", err);
     } finally {
