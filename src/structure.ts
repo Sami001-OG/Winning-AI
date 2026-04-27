@@ -134,67 +134,47 @@ export const detectAllRsiDivergences = (data: Candle[], rsi: number[]): Divergen
 export const detectMacdDivergences = (data: Candle[], macdHist: number[]): DivergenceType => {
   if (data.length < 50 || macdHist.length < 50) return 'none';
 
-  const pivots: { price: number, val: number, index: number, type: 'high' | 'low' }[] = [];
   const prices = data.map(c => c.close);
-  const lookback = 5; 
   
-  // Identify peaks and troughs in the MACD histogram
-  for (let i = lookback; i < macdHist.length - lookback; i++) {
-      let isHistHigh = true;
-      let isHistLow = true;
-      for (let j = 1; j <= lookback; j++) {
-          if (macdHist[i] <= macdHist[i-j] || macdHist[i] <= macdHist[i+j]) isHistHigh = false;
-          if (macdHist[i] >= macdHist[i-j] || macdHist[i] >= macdHist[i+j]) isHistLow = false;
+  // 1. Identify Histogram Color Shifts (Momentum Shifts)
+  const lastIdx = macdHist.length - 1;
+  const isColorShiftBullish = macdHist[lastIdx] > 0 && macdHist[lastIdx - 1] < 0;
+  const isColorShiftBearish = macdHist[lastIdx] < 0 && macdHist[lastIdx - 1] > 0;
+
+  // 2. Identify Troughs/Peaks to check for divergence
+  // A trough is a local minimum in the MACD histogram (below 0)
+  // A peak is a local maximum (above 0)
+  
+  const getPivots = (arr: number[]): {val: number, idx: number}[] => {
+      const pivots = [];
+      for(let i = 1; i < arr.length - 1; i++) {
+          if ((arr[i] > arr[i-1] && arr[i] > arr[i+1]) || (arr[i] < arr[i-1] && arr[i] < arr[i+1])) {
+              pivots.push({val: arr[i], idx: i});
+          }
       }
-      
-      // Only consider histogram highs above 0 and lows below 0
-      if (isHistHigh && macdHist[i] > 0) {
-          pivots.push({ price: prices[i], val: macdHist[i], index: i, type: 'high' });
-      }
-      if (isHistLow && macdHist[i] < 0) {
-          pivots.push({ price: prices[i], val: macdHist[i], index: i, type: 'low' });
-      }
+      return pivots;
+  };
+  
+  const pivots = getPivots(macdHist);
+  if (pivots.length < 2) return isColorShiftBullish ? 'regular_bullish' : isColorShiftBearish ? 'regular_bearish' : 'none';
+
+  const lastPivot = pivots[pivots.length - 1];
+  const prevPivot = pivots[pivots.length - 2];
+  
+  const lastPrice = prices[lastPivot.idx];
+  const prevPrice = prices[prevPivot.idx];
+  
+  // Bullish: Hist trough is higher than prev trough, but Price is lower (Regular) or Higher (Hidden)
+  if (lastPivot.val < 0 && lastPivot.val > prevPivot.val) {
+      if (lastPrice < prevPrice) return 'regular_bullish';
+      if (lastPrice > prevPrice) return 'hidden_bullish';
   }
   
-  if (pivots.length < 2) return 'none';
-
-  const highs = pivots.filter(p => p.type === 'high');
-  const lows = pivots.filter(p => p.type === 'low');
-  
-  let divergence: DivergenceType = 'none';
-  let lastPivotIndex = -1;
-
-  // Check Highs (Bearish Divergences)
-  if (highs.length >= 2) {
-      const lastHigh = highs[highs.length - 1];
-      const prevHigh = highs[highs.length - 2];
-      
-      // Regular Bearish: Price HH, Hist LH
-      if (lastHigh.price > prevHigh.price && lastHigh.val < prevHigh.val) {
-          divergence = 'regular_bearish';
-          lastPivotIndex = lastHigh.index;
-      }
-      // Hidden Bearish: Price LH, Hist HH
-      else if (lastHigh.price < prevHigh.price && lastHigh.val > prevHigh.val) {
-          divergence = 'hidden_bearish';
-          lastPivotIndex = lastHigh.index;
-      }
+  // Bearish: Hist peak is lower than prev peak, but Price is higher (Regular) or Lower (Hidden)
+  if (lastPivot.val > 0 && lastPivot.val < prevPivot.val) {
+      if (lastPrice > prevPrice) return 'regular_bearish';
+      if (lastPrice < prevPrice) return 'hidden_bearish';
   }
 
-  // Check Lows (Bullish Divergences)
-  if (lows.length >= 2) {
-      const lastLow = lows[lows.length - 1];
-      const prevLow = lows[lows.length - 2];
-      
-      // Regular Bullish: Price LL, Hist HL
-      if (lastLow.price < prevLow.price && lastLow.val > prevLow.val) {
-          if (lastLow.index > lastPivotIndex) divergence = 'regular_bullish';
-      }
-      // Hidden Bullish: Price HL, Hist LL
-      else if (lastLow.price > prevLow.price && lastLow.val < prevLow.val) {
-          if (lastLow.index > lastPivotIndex) divergence = 'hidden_bullish';
-      }
-  }
-
-  return divergence;
+  return isColorShiftBullish ? 'regular_bullish' : isColorShiftBearish ? 'regular_bearish' : 'none';
 };
