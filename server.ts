@@ -299,8 +299,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 300) // Fetch top 300
-      .slice(0, 150) // Upgrade 1: Expanded universe to top 150
+      .slice(0, 80) // Expand universe to top 80 (reduced from 150 to avoid rate limits)
       .map((t: any) => t.symbol);
   } catch (e) {
     return [
@@ -319,7 +318,7 @@ async function fetchTopSymbols() {
 
 let rateLimitNotified = false;
 
-async function fetchKlines(symbol: string, tf: string, limit: number = 250) {
+async function fetchKlines(symbol: string, tf: string, limit: number = 100) {
   try {
     const res = await fetchWithTimeout(
       `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
@@ -835,7 +834,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 95;
+      const requiredConfidence = 88;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1149,8 +1148,8 @@ async function startServer() {
                     const oiChange = (curr - prev) / prev;
                     if (oiChange > 0.001) {
                       // > 0.1% increase in 15m
-                      mtfAnalysis.confidence += 10;
-                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising (+10% Confidence)`;
+                      mtfAnalysis.confidence += 5;
+                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising (+5% Confidence)`;
                     }
                   }
                 }
@@ -1162,14 +1161,14 @@ async function startServer() {
                 const fundingRate = parseFloat(frData.lastFundingRate);
 
                 if (mtfAnalysis.signal === "LONG" && fundingRate < -0.0001) {
-                  mtfAnalysis.confidence += 15;
-                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate (+15% Confidence)`;
+                  mtfAnalysis.confidence += 8;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate (+8% Confidence)`;
                 } else if (
                   mtfAnalysis.signal === "SHORT" &&
                   fundingRate > 0.0005
                 ) {
-                  mtfAnalysis.confidence += 15;
-                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate (+15% Confidence)`;
+                  mtfAnalysis.confidence += 8;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate (+8% Confidence)`;
                 }
               }
             } catch (e) {

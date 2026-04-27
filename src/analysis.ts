@@ -473,7 +473,8 @@ export const analyzeChart = (
 
   let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
-  let confidence = Math.abs(finalScore) * 100;
+  // Base confidence squeezed to 85 max so that bonuses are required to reach >90
+  let confidence = Math.abs(finalScore) * 85;
   
   // Squeeze Multiplier
   if (isSqueeze && orderFlow.netFlow > 0 && finalScore > 0) {
@@ -612,7 +613,7 @@ export const analyzeChart = (
 
   if (perfect) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
-    confidence = Math.min(100, confidence + 20); // Boost confidence for perfect setup
+    confidence = Math.min(100, confidence + 10); // Boost confidence for perfect setup
     reason = `PERFECT ${signal} setup. High confluence & divergence.`;
   } else if (confidence >= 80) { 
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
