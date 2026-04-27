@@ -658,6 +658,7 @@ async function startServer() {
   });
 
   // Background loop
+  let globalFrontendTrades: any[] = [];
   const lastSentSignals: Record<
     string,
     { direction: string; timestamp: number }
@@ -844,6 +845,7 @@ async function startServer() {
         new Set([...topSymbols, ...Object.keys(activeTrades)]),
       );
       const allSignals: any[] = [];
+      const currentFrontendTrades: any[] = [];
 
       // Upgrade 1: King Filter (BTC 1H Trend)
       let btcTrend = "NEUTRAL";
@@ -1179,6 +1181,13 @@ async function startServer() {
             // Cap confidence at 100 after premium upgrades
             mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
 
+            currentFrontendTrades.push({
+              symbol,
+              analysis: mtfAnalysis,
+              lastPrice: klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0,
+              entryDirection: 'none'
+            });
+
             // 5. Combine and Send
             if (mtfAnalysis.confidence >= requiredConfidence) {
               const now = Date.now();
@@ -1367,6 +1376,10 @@ ${logicStr}`;
           // dailySignalCount++;
         }
       }
+
+      // Update frontend table
+      currentFrontendTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
+      globalFrontendTrades = currentFrontendTrades.slice(0, 15);
     } catch (err) {
       console.error("Error in background loop:", err);
     } finally {
@@ -1389,6 +1402,10 @@ ${logicStr}`;
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  app.get("/api/top-trades", (req, res) => {
+    res.json({ signals: globalFrontendTrades });
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
