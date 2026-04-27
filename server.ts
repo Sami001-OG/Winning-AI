@@ -331,11 +331,8 @@ function initBinanceWs() {
   binanceWs.on('open', () => {
     console.log('[Binance WS] Connected for background scanner');
     if (subscribedStreams.size > 0) {
-      binanceWs!.send(JSON.stringify({
-        method: 'SUBSCRIBE',
-        params: Array.from(subscribedStreams),
-        id: Date.now()
-      }));
+      wsSubscribeQueue.push(...Array.from(subscribedStreams));
+      processWsQueue();
     }
   });
 
@@ -395,14 +392,32 @@ function subscribeToWs(symbol: string, tf: string) {
   const streamName = `${symbol.toLowerCase()}@kline_${tf}`;
   if (!subscribedStreams.has(streamName)) {
     subscribedStreams.add(streamName);
-    if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
-      binanceWs.send(JSON.stringify({
-        method: 'SUBSCRIBE',
-        params: [streamName],
-        id: Date.now()
-      }));
-    }
+    wsSubscribeQueue.push(streamName);
+    processWsQueue();
   }
+}
+
+const wsSubscribeQueue: string[] = [];
+let isProcessingWsQueue = false;
+
+function processWsQueue() {
+  if (isProcessingWsQueue || wsSubscribeQueue.length === 0 || !binanceWs || binanceWs.readyState !== WebSocket.OPEN) return;
+  isProcessingWsQueue = true;
+
+  const streamsToSubscribe = wsSubscribeQueue.splice(0, 50); // Max 50 per request
+  
+  binanceWs.send(JSON.stringify({
+    method: 'SUBSCRIBE',
+    params: streamsToSubscribe,
+    id: Date.now()
+  }));
+
+  setTimeout(() => {
+    isProcessingWsQueue = false;
+    if (wsSubscribeQueue.length > 0) {
+      processWsQueue();
+    }
+  }, 250); // 4 messages per second (max is 5)
 }
 
 async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
