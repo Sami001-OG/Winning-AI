@@ -731,6 +731,7 @@ async function startServer() {
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
   let hasSentStartupNotification = false;
+  let lastFullScanTime = 0;
 
   const runBackgroundLoop = async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -845,7 +846,16 @@ async function startServer() {
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
 
-      const topSymbols = await fetchTopSymbols();
+      let topSymbols: string[] = [];
+      let isFullScan = false;
+      const nowMs = Date.now();
+      if (nowMs - lastFullScanTime >= 20 * 60 * 1000) {
+        topSymbols = await fetchTopSymbols();
+        lastFullScanTime = nowMs;
+        isFullScan = true;
+        console.log(`[Scanner] Running full market scan for trades. Session: ${sessionName}`);
+      }
+
       const symbols = Array.from(
         new Set([...topSymbols, ...Object.keys(activeTrades)]),
       );
@@ -1383,8 +1393,10 @@ ${logicStr}`;
       }
 
       // Update frontend table
-      currentFrontendTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
-      globalFrontendTrades = currentFrontendTrades.slice(0, 15);
+      if (isFullScan) {
+        currentFrontendTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
+        globalFrontendTrades = currentFrontendTrades.slice(0, 15);
+      }
     } catch (err) {
       console.error("Error in background loop:", err);
     } finally {
