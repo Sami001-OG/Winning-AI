@@ -379,6 +379,10 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/top-trades", (req, res) => {
+    res.json({ signals: globalFrontendTrades });
+  });
+
   app.get("/api/telegram/test", async (req, res) => {
     try {
       const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -1402,10 +1406,6 @@ ${logicStr}`;
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-
-  app.get("/api/top-trades", (req, res) => {
-    res.json({ signals: globalFrontendTrades });
-  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
