@@ -1,15 +1,3 @@
-import { 
-  RSI, 
-  MACD, 
-  EMA, 
-  SMA,
-  BollingerBands, 
-  Stochastic, 
-  ATR, 
-  ADX, 
-  CCI,
-  OBV
-} from 'technicalindicators';
 import { Candle, AnalysisResult, IndicatorResult, Trade } from './types';
 import { detectPatterns } from './patterns';
 import { formatPrice } from './utils/format';
@@ -24,7 +12,7 @@ import {
   detectMacdDivergences
 } from './structure';
 import { calculateVolumeProfile } from './volumeProfile';
-import { calculateSupertrend } from './indicators';
+import { calculateSupertrend, calculateEMA, calculateSMA, calculateRSI, calculateATR, calculateOBV, calculateMACD, calculateADX, calculateBollingerBands } from './indicators';
 
 // Pattern Detection Helpers
 const isDoji = (c: Candle) => Math.abs(c.close - c.open) <= (c.high - c.low) * 0.1;
@@ -117,6 +105,10 @@ export const analyzeChart = (
   // CALCULATE INDICATORS
   // ==========================================
   
+  // ==========================================
+  // CALCULATE INDICATORS
+  // ==========================================
+  
   const TF_CONFIG: Record<string, { ema: number[], bb: [number, number], adx: number, orderFlow: number }> = {
     '5m': { ema: [10, 30, 100], bb: [20, 2.5], adx: 7, orderFlow: 3 },
     '15m': { ema: [20, 50, 200], bb: [30, 2], adx: 20, orderFlow: 5 },
@@ -127,42 +119,56 @@ export const analyzeChart = (
   const config = TF_CONFIG[timeframe] || { ema: [20, 50, 200], bb: [20, 2], adx: 14, orderFlow: 14 };
 
   // Volatility & Market Condition
-  const atr = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+  const atr = calculateATR(highs, lows, closes, 14);
   const lastAtr = atr[atr.length - 1] || 0;
   
-  const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: config.adx });
-  const lastAdx = adx[adx.length - 1];
+  const adxResult = calculateADX(highs, lows, closes, config.adx);
+  const lastAdx = { 
+    adx: adxResult.adx[adxResult.adx.length - 1], 
+    pdi: adxResult.pdi[adxResult.pdi.length - 1], 
+    mdi: adxResult.mdi[adxResult.mdi.length - 1] 
+  };
   
-  const bb = BollingerBands.calculate({ values: closes, period: config.bb[0], stdDev: config.bb[1] });
-  const lastBB = bb[bb.length - 1];
-  const prevBB = bb[bb.length - 2];
+  const bbResult = calculateBollingerBands(closes, config.bb[0], config.bb[1]);
+  const lastBB = { 
+    upper: bbResult.upper[bbResult.upper.length - 1], 
+    middle: bbResult.middle[bbResult.middle.length - 1], 
+    lower: bbResult.lower[bbResult.lower.length - 1] 
+  };
+  const prevBB = { 
+    upper: bbResult.upper[bbResult.upper.length - 2], 
+    middle: bbResult.middle[bbResult.middle.length - 2], 
+    lower: bbResult.lower[bbResult.lower.length - 2] 
+  };
 
   // Trend
-  const ema20 = EMA.calculate({ values: closes, period: config.ema[0] });
-  const ema50 = EMA.calculate({ values: closes, period: config.ema[1] });
-  const ema200 = EMA.calculate({ values: closes, period: config.ema[2] });
+  const ema20 = calculateEMA(closes, config.ema[0]);
+  const ema50 = calculateEMA(closes, config.ema[1]);
+  const ema200 = calculateEMA(closes, config.ema[2]);
   const lastEma20 = ema20[ema20.length - 1];
   const lastEma50 = ema50[ema50.length - 1];
   const lastEma200 = ema200[ema200.length - 1];
 
-  const macd = MACD.calculate({
-    values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9,
-    SimpleMAOscillator: false, SimpleMASignal: false
-  });
+  const macdResult = calculateMACD(closes, 12, 26, 9);
+  const macd = macdResult.macd.map((m, i) => ({ 
+    macd: m, 
+    signalLine: macdResult.signalLine[i], 
+    histogram: macdResult.histogram[i] 
+  }));
   const lastMacd = macd[macd.length - 1];
   const prevMacd = macd[macd.length - 2];
   const prevPrevMacd = macd[macd.length - 3];
 
   // Momentum / Entry
-  const rsi = RSI.calculate({ values: closes, period: 14 });
+  const rsi = calculateRSI(closes, 14);
   const lastRsi = rsi[rsi.length - 1];
 
   // Volume / Confirmation
-  const obv = OBV.calculate({ close: closes, volume: volumes });
+  const obv = calculateOBV(closes, volumes);
   const lastObv = obv[obv.length - 1];
   const prevObv = obv[obv.length - 2];
   
-  const volSma = SMA.calculate({ values: volumes, period: 20 });
+  const volSma = calculateSMA(volumes, 20);
   const lastVolSma = volSma[volSma.length - 1];
   const lastVol = volumes[volumes.length - 1];
 
@@ -184,10 +190,12 @@ export const analyzeChart = (
 
   if (timeframe === '15m') {
     rsiDivergence = detectAllRsiDivergences(data, rsi);
-    const macd15m = MACD.calculate({
-      values: closes, fastPeriod: 5, slowPeriod: 34, signalPeriod: 5,
-      SimpleMAOscillator: false, SimpleMASignal: false
-    });
+    const macd15mResult = calculateMACD(closes, 5, 34, 5);
+    const macd15m = macd15mResult.macd.map((m, i) => ({
+      macd: m,
+      signalLine: macd15mResult.signalLine[i],
+      histogram: macd15mResult.histogram[i]
+    }));
     const macdHistValues = macd15m.map(m => m.histogram || 0);
     macdDivergence = detectMacdDivergences(data, macdHistValues);
     
@@ -214,7 +222,7 @@ export const analyzeChart = (
   const isHighVolatility = bbWidth > (prevBbWidth * 1.5); // Volatility expansion
 
   // Squeeze Detection
-  const bbWidths = bb.map(b => (b.upper - b.lower) / b.middle);
+  const bbWidths = bbResult.upper.map((u, i) => (u - bbResult.lower[i]) / bbResult.middle[i]);
   const recentBbWidths = bbWidths.slice(-50);
   const sortedBbWidths = [...recentBbWidths].sort((a, b) => a - b);
   const bbWidth20thPercentile = sortedBbWidths[Math.floor(sortedBbWidths.length * 0.2)] || 0;

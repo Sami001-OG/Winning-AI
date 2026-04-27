@@ -278,13 +278,19 @@ const MEME_COINS = new Set([
   "NOTUSDT",
 ]);
 
+let cachedTopSymbols: string[] = [];
+let lastTopSymbolsUpdate = 0;
+
 async function fetchTopSymbols() {
+  if (Date.now() - lastTopSymbolsUpdate < 24 * 60 * 60 * 1000 && cachedTopSymbols.length > 0) {
+    return cachedTopSymbols;
+  }
   try {
     const res = await fetchWithTimeout(
       `https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`,
     );
     const data = await res.json();
-    return data
+    cachedTopSymbols = data
       .filter(
         (t: any) =>
           t.symbol.endsWith("USDT") &&
@@ -301,7 +307,10 @@ async function fetchTopSymbols() {
       )
       .slice(0, 100) // background scanner will parse the top 100 volume pairs
       .map((t: any) => t.symbol);
+    lastTopSymbolsUpdate = Date.now();
+    return cachedTopSymbols;
   } catch (e) {
+    if (cachedTopSymbols.length > 0) return cachedTopSymbols;
     return [
       "BTCUSDT",
       "ETHUSDT",
@@ -330,10 +339,14 @@ function initBinanceWs() {
 
   binanceWs.on('open', () => {
     console.log('[Binance WS] Connected for background scanner');
-    if (subscribedStreams.size > 0) {
-      wsSubscribeQueue.push(...Array.from(subscribedStreams));
-      processWsQueue();
-    }
+    // Start with all top symbols
+    fetchTopSymbols().then(symbols => {
+      symbols.forEach(s => subscribedStreams.add(`${s.toLowerCase()}@kline_1m`));
+      if (subscribedStreams.size > 0) {
+        wsSubscribeQueue.push(...Array.from(subscribedStreams));
+        processWsQueue();
+      }
+    });
   });
 
   binanceWs.on('message', (data: WebSocket.Data) => {
@@ -344,27 +357,30 @@ function initBinanceWs() {
         const i = msg.data.k.i;
         const k = msg.data.k;
         
-        if (klineCache[s] && klineCache[s][i]) {
-          const arr = klineCache[s][i];
-          const last = arr[arr.length - 1];
-          const openTime = Math.floor(k.t / 1000);
-          
-          const candleData = {
-            time: openTime,
-            open: parseFloat(k.o),
-            high: parseFloat(k.h),
-            low: parseFloat(k.l),
-            close: parseFloat(k.c),
-            volume: parseFloat(k.v),
-            isFinal: k.x
-          };
+        if (!klineCache[s]) klineCache[s] = {};
+        if (!klineCache[s][i]) klineCache[s][i] = [];
+        
+        const arr = klineCache[s][i];
+        const last = arr[arr.length - 1];
+        const openTime = Math.floor(k.t / 1000);
+        
+        const candleData = {
+          time: openTime,
+          open: parseFloat(k.o),
+          high: parseFloat(k.h),
+          low: parseFloat(k.l),
+          close: parseFloat(k.c),
+          volume: parseFloat(k.v),
+          isFinal: k.x
+        };
 
-          if (last && last.time === openTime) {
-            arr[arr.length - 1] = candleData;
-          } else if (last && openTime > last.time) {
-            arr.push(candleData);
-            if (arr.length > 300) arr.shift();
-          }
+        if (last && last.time === openTime) {
+          arr[arr.length - 1] = candleData;
+        } else if (last && openTime > last.time) {
+          arr.push(candleData);
+          if (arr.length > 500) arr.shift();
+        } else if (!last) {
+          arr.push(candleData);
         }
       }
     } catch (err) {
@@ -420,13 +436,42 @@ function processWsQueue() {
   }, 250); // 4 messages per second (max is 5)
 }
 
+function aggregateCandles(candles1m: any[], timeframe: string): any[] {
+  const multipliers: Record<string, number> = { '3m': 3, '15m': 15, '1h': 60, '4h': 240 };
+  const m = multipliers[timeframe];
+  if (!m) return candles1m;
+
+  const result = [];
+  for (let i = 0; i < candles1m.length; i += m) {
+    const group = candles1m.slice(i, i + m);
+    if (group.length < m) break; // Incomplete candle
+
+    result.push({
+      time: group[0].time,
+      open: group[0].open,
+      high: Math.max(...group.map(c => c.high)),
+      low: Math.min(...group.map(c => c.low)),
+      close: group[group.length - 1].close,
+      volume: group.reduce((sum, c) => sum + c.volume, 0),
+      isFinal: group[group.length - 1].isFinal
+    });
+  }
+  return result;
+}
+
 async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
   if (!binanceWs) initBinanceWs();
 
   if (!klineCache[symbol]) klineCache[symbol] = {};
   
+  // If we have 1m data, we can aggregate
+  if (tf !== '1m' && klineCache[symbol]['1m'] && klineCache[symbol]['1m'].length >= 240) {
+    return aggregateCandles(klineCache[symbol]['1m'], tf).slice(-limit);
+  }
+
   if (!klineCache[symbol][tf]) {
     try {
+      console.log(`[REST API] Fetching warm-up data for ${symbol} ${tf}`);
       const res = await fetchWithTimeout(
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
       );
@@ -1542,6 +1587,7 @@ ${logicStr}`;
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    initBinanceWs();
   });
 }
 
