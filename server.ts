@@ -299,7 +299,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 80) // Expand universe to top 80 (reduced from 150 to avoid rate limits)
+      .slice(0, 50) // background scanner will parse the top 50 volume pairs
       .map((t: any) => t.symbol);
   } catch (e) {
     return [
@@ -367,6 +367,8 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 100) {
     return [];
   }
 }
+
+let globalFrontendTrades: any[] = [];
 
 async function startServer() {
   const app = express();
@@ -662,7 +664,6 @@ async function startServer() {
   });
 
   // Background loop
-  let globalFrontendTrades: any[] = [];
   const lastSentSignals: Record<
     string,
     { direction: string; timestamp: number }
@@ -881,7 +882,7 @@ async function startServer() {
           try {
             // 1. Fetch 3M for active trade monitoring and sniper entry
             const klines3m = await fetchKlines(symbol, "3m");
-            await new Promise((resolve) => setTimeout(resolve, 100)); // Delay between requests
+            await new Promise((resolve) => setTimeout(resolve, 200)); // Delay between requests
 
             // --- ACTIVE TRADE MONITORING (24/7) ---
             const activeTrade = activeTrades[symbol];
@@ -902,7 +903,7 @@ async function startServer() {
                 let softExitReason = "";
                 try {
                   const klines15mForExit = await fetchKlines(symbol, "15m");
-                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  await new Promise((resolve) => setTimeout(resolve, 200));
                   if (klines15mForExit.length >= 30) {
                     const closes15m = klines15mForExit.map((k) => k.close);
                     const macd15m = MACD.calculate({
@@ -1070,19 +1071,19 @@ async function startServer() {
 
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
-            await new Promise((resolve) => setTimeout(resolve, 100)); // Delay between requests
+            await new Promise((resolve) => setTimeout(resolve, 200)); // Delay between requests
             const htfDirection = getHTFDirection(klines4h);
             if (htfDirection === "NEUTRAL") continue;
 
             // 2.5 1H Control Layer (Veto Filter)
             const klines1h = await fetchKlines(symbol, "1h");
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 200));
             const control1H = get1HControlState(klines1h, htfDirection);
             if (control1H.state === "VETO") continue;
 
             // 3. 15M Confirmation (Confidence/Setup)
             const klines15m = await fetchKlines(symbol, "15m");
-            await new Promise((resolve) => setTimeout(resolve, 100)); // Delay between requests
+            await new Promise((resolve) => setTimeout(resolve, 200)); // Delay between requests
             const mtfAnalysis = analyzeChart(
               klines15m,
               DEFAULT_RELIABILITY,
