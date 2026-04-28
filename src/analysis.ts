@@ -1050,8 +1050,8 @@ export const analyzeChart = (
 
   indicators.push({
     name: 'MACD',
-    value: lastMacd?.MACD !== undefined ? formatPrice(lastMacd.MACD) : 'N/A',
-    signal: (lastMacd?.MACD || 0) > (lastMacd?.signal || 0) ? 'bullish' : 'bearish',
+    value: lastMacd?.macd !== undefined ? formatPrice(lastMacd.macd) : 'N/A',
+    signal: (lastMacd?.macd || 0) > (lastMacd?.signalLine || 0) ? 'bullish' : 'bearish',
     description: 'Trend Oscillator'
   });
   indicators.push({

@@ -2,6 +2,9 @@
 
 Hey there! 👋 Welcome to the **Endellion Trading Bot**. This is a high-performance, automated trading engine built for Binance Futures. We designed it to do one thing really well: relentlessly scan the markets to find high-probability trade setups using a multi-timeframe approach, so you don't have to stare at charts all day.
 
+🔗 **Official Website:** [endellion-trade.onrender.com](https://endellion-trade.onrender.com)  
+📱 **Join the Telegram Group:** [https://t.me/+tno7HavO2UNkM2Nl](https://t.me/+tno7HavO2UNkM2Nl)
+
 ---
 
 ## 🛠 Indicators in Use
@@ -29,7 +32,7 @@ The engine leverages robust, institutional-grade technical indicators mathematic
 
 ---
 
-## 🏗 How It Thinks (Architecture & Methodology)
+## 🏗 Architecture & Core Methodology
 
 The bot isn't just mindlessly throwing alerts at you. We've evolved it from a basic signal generator into an **Elite Selection Engine**. Its main job is actually to *reject* mediocre setups so that only the highest quality trades make it to your screen. 
 
@@ -37,19 +40,20 @@ The bot isn't just mindlessly throwing alerts at you. We've evolved it from a ba
 To analyze over 300 symbols efficiently without driving the Binance API crazy, the bot runs pairs through a progressive gauntlet. Trades are only fired when the macro trend, medium-term momentum, and micro execution triggers are perfectly mathematically aligned.
 
 1. **Liquidity Filter (300+ → 50):** First, we grab the top 300 USDT pairs and filter them down to the top 50 based on 24h volume. We only want to trade where the liquidity is.
-2. **BTC King Filter:** All altcoins must respect Bitcoin's momentum. If BTC looks Bearish (`SHORT`), altcoin LONGs are immediately blocked.
-3. **4H Bias Alignment (50 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score (>= 3.0 out of 5 layers) to establish a firm LONG or SHORT bias based on EMA alignment and structure.
-4. **1H Control Layer (Veto Check):** The momentum gatekeeper. Once a 4H bias exists, the 1H chart determines if the market has healthy momentum. It looks at MACD expansion/contraction and RSI limits to classify the state as `CONTINUATION`, `EXHAUSTION`, or a full `VETO` (if momentum is violently against our trade direction).
-5. **15M Confirmation (12 → 6):** This is where setup validation occurs. We check the 15m chart for volume profile alignment, order flow, MACD/RSI divergence, and indicator health to build our core confidence score. The confidence must be **≥ 65%** for the signal to proceed. Dynamic TP and SL are calculated here based on structure and ATR.
-6. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers. The trade waits for precision confirmation like volume spikes, momentum shifts (ADX crossing), or a liquidity sweep. We calculate 3M VWAP and EMAs to provide precise limit order entries.
+2. **Strict Macro Filter (200 EMA):** Before any technical analysis begins, the asset's price MUST be aligned with the 200 EMA macro trend. If price is below the 200 EMA, longs are vetoed (-100 score). If price is above, shorts are vetoed.
+3. **4H Bias Alignment (50 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score to establish a firm LONG or SHORT bias based on EMA alignment and structure.
+4. **1H Control Layer (Veto Check):** The momentum gatekeeper. Once a 4H bias exists, the 1H chart determines if the market has healthy momentum. It looks at MACD expansion/contraction and RSI limits to classify the state as `CONTINUATION`, `EXHAUSTION`, or a full `VETO`.
+5. **15M Confirmation (12 → 6):** This is where setup validation occurs. We check the 15m chart for volume profile alignment, order flow, MACD/RSI divergence, and indicator health to build our core confidence score. The confidence must be **≥ 75%** for the signal to proceed. 
+6. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers. The trade *aborts completely* unless there is:
+   - An explicit Volume Spike
+   - Order Flow explicitly confirming the direction
+   - At least one of the following: EMA Alignment, Momentum Shift, Break of Structure, Liquidity Sweep, or strong Price Displacement.
 
-### 2. Hunting for the Elite 🎯
-We are incredibly picky about what signals get sent out:
-- **Sector Grouping:** If BTC, ETH, and three other Layer-1s all trigger a long at the exact same time, the bot groups them up, kills the weaker setups, and only sends you the best one.
-- **The "King" Filter:** All altcoins must respect Bitcoin's momentum. If BTC looks terrible, altcoin LONGs are blocked. 
-- **Liquidity Zones:** We wait for the trade to come to us. Setups that happen in the "middle of nowhere" are ignored; we want to react near major 50-candle swing highs or lows.
-- **Risk-to-Reward:** Every trade must have a clear path to TP1 that is at least as large as the Stop Loss (minimum 1:1 R:R).
-- **Daily Limits:** Quality over quantity. The bot limits itself to a maximum of **5 signals per day**. If the market goes crazy and gives us 10 signals, the bot dynamically raises its standards and only sends the absolute top 3.
+### 2. High-Winrate TP/SL Mechanics 🎯
+We are incredibly picky about trade execution:
+- **Single Institutional Target:** We got rid of partial TP scaling. Trades are given **one single Take Profit target (Target)** that ensures *at least* a 1.5:1 Risk-to-Reward ratio while aiming for major structural liquidity pools. 
+- **Tight Structural Stop Loss:** Stop Losses are mathematically placed slightly outside the most recent true swing high/low structure. We use a small, tight **0.5x ATR Buffer** to protect against fast wicks while keeping risk extremely tight. 
+- **Active 24/7 Monitoring:** Soft-exit logic detects momentum reversals (MACD fading, RSI leaving trend, Volume dropping) dynamically. If a setup looks like it's failing *before* the Stop Loss is hit, the bot abandons ship automatically.
 
 ### 3. The Brains (Weighting Engine) 🧠
 We didn’t just guess which indicators work best. The confidence scoring algorithm prioritizes what actually moves markets—real money and structure:

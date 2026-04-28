@@ -29,9 +29,11 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   const ema9 = EMA.calculate({ values: closes, period: 9 });
   const ema21 = EMA.calculate({ values: closes, period: 21 });
   const ema50 = EMA.calculate({ values: closes, period: 50 });
+  const ema200 = EMA.calculate({ values: closes, period: 200 });
   const lastEma9 = ema9[ema9.length - 1];
   const lastEma21 = ema21[ema21.length - 1];
   const lastEma50 = ema50[ema50.length - 1];
+  const lastEma200 = ema200[ema200.length - 1];
   const lastClose = closes[closes.length - 1];
 
   const macd = MACD.calculate({
@@ -52,6 +54,13 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
 
   let longScore = 0;
   let shortScore = 0;
+
+  // Strict 200 EMA Macro Trend rule
+  if (lastClose < lastEma200 && lastEma9 < lastEma50) {
+    longScore = -100; // Veto long
+  } else if (lastClose > lastEma200 && lastEma9 > lastEma50) {
+    shortScore = -100; // Veto short
+  }
 
   // 1. Trend Alignment (High Weight)
   if (lastClose > lastEma9 && lastEma9 > lastEma21 && lastEma21 > lastEma50) longScore += 2;
@@ -217,9 +226,15 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bullish';
     const isBullishOrderFlow = orderFlow.signal === 'bullish';
     
-    // Less restrictive check
-    if (!volumeSpike && !isBullishOrderFlow && !isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep) {
-      return { isValid: false, reason: 'LTF No volume, order flow, EMA, Momentum, or Sweep' };
+    // Extremely restrictive check
+    if (!volumeSpike) {
+       return { isValid: false, reason: 'LTF Rejection: No Volume Spike' }
+    }
+    if (!isBullishOrderFlow) {
+       return { isValid: false, reason: 'LTF Rejection: Order flow does not support LONG' }
+    }
+    if (!isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep && !isDisplacementUp) {
+      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Up, BOS, Sweep, Displacement)' };
     }
   } else {
     const isEmaAligned = lastCandle.close < lastEma10 && lastEma10 < lastEma30;
@@ -229,8 +244,15 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bearish';
     const isBearishOrderFlow = orderFlow.signal === 'bearish';
     
-    if (!volumeSpike && !isBearishOrderFlow && !isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep) {
-      return { isValid: false, reason: 'LTF No volume, order flow, EMA, Momentum, or Sweep' };
+    // Extremely restrictive check
+    if (!volumeSpike) {
+       return { isValid: false, reason: 'LTF Rejection: No Volume Spike' }
+    }
+    if (!isBearishOrderFlow) {
+       return { isValid: false, reason: 'LTF Rejection: Order flow does not support SHORT' }
+    }
+    if (!isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep && !isDisplacementDown) {
+      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Down, BOS, Sweep, Displacement)' };
     }
   }
 

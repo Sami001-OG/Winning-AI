@@ -908,7 +908,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 65;
+      const requiredConfidence = 75;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1064,36 +1064,15 @@ async function startServer() {
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   } else if (
-                    activeTrade.achieved < 3 &&
-                    currentHigh >= activeTrade.tp3
-                  ) {
-                    await sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp3, "LONG")})`,
-                    );
-                    delete activeTrades[symbol];
-                    tradeClosed = true;
-                  } else if (
-                    activeTrade.achieved < 2 &&
-                    currentHigh >= activeTrade.tp2
-                  ) {
-                    await sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp2, "LONG")})`,
-                    );
-                    activeTrade.achieved = 2;
-                  } else if (
-                    activeTrade.achieved < 1 &&
                     currentHigh >= activeTrade.tp1
                   ) {
                     await sendTelegramSignal(
                       botToken,
                       chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG")})`,
+                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG")})`,
                     );
-                    activeTrade.achieved = 1;
+                    delete activeTrades[symbol];
+                    tradeClosed = true;
                   }
                 } else if (activeTrade.direction === "SHORT") {
                   if (currentHigh >= activeTrade.sl) {
@@ -1108,36 +1087,15 @@ async function startServer() {
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   } else if (
-                    activeTrade.achieved < 3 &&
-                    currentLow <= activeTrade.tp3
-                  ) {
-                    await sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP3 Achieved (🎯 ${formatPrice(activeTrade.tp3)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp3, "SHORT")})`,
-                    );
-                    delete activeTrades[symbol];
-                    tradeClosed = true;
-                  } else if (
-                    activeTrade.achieved < 2 &&
-                    currentLow <= activeTrade.tp2
-                  ) {
-                    await sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP2 Achieved (🎯 ${formatPrice(activeTrade.tp2)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp2, "SHORT")})`,
-                    );
-                    activeTrade.achieved = 2;
-                  } else if (
-                    activeTrade.achieved < 1 &&
                     currentLow <= activeTrade.tp1
                   ) {
                     await sendTelegramSignal(
                       botToken,
                       chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> TP1 Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT")})`,
+                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT")})`,
                     );
-                    activeTrade.achieved = 1;
+                    delete activeTrades[symbol];
+                    tradeClosed = true;
                   }
                 }
               }
@@ -1433,9 +1391,7 @@ ${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
 🕒 <b>Session:</b> ${sig.sessionName}
 
 🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>${limitEntryStr}
-✅ <b>TP1:</b> <code>${formatPrice(sig.tp1)}</code>
-✅ <b>TP2:</b> <code>${formatPrice(sig.tp2)}</code>
-✅ <b>TP3:</b> <code>${formatPrice(sig.tp3)}</code> (Trail Stop)
+✅ <b>Target:</b> <code>${formatPrice(sig.tp1)}</code>
 ❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>
 
 🧠 <b>Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
