@@ -4,18 +4,44 @@ Hey there! 👋 Welcome to the **Endellion Trading Bot**. This is a high-perform
 
 ---
 
+## 🛠 Indicators in Use
+
+The engine leverages robust, institutional-grade technical indicators mathematically calculated via the `technicalindicators` library:
+
+### Trend & Momentum
+- **EMA (Exponential Moving Average):** Dynamic periods (10, 20, 30, 50, 100, 200) depending on the timeframe. Used for trend alignment and dynamic support/resistance.
+- **MACD (Moving Average Convergence Divergence):** (12, 26, 9). Used for momentum expansion/exhaustion and detecting bullish/bearish divergences.
+- **Supertrend:** (7, 3). Used as a strict directional trend filter on higher timeframes.
+- **RSI (Relative Strength Index):** (14). Used for momentum oscillator, overbought/oversold conditions, and divergence detection.
+- **ADX & DI (Average Directional Index):** (14). Used to gauge the strength of a trend and momentum displacement.
+
+### Volatility & Risk Management
+- **Bollinger Bands:** (20, 2.5) on 1D/5m, (30, 2) on 4H/1H/15m. Used for volatility expansion (squeeze detection) and mean reversion.
+- **ATR (Average True Range):** (14). Used dynamically for structural invalidation and setting Stop Loss (SL) and Take Profit (TP) levels.
+
+### Volume & Order Flow
+- **OBV (On-Balance Volume):** Used for volume flow confirmation and spotting accumulation/distribution.
+- **Order Flow (Net Volume):** Analyzed via buying/selling pressure intensity on recent candles.
+- **Volume Profile:** Calculates Point of Control (POC), Value Area High (VAH), and Value Area Low (VAL) to map deep institutional liquidity.
+
+### Market Structure
+- **Smart Money Concepts (SMC):** Detects micro and macro structural shifts, including Break of Structure (BOS), Change of Character (CHoCH), and Liquidity Grabs (Sweeps).
+
+---
+
 ## 🏗 How It Thinks (Architecture & Methodology)
 
 The bot isn't just mindlessly throwing alerts at you. We've evolved it from a basic signal generator into an **Elite Selection Engine**. Its main job is actually to *reject* mediocre setups so that only the highest quality trades make it to your screen. 
 
-### 1. The Tiered Filtering Funnel 🌪️
-To analyze over 300 symbols efficiently without driving the Binance API crazy, the bot runs pairs through a progressive gauntlet:
+### 1. The Tiered Filtering Funnel (Top-to-Bottom Breakdown) 🌪️
+To analyze over 300 symbols efficiently without driving the Binance API crazy, the bot runs pairs through a progressive gauntlet. Trades are only fired when the macro trend, medium-term momentum, and micro execution triggers are perfectly mathematically aligned.
 
 1. **Liquidity Filter (300+ → 50):** First, we grab the top 300 USDT pairs and filter them down to the top 50 based on 24h volume. We only want to trade where the liquidity is.
-2. **4H Bias Alignment (50 → ~12):** We check the 4-hour timeframe for the "big picture" trend. If a coin is fighting the macro trend, it gets tossed out.
-3. **1H Control Layer (Veto Check):** A quick vibe-check on the 1-hour chart. If immediate momentum is violently against our trade direction, the setup gets vetoed.
-4. **15M Confirmation (12 → 6):** This is where the heavy lifting happens. We check the 15m chart for momentum, structure, and indicator health to build our core confidence score.
-5. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers—like a liquidity sweep or break of structure—so we can get the best possible Risk-to-Reward (R:R).
+2. **BTC King Filter:** All altcoins must respect Bitcoin's momentum. If BTC looks Bearish (`SHORT`), altcoin LONGs are immediately blocked.
+3. **4H Bias Alignment (50 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score (>= 3.0 out of 5 layers) to establish a firm LONG or SHORT bias based on EMA alignment and structure.
+4. **1H Control Layer (Veto Check):** The momentum gatekeeper. Once a 4H bias exists, the 1H chart determines if the market has healthy momentum. It looks at MACD expansion/contraction and RSI limits to classify the state as `CONTINUATION`, `EXHAUSTION`, or a full `VETO` (if momentum is violently against our trade direction).
+5. **15M Confirmation (12 → 6):** This is where setup validation occurs. We check the 15m chart for volume profile alignment, order flow, MACD/RSI divergence, and indicator health to build our core confidence score. The confidence must be **≥ 65%** for the signal to proceed. Dynamic TP and SL are calculated here based on structure and ATR.
+6. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers. The trade waits for precision confirmation like volume spikes, momentum shifts (ADX crossing), or a liquidity sweep. We calculate 3M VWAP and EMAs to provide precise limit order entries.
 
 ### 2. Hunting for the Elite 🎯
 We are incredibly picky about what signals get sent out:

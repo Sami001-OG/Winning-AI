@@ -1,71 +1,36 @@
 import { Candle } from './types';
+import { EMA, SMA, RSI, ATR, MACD, ADX, BollingerBands } from 'technicalindicators';
 
 export const calculateEMA = (values: number[], period: number): number[] => {
-  const k = 2 / (period + 1);
-  const ema = [values[0]];
-  for (let i = 1; i < values.length; i++) {
-    ema.push(values[i] * k + ema[i - 1] * (1 - k));
-  }
-  return ema;
+  const ema = EMA.calculate({ period, values });
+  return new Array(values.length - ema.length).fill(ema[0] || 0).concat(ema);
 };
 
 export const calculateSMA = (values: number[], period: number): number[] => {
-  const sma = [];
-  for (let i = 0; i < values.length; i++) {
-    if (i < period - 1) {
-      sma.push(0);
-    } else {
-      const sum = values.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
-      sma.push(sum / period);
-    }
-  }
-  return sma;
+  const sma = SMA.calculate({ period, values });
+  return new Array(values.length - sma.length).fill(sma[0] || 0).concat(sma);
 };
 
 export const calculateRSI = (values: number[], period: number = 14): number[] => {
-  const rsi = [];
-  let gains = 0;
-  let losses = 0;
-
-  for (let i = 0; i < values.length; i++) {
-    if (i === 0) {
-      rsi.push(0);
-      continue;
-    }
-    const diff = values[i] - values[i - 1];
-    if (diff > 0) gains += diff;
-    else losses -= diff;
-
-    if (i < period) {
-      rsi.push(0);
-    } else if (i === period) {
-      rsi.push(100 - (100 / (1 + (gains / period) / (losses / period))));
-    } else {
-      gains = (gains * (period - 1) + (diff > 0 ? diff : 0)) / period;
-      losses = (losses * (period - 1) + (diff < 0 ? -diff : 0)) / period;
-      rsi.push(100 - (100 / (1 + gains / losses)));
-    }
-  }
-  return rsi;
+  const rsi = RSI.calculate({ period, values });
+  return new Array(values.length - rsi.length).fill(rsi[0] || 50).concat(rsi);
 };
 
 export const calculateSupertrend = (data: Candle[], atrArray: number[], period: number = 10, multiplier: number = 3) => {
   const supertrend = [];
   let finalUpperband = 0;
   let finalLowerband = 0;
-  let trend = 1; 
-
-  const atrPadded = new Array(Math.max(0, data.length - atrArray.length)).fill(0).concat(atrArray);
+  let trend = 1;
 
   for (let i = 0; i < data.length; i++) {
-    if (i === 0 || atrPadded[i] === 0) {
+    if (i === 0 || atrArray[i] === 0) {
       supertrend.push({ value: 0, trend: 1 });
       continue;
     }
 
     const hl2 = (data[i].high + data[i].low) / 2;
-    const basicUpperband = hl2 + multiplier * atrPadded[i];
-    const basicLowerband = hl2 - multiplier * atrPadded[i];
+    const basicUpperband = hl2 + multiplier * atrArray[i];
+    const basicLowerband = hl2 - multiplier * atrArray[i];
 
     if (i === 1 || finalUpperband === 0) {
       finalUpperband = basicUpperband;
@@ -108,37 +73,8 @@ export const calculateSupertrend = (data: Candle[], atrArray: number[], period: 
 };
 
 export const calculateATR = (highs: number[], lows: number[], closes: number[], period: number = 14): number[] => {
-  const trs = [];
-  for (let i = 0; i < highs.length; i++) {
-    if (i === 0) {
-      trs.push(highs[i] - lows[i]);
-    } else {
-      const tr = Math.max(
-        highs[i] - lows[i],
-        Math.abs(highs[i] - closes[i - 1]),
-        Math.abs(lows[i] - closes[i - 1])
-      );
-      trs.push(tr);
-    }
-  }
-
-  const atr = [];
-  let sum = 0;
-  for (let i = 0; i < trs.length; i++) {
-    if (i < period) {
-      sum += trs[i];
-      if (i === period - 1) {
-        atr.push(sum / period);
-      } else {
-        atr.push(0);
-      }
-    } else {
-      const lastAtr = atr[i - 1];
-      const newAtr = (lastAtr * (period - 1) + trs[i]) / period;
-      atr.push(newAtr);
-    }
-  }
-  return atr;
+  const atr = ATR.calculate({ high: highs, low: lows, close: closes, period });
+  return new Array(highs.length - atr.length).fill(atr[0] || 0).concat(atr);
 };
 
 export const calculateOBV = (closes: number[], volumes: number[]): number[] => {
@@ -155,95 +91,58 @@ export const calculateOBV = (closes: number[], volumes: number[]): number[] => {
   return obv;
 };
 
-export const calculateMACD = (closes: number[], fast: number = 12, slow: number = 26, signal: number = 9): { macd: number[], signalLine: number[], histogram: number[] } => {
-  const emaFast = calculateEMA(closes, fast);
-  const emaSlow = calculateEMA(closes, slow);
-  const macd = emaFast.map((line, i) => line - emaSlow[i]);
-  const signalLine = calculateEMA(macd, signal);
-  const histogram = macd.map((line, i) => line - signalLine[i]);
-  return { macd, signalLine, histogram };
+export const calculateMACD = (closes: number[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9): { macd: number[], signalLine: number[], histogram: number[] } => {
+  const macdResult = MACD.calculate({ 
+    values: closes, 
+    fastPeriod, 
+    slowPeriod, 
+    signalPeriod,
+    SimpleMAOscillator: false,
+    SimpleMASignal: false
+  });
+  
+  const padLength = closes.length - macdResult.length;
+  const padAmount = padLength > 0 ? padLength : 0;
+  
+  const firstMacd = macdResult[0] && macdResult[0].MACD ? macdResult[0].MACD : 0;
+  const firstSignal = macdResult[0] && macdResult[0].signal ? macdResult[0].signal : 0;
+  const firstHist = macdResult[0] && macdResult[0].histogram ? macdResult[0].histogram : 0;
+
+  return { 
+    macd: new Array(padAmount).fill(firstMacd).concat(macdResult.map(m => m.MACD || 0)), 
+    signalLine: new Array(padAmount).fill(firstSignal).concat(macdResult.map(m => m.signal || 0)), 
+    histogram: new Array(padAmount).fill(firstHist).concat(macdResult.map(m => m.histogram || 0)) 
+  };
 };
 
 export const calculateBollingerBands = (values: number[], period: number = 20, multiplier: number = 2): { upper: number[], middle: number[], lower: number[] } => {
-  const middle = calculateSMA(values, period);
-  const upper = [];
-  const lower = [];
+  const bb = BollingerBands.calculate({ period, stdDev: multiplier, values });
+  const padLength = values.length - bb.length;
+  const padAmount = padLength > 0 ? padLength : 0;
 
-  for (let i = 0; i < values.length; i++) {
-    if (i < period - 1) {
-      upper.push(0);
-      lower.push(0);
-    } else {
-      const slice = values.slice(i - period + 1, i + 1);
-      const mean = middle[i];
-      const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
-      const stdDev = Math.sqrt(variance);
-      upper.push(mean + stdDev * multiplier);
-      lower.push(mean - stdDev * multiplier);
-    }
-  }
-  return { upper, middle, lower };
+  const firstUpper = bb[0] && bb[0].upper ? bb[0].upper : 0;
+  const firstMiddle = bb[0] && bb[0].middle ? bb[0].middle : 0;
+  const firstLower = bb[0] && bb[0].lower ? bb[0].lower : 0;
+
+  return { 
+    upper: new Array(padAmount).fill(firstUpper).concat(bb.map(b => b.upper)),
+    middle: new Array(padAmount).fill(firstMiddle).concat(bb.map(b => b.middle)),
+    lower: new Array(padAmount).fill(firstLower).concat(bb.map(b => b.lower))
+  };
 };
 
 export const calculateADX = (highs: number[], lows: number[], closes: number[], period: number = 14): { adx: number[], pdi: number[], mdi: number[] } => {
-  const trs = [];
-  const plusDm = [];
-  const minusDm = [];
+  const adxResult = ADX.calculate({ high: highs, low: lows, close: closes, period });
+  const padLength = highs.length - adxResult.length;
+  const padAmount = padLength > 0 ? padLength : 0;
 
-  for (let i = 1; i < highs.length; i++) {
-    const upMove = highs[i] - highs[i - 1];
-    const downMove = lows[i - 1] - lows[i];
+  const firstAdx = adxResult[0] && adxResult[0].adx ? adxResult[0].adx : 0;
+  const firstPdi = adxResult[0] && adxResult[0].pdi ? adxResult[0].pdi : 0;
+  const firstMdi = adxResult[0] && adxResult[0].mdi ? adxResult[0].mdi : 0;
 
-    const tr = Math.max(
-      highs[i] - lows[i],
-      Math.abs(highs[i] - closes[i - 1]),
-      Math.abs(lows[i] - closes[i - 1])
-    );
-    trs.push(tr);
-
-    if (upMove > downMove && upMove > 0) plusDm.push(upMove);
-    else plusDm.push(0);
-
-    if (downMove > upMove && downMove > 0) minusDm.push(downMove);
-    else minusDm.push(0);
-  }
-
-  // Smoothing (simple for now)
-  const smoothedTr = new Array(trs.length).fill(0);
-  const smoothedPlusDm = new Array(plusDm.length).fill(0);
-  const smoothedMinusDm = new Array(minusDm.length).fill(0);
-
-  // Initial sum
-  for (let i = 0; i < period; i++) {
-    smoothedTr[period - 1] += trs[i];
-    smoothedPlusDm[period - 1] += plusDm[i];
-    smoothedMinusDm[period - 1] += minusDm[i];
-  }
-
-  for (let i = period; i < trs.length; i++) {
-    smoothedTr[i] = (smoothedTr[i - 1] * (period - 1) + trs[i]) / period;
-    smoothedPlusDm[i] = (smoothedPlusDm[i - 1] * (period - 1) + plusDm[i]) / period;
-    smoothedMinusDm[i] = (smoothedMinusDm[i - 1] * (period - 1) + minusDm[i]) / period;
-  }
-
-  const pdi = smoothedPlusDm.map((dm, i) => smoothedTr[i] === 0 ? 0 : (dm / smoothedTr[i]) * 100);
-  const mdi = smoothedMinusDm.map((dm, i) => smoothedTr[i] === 0 ? 0 : (dm / smoothedTr[i]) * 100);
-
-  const dx = pdi.map((p, i) => (p + mdi[i]) === 0 ? 0 : (Math.abs(p - mdi[i]) / (p + mdi[i])) * 100);
-  const adx = new Array(dx.length).fill(0);
-  
-  let sumDx = 0;
-  for (let i = 0; i < period; i++) sumDx += dx[i + period - 1];
-  adx[period * 2 - 2] = sumDx / period;
-
-  for (let i = period * 2 - 1; i < dx.length; i++) {
-    adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period;
-  }
-
-  // Pad arrays to match highs.length
   return {
-    adx: new Array(period).fill(0).concat(adx),
-    pdi: new Array(period).fill(0).concat(pdi),
-    mdi: new Array(period).fill(0).concat(mdi)
+    adx: new Array(padAmount).fill(firstAdx).concat(adxResult.map(a => a.adx)),
+    pdi: new Array(padAmount).fill(firstPdi).concat(adxResult.map(a => a.pdi)),
+    mdi: new Array(padAmount).fill(firstMdi).concat(adxResult.map(a => a.mdi))
   };
 };

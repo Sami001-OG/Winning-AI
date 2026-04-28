@@ -96,8 +96,8 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   // 5. Divergence (Removed from 4h, handled in 15m)
 
   // Require a strong conviction for HTF trend
-  if (longScore >= 4.5 && shortScore <= 2.5) return 'LONG';
-  if (shortScore >= 4.5 && longScore <= 2.5) return 'SHORT';
+  if (longScore >= 3.0 && shortScore <= 3.5) return 'LONG';
+  if (shortScore >= 3.0 && longScore <= 3.5) return 'SHORT';
   
   return 'NEUTRAL';
 };
@@ -136,14 +136,14 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
     }
     
     // EXHAUSTION: Pullback is losing steam (Light Red MACD) or minor dip (Light Green MACD)
-    if (hist < 0 && hist > prevHist) {
+    if (hist < 0 && hist >= prevHist) {
       return { state: 'EXHAUSTION', reason: 'Bearish Exhaustion (Light Red MACD)' };
     }
-    if (hist > 0 && hist < prevHist && lastRsi > 40) {
+    if (hist > 0 && hist <= prevHist) {
       return { state: 'EXHAUSTION', reason: 'Minor Pullback (Light Green MACD)' };
     }
     
-    return { state: 'VETO', reason: 'No clear 1H alignment' };
+    return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
   } else {
     // SHORT BIAS
     // VETO: Strong counter-trend momentum (Dark Green MACD)
@@ -152,24 +152,24 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
     }
     
     // NEW VETO: RSI too low (late to the party)
-    if (lastRsi < 35) {
-      return { state: 'VETO', reason: '1H RSI Oversold (<35) - Too late to enter SHORT' };
+    if (lastRsi < 25) {
+      return { state: 'VETO', reason: '1H RSI Oversold (<25) - Too late to enter SHORT' };
     }
     
     // CONTINUATION: Aligned momentum (Dark Red MACD), RSI < 50, Price < EMAs
-    if (hist < 0 && hist < prevHist && lastRsi < 50 && lastClose < lastEma20) {
+    if (hist < 0 && hist < prevHist && lastRsi < 55) {
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Red MACD)' };
     }
     
     // EXHAUSTION: Pullback is losing steam (Light Green MACD) or minor pump (Light Red MACD)
-    if (hist > 0 && hist < prevHist) {
+    if (hist > 0 && hist <= prevHist) {
       return { state: 'EXHAUSTION', reason: 'Bullish Exhaustion (Light Green MACD)' };
     }
-    if (hist < 0 && hist > prevHist && lastRsi < 60) {
+    if (hist < 0 && hist >= prevHist) {
       return { state: 'EXHAUSTION', reason: 'Minor Pullback (Light Red MACD)' };
     }
     
-    return { state: 'VETO', reason: 'No clear 1H alignment' };
+    return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
   }
 };
 
@@ -217,21 +217,20 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bullish';
     const isBullishOrderFlow = orderFlow.signal === 'bullish';
     
-    if (!volumeSpike && !isBullishOrderFlow && !isDisplacementUp && !isEmaAligned) return { isValid: false, reason: 'LTF No volume, order flow, displacement, or EMA alignment' };
-    if (!isDisplacementUp && !isMicroBOS && !isLiquiditySweep && !isEmaAligned && !isMomentumUp) {
-      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, EMA Alignment, or Momentum)' };
+    // Less restrictive check
+    if (!volumeSpike && !isBullishOrderFlow && !isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep) {
+      return { isValid: false, reason: 'LTF No volume, order flow, EMA, Momentum, or Sweep' };
     }
   } else {
     const isEmaAligned = lastCandle.close < lastEma10 && lastEma10 < lastEma30;
-    const isMomentumDown = lastAdx && lastAdx.adx > 20 && lastAdx.mdi > lastAdx.pdi;
+    const isMomentumDown = lastAdx && lastAdx.adx > 15 && lastAdx.mdi > lastAdx.pdi;
 
     const isMicroBOS = bos === 'bearish';
     const isLiquiditySweep = liquidityGrab === 'bearish';
     const isBearishOrderFlow = orderFlow.signal === 'bearish';
     
-    if (!volumeSpike && !isBearishOrderFlow && !isDisplacementDown && !isEmaAligned) return { isValid: false, reason: 'LTF No volume, order flow, displacement, or EMA alignment' };
-    if (!isDisplacementDown && !isMicroBOS && !isLiquiditySweep && !isEmaAligned && !isMomentumDown) {
-      return { isValid: false, reason: 'LTF No entry trigger (Displacement, BOS, Sweep, EMA Alignment, or Momentum)' };
+    if (!volumeSpike && !isBearishOrderFlow && !isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep) {
+      return { isValid: false, reason: 'LTF No volume, order flow, EMA, Momentum, or Sweep' };
     }
   }
 

@@ -546,32 +546,7 @@ async function startServer() {
     });
   });
 
-  app.get("/api/telegram/test", async (req, res) => {
-    try {
-      const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-      const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
 
-      if (!botToken || !chatId) {
-        return res.json({ 
-          status: "failed", 
-          error: "Missing credentials", 
-          botTokenResolved: !!botToken, 
-          chatIdResolved: !!chatId 
-        });
-      }
-
-      console.log(`[TEST ENDPOINT] Testing Telegram send to chat: ${chatId}`);
-      const success = await sendTelegramSignal(botToken, chatId, "🧪 <b>Bot Test</b>\n\nThis is a manual test from the /api/telegram/test endpoint. Your Telegram configuration is working!");
-
-      if (success) {
-        res.json({ status: "success", message: "A test message was sent to Telegram." });
-      } else {
-        res.json({ status: "failed", error: "Failed to send message. Check server logs." });
-      }
-    } catch (error: any) {
-      res.json({ status: "error", error: error.message });
-    }
-  });
 
   app.post("/api/telegram/send", async (req, res) => {
     try {
@@ -599,76 +574,7 @@ async function startServer() {
     }
   });
 
-  // ... (debug endpoint remains the same)
-  app.post("/api/telegram/debug", async (req, res) => {
-    try {
-      const { botToken } = req.body;
-      if (!botToken) {
-        return res.status(400).json({ error: "Missing botToken" });
-      }
 
-      const cleanToken = botToken.replace(/^["']|["']$/g, "").trim();
-      const finalToken = cleanToken.toLowerCase().startsWith("bot")
-        ? cleanToken.substring(3)
-        : cleanToken;
-
-      const updatesUrl = `https://api.telegram.org/bot${finalToken}/getUpdates`;
-      const updatesResponse = await fetch(updatesUrl);
-
-      if (!updatesResponse.ok) {
-        const errorText = await updatesResponse.text();
-        return res
-          .status(updatesResponse.status)
-          .json({
-            error: "Failed to fetch updates from Telegram",
-            details: errorText,
-          });
-      }
-
-      const updatesData = await updatesResponse.json();
-
-      if (!updatesData.ok) {
-        return res
-          .status(400)
-          .json({
-            error: "Telegram API returned not ok",
-            details: updatesData,
-          });
-      }
-
-      const recentChats = new Set();
-      const rawChats: any[] = [];
-
-      if (updatesData.result && updatesData.result.length > 0) {
-        updatesData.result.forEach((update: any) => {
-          let chat = null;
-          if (update.message && update.message.chat) chat = update.message.chat;
-          else if (update.channel_post && update.channel_post.chat)
-            chat = update.channel_post.chat;
-          else if (update.my_chat_member && update.my_chat_member.chat)
-            chat = update.my_chat_member.chat;
-
-          if (chat) {
-            recentChats.add(
-              `${chat.title || chat.username || chat.first_name || "Unknown"}: ${chat.id} (Type: ${chat.type})`,
-            );
-            rawChats.push(chat);
-          }
-        });
-      }
-
-      res.json({
-        success: true,
-        message: "Successfully fetched recent activity",
-        foundChats: Array.from(recentChats),
-        rawUpdatesCount: updatesData.result ? updatesData.result.length : 0,
-        rawChats,
-      });
-    } catch (error) {
-      console.error("Error in debug endpoint:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
 
   // Proxy endpoints for frontend to bypass CORS/Adblockers
   app.get("/api/proxy/fapi/*", async (req, res) => {
@@ -1002,7 +908,7 @@ async function startServer() {
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 85;
+      const requiredConfidence = 65;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1263,9 +1169,17 @@ async function startServer() {
             // Upgrade 1: King Filter Application
             if (symbol !== "BTCUSDT") {
               // Altcoin LONG allowed only if BTC not bearish (LONG or NEUTRAL)
-              if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { diagnosticCounts.btcConflict++; continue; }
+              if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { 
+                diagnosticCounts.btcConflict++; 
+                console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
+                continue; 
+              }
               // Altcoin SHORT allowed only if BTC weak (SHORT)
-              if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT") { diagnosticCounts.btcConflict++; continue; }
+              if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT") { 
+                diagnosticCounts.btcConflict++; 
+                console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
+                continue; 
+              }
             }
 
             // 4. 3M Entry (already fetched klines3m)
@@ -1273,7 +1187,11 @@ async function startServer() {
               klines3m,
               mtfAnalysis.signal as "LONG" | "SHORT",
             );
-            if (!ltfValidation.isValid) { diagnosticCounts.ltfInvalid++; continue; }
+            if (!ltfValidation.isValid) { 
+              diagnosticCounts.ltfInvalid++; 
+              console.log(`[Reject] ${symbol}: LTF Invalid (${ltfValidation.reason})`);
+              continue; 
+            }
 
             // Upgrade 3: VWAP & Liquidity Sniping (Limit Entry)
             const closes3m = klines3m.map((k) => k.close);
@@ -1465,12 +1383,7 @@ async function startServer() {
         }
 
         for (const sig of finalSignals) {
-          // if (dailySignalCount >= DAILY_LIMIT) {
-          //   console.log(
-          //     `Daily limit reached (${DAILY_LIMIT}). Skipping signal for ${sig.symbol}`,
-          //   );
-          //   continue;
-          // }
+
 
           const now = Date.now();
           lastSentSignals[sig.signalKey] = {
