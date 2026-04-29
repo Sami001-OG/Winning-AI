@@ -37,9 +37,6 @@ export interface AnalysisResult {
     neutral: string[];
   };
   tp?: number;
-  tp1?: number;
-  tp2?: number;
-  tp3?: number;
   sl?: number;
   suggestedEntry?: number; // Deprecated, keeping for backward compatibility
   limitEntry?: number; // The calculated pullback entry price

@@ -797,10 +797,6 @@ export const analyzeChart = (
     tp = Math.max(0.00000001, tp);
   }
 
-  let tp1: number | undefined;
-  let tp2: number | undefined;
-  let tp3: number | undefined;
-
   // ==========================================
   // SANITY CHECK: LIMIT ENTRY vs STOP LOSS
   // ==========================================
@@ -867,22 +863,6 @@ export const analyzeChart = (
     }
   }
 
-  if (signal !== 'NO TRADE' && tp !== undefined && sl !== undefined) {
-    tp3 = tp;
-    const reward = Math.abs(tp3 - entryPrice);
-
-    // If the total reward is too close to 1:1 (or less), spread them proportionally
-    // to ensure TP1, TP2, and TP3 are always distinct targets.
-    if (reward <= risk * 1.2) {
-      tp1 = signal === 'LONG' ? entryPrice + (reward * 0.33) : entryPrice - (reward * 0.33);
-      tp2 = signal === 'LONG' ? entryPrice + (reward * 0.66) : entryPrice - (reward * 0.66);
-    } else {
-      // Standard: TP1 at 1:1 R:R, TP2 halfway to TP3
-      tp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
-      tp2 = tp1 + ((tp3 - tp1) * 0.5);
-    }
-  }
-
   // Penalize excessive risk
   if (signal !== 'NO TRADE' && risk > 0) {
     const riskPercentage = risk / entryPrice;
@@ -895,11 +875,11 @@ export const analyzeChart = (
     }
 
     // R:R Filter
-    if (tp1) {
-      const reward = Math.abs(tp1 - entryPrice);
+    if (tp !== undefined) {
+      const reward = Math.abs(tp - entryPrice);
       if (reward / risk < 1.0) {
         signal = 'NO TRADE';
-        reason = 'Poor Risk/Reward (under 1:1 to TP1)';
+        reason = 'Poor Risk/Reward (under 1:1)';
       }
     }
   }
@@ -1072,9 +1052,6 @@ export const analyzeChart = (
       neutral: indicators.filter(i => i.signal === 'neutral').map(i => i.name)
     },
     tp,
-    tp1,
-    tp2,
-    tp3,
     sl,
     suggestedEntry: entryPrice, // For backward compatibility
     limitEntry,

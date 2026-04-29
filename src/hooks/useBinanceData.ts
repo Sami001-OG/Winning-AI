@@ -87,7 +87,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
 
     if (!wsCache[key]) {
       const connectWs = () => {
-        const ws = new WebSocket(`wss://fstream.binance.com/market/ws/${key}`);
+        const ws = new WebSocket(`wss://fstream.binance.com/ws/${key}`);
         wsCache[key] = ws;
         
         ws.onopen = () => {
@@ -147,7 +147,14 @@ export const useBinanceData = (symbol: string, interval: string) => {
       }
       
       if (listeners[key]?.length === 0) {
-        wsCache[key]?.close();
+        const ws = wsCache[key];
+        if (ws) {
+          if (ws.readyState === WebSocket.CONNECTING) {
+            ws.onopen = () => ws.close();
+          } else {
+            ws.close();
+          }
+        }
         delete wsCache[key];
         delete listeners[key];
         delete statusListeners[key];

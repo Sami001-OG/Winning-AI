@@ -742,9 +742,7 @@ async function startServer() {
     symbol: string;
     direction: "LONG" | "SHORT";
     entry: number;
-    tp1: number;
-    tp2: number;
-    tp3: number;
+    tp: number;
     sl: number;
     achieved: number;
   }
@@ -1064,12 +1062,12 @@ async function startServer() {
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   } else if (
-                    currentHigh >= activeTrade.tp1
+                    currentHigh >= activeTrade.tp
                   ) {
                     await sendTelegramSignal(
                       botToken,
                       chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG")})`,
+                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "LONG")})`,
                     );
                     delete activeTrades[symbol];
                     tradeClosed = true;
@@ -1087,12 +1085,12 @@ async function startServer() {
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   } else if (
-                    currentLow <= activeTrade.tp1
+                    currentLow <= activeTrade.tp
                   ) {
                     await sendTelegramSignal(
                       botToken,
                       chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp1)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT")})`,
+                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "SHORT")})`,
                     );
                     delete activeTrades[symbol];
                     tradeClosed = true;
@@ -1244,41 +1242,39 @@ async function startServer() {
               ) {
                 const entryPrice =
                   klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0;
-                const tp1 = mtfAnalysis.tp1 || 0;
-                const tp2 = mtfAnalysis.tp2 || 0;
-                const tp3 = mtfAnalysis.tp3 || mtfAnalysis.tp || 0;
+                const tp = mtfAnalysis.tp || 0;
                 const sl = mtfAnalysis.sl || 0;
 
                 // --- STALE SIGNAL PREVENTION ---
-                // If the current 3m price has already hit TP1 or SL (calculated from 15m), it's a stale signal.
+                // If the current 3m price has already hit TP or SL (calculated from 15m), it's a stale signal.
                 let isStale = false;
 
                 // 1. Current Price Check & R:R Check
                 const risk = Math.abs(entryPrice - sl);
-                const rewardToTp1 = Math.abs(tp1 - entryPrice);
+                const rewardToTp = Math.abs(tp - entryPrice);
 
                 if (mtfAnalysis.signal === "LONG") {
-                  if (entryPrice >= tp1 || entryPrice <= sl) isStale = true;
-                  if (rewardToTp1 < risk * 0.5) isStale = true; // Price already moved too far up
+                  if (entryPrice >= tp || entryPrice <= sl) isStale = true;
+                  if (rewardToTp < risk * 0.5) isStale = true; // Price already moved too far up
                 } else if (mtfAnalysis.signal === "SHORT") {
-                  if (entryPrice <= tp1 || entryPrice >= sl) isStale = true;
-                  if (rewardToTp1 < risk * 0.5) isStale = true; // Price already moved too far down
+                  if (entryPrice <= tp || entryPrice >= sl) isStale = true;
+                  if (rewardToTp < risk * 0.5) isStale = true; // Price already moved too far down
                 }
 
                 // 2. Extended Wick Check (Last 45 minutes)
-                // If the price has already wicked to TP1 or SL recently, the move is over.
+                // If the price has already wicked to TP or SL recently, the move is over.
                 const recentCandles = klines3m.slice(-15);
                 for (const c of recentCandles) {
                   if (mtfAnalysis.signal === "LONG") {
-                    if (c.high >= tp1 || c.low <= sl) isStale = true;
+                    if (c.high >= tp || c.low <= sl) isStale = true;
                   } else if (mtfAnalysis.signal === "SHORT") {
-                    if (c.low <= tp1 || c.high >= sl) isStale = true;
+                    if (c.low <= tp || c.high >= sl) isStale = true;
                   }
                 }
 
                 if (isStale) {
                   console.log(
-                    `Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Entry: ${entryPrice}, TP1: ${tp1}, SL: ${sl}`,
+                    `Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Entry: ${entryPrice}, TP: ${tp}, SL: ${sl}`,
                   );
                   continue;
                 }
@@ -1289,9 +1285,7 @@ async function startServer() {
                   signalKey,
                   analysis: mtfAnalysis,
                   entryPrice,
-                  tp1,
-                  tp2,
-                  tp3,
+                  tp,
                   sl,
                   control1H,
                   sessionName,
@@ -1353,9 +1347,7 @@ async function startServer() {
             symbol: sig.symbol,
             direction: sig.analysis.signal as "LONG" | "SHORT",
             entry: sig.entryPrice,
-            tp1: sig.tp1,
-            tp2: sig.tp2,
-            tp3: sig.tp3,
+            tp: sig.tp,
             sl: sig.sl,
             achieved: 0,
           };
@@ -1391,7 +1383,7 @@ ${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
 🕒 <b>Session:</b> ${sig.sessionName}
 
 🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>${limitEntryStr}
-✅ <b>Target:</b> <code>${formatPrice(sig.tp1)}</code>
+✅ <b>Target:</b> <code>${formatPrice(sig.tp)}</code>
 ❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>
 
 🧠 <b>Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>

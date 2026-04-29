@@ -211,14 +211,19 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
   }, [symbol]);
 
   useEffect(() => {
-    if (data.length > 0) {
-      setAnalysis(
-        analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol, interval),
-      );
-    } else {
+    if (data.length === 0) {
       setAnalysis(null);
+      return;
     }
-  }, [data, trades, symbol]);
+
+    const handler = setTimeout(() => {
+      setAnalysis(
+        analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol, interval)
+      );
+    }, 500); // Debounce to prevent UI freezing on high-frequency WS updates
+
+    return () => clearTimeout(handler);
+  }, [data, trades, symbol, interval]);
 
   useEffect(() => {
     if (["5m", "15m", "1h", "4h"].includes(interval)) {
