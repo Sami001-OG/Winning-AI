@@ -1191,8 +1191,8 @@ async function startServer() {
                     const oiChange = (curr - prev) / prev;
                     if (oiChange > 0.001) {
                       // > 0.1% increase in 15m
-                      mtfAnalysis.confidence += 5;
-                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising (+5% Confidence)`;
+                      // mtfAnalysis.confidence += 5;
+                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising`;
                     }
                   }
                 }
@@ -1204,14 +1204,14 @@ async function startServer() {
                 const fundingRate = parseFloat(frData.lastFundingRate);
 
                 if (mtfAnalysis.signal === "LONG" && fundingRate < -0.0001) {
-                  mtfAnalysis.confidence += 8;
-                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate (+8% Confidence)`;
+                  // mtfAnalysis.confidence += 8;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate`;
                 } else if (
                   mtfAnalysis.signal === "SHORT" &&
                   fundingRate > 0.0005
                 ) {
-                  mtfAnalysis.confidence += 8;
-                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate (+8% Confidence)`;
+                  // mtfAnalysis.confidence += 8;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate`;
                 }
               }
             } catch (e) {
@@ -1220,6 +1220,7 @@ async function startServer() {
             (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
 
             // Cap confidence at 100 after premium upgrades
+            mtfAnalysis.confidence = 83; // User requested exactly 83
             mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
 
             currentFrontendTrades.push({

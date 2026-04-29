@@ -45,8 +45,19 @@ export const useBinanceData = (symbol: string, interval: string) => {
         }));
 
         if (isMounted) {
-          dataCache[key] = candles;
-          setData(candles);
+          setData(prev => {
+            // If WS data already populated some candles while we were fetching
+            if (prev.length > 0 && prev.length < 500) {
+              const lastHistoricalTime = candles[candles.length - 1].time;
+              // Add any WS candles that are newer than the latest historical candle
+              const newerWsCandles = prev.filter(c => c.time > lastHistoricalTime);
+              const merged = [...candles, ...newerWsCandles];
+              dataCache[key] = merged;
+              return merged;
+            }
+            dataCache[key] = candles;
+            return candles;
+          });
         }
       } catch (err: any) {
         if (isMounted) setError(err.message);
@@ -61,14 +72,16 @@ export const useBinanceData = (symbol: string, interval: string) => {
     const listener = (candle: Candle) => {
       if (isMounted) {
         setData(prev => {
-          // Ignore WS updates until historical data is loaded to prevent the "single gigantic candle" bug
-          if (prev.length === 0) return prev;
+          if (prev.length === 0) {
+            dataCache[key] = [candle];
+            return [candle];
+          }
           
           const newData = [...prev];
           const lastCandle = newData[newData.length - 1];
           if (lastCandle && lastCandle.time === candle.time) {
             newData[newData.length - 1] = candle;
-          } else {
+          } else if (lastCandle && candle.time > lastCandle.time) {
             newData.push(candle);
             if (newData.length > 500) newData.shift();
           }
@@ -105,7 +118,6 @@ export const useBinanceData = (symbol: string, interval: string) => {
         };
 
         ws.onerror = (error) => {
-          console.error(`WebSocket error for ${key}:`, error);
           statusListeners[key]?.forEach(l => l(false));
         };
 

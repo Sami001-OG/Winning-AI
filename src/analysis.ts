@@ -1041,6 +1041,11 @@ export const analyzeChart = (
     description: 'Average True Range'
   });
 
+  // User requested confidence % to be 83
+  if (signal !== 'NO TRADE') {
+    confidence = 83;
+  }
+
   return {
     signal,
     confidence,
