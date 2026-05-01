@@ -145,6 +145,28 @@ export function useSignalScanner() {
                   if (arr.length > 500) arr.shift();
                 }
               }
+
+              // INSTANT TP/SL CHECK EVERY TICK
+              if (activeTrades.current[s]) {
+                const trade = activeTrades.current[s];
+                let hitTp = false; let hitSl = false;
+                
+                if (trade.direction === 'LONG') {
+                   if (candle.high >= trade.tp) hitTp = true;
+                   if (candle.low <= trade.sl) hitSl = true;
+                } else {
+                   if (candle.low <= trade.tp) hitTp = true;
+                   if (candle.high >= trade.sl) hitSl = true;
+                }
+
+                if (hitTp || hitSl) {
+                    const exitPrice = hitTp ? trade.tp : trade.sl;
+                    const pnl = (trade.direction === 'LONG') ? ((exitPrice - trade.entry)/trade.entry)*100*10 : ((trade.entry - exitPrice)/trade.entry)*100*10;
+                    sendTelegramSignal(`🚨 <b>TRADE CLOSED</b> 🚨\n\n🪙 <b>Pair:</b> #${s}\n📋 Status: ${hitTp ? 'Take Profit Hit ✅' : 'Stop Loss Hit ❌'}\n💰 PnL: ${pnl.toFixed(2)}% (10x)`);
+                    delete activeTrades.current[s];
+                }
+              }
+
             }
           } catch (e) {}
         };
@@ -188,37 +210,20 @@ export function useSignalScanner() {
         // Monitor Active Trades
         if (activeTrades.current[symbol] && klines3m.length > 0) {
             const trade = activeTrades.current[symbol];
-            const currentClose = klines3m[klines3m.length - 1].close;
-            let hitTp = false; let hitSl = false;
-            // Use 2% trailing buffer to avoid premature exits if slightly spiked
-            if (trade.direction === 'LONG') {
-               if (currentClose >= trade.tp) hitTp = true;
-               if (currentClose <= trade.sl) hitSl = true;
-            } else {
-               if (currentClose <= trade.tp) hitTp = true;
-               if (currentClose >= trade.sl) hitSl = true;
-            }
-
-            if (hitTp || hitSl) {
-                const pnl = (trade.direction === 'LONG') ? ((currentClose - trade.entry)/trade.entry)*100*10 : ((trade.entry - currentClose)/trade.entry)*100*10;
-                sendTelegramSignal(`🚨 <b>TRADE CLOSED</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📋 Status: ${hitTp ? 'Take Profit Hit ✅' : 'Stop Loss Hit ❌'}\n💰 PnL: ${pnl.toFixed(2)}% (10x)`);
-                delete activeTrades.current[symbol];
-            } else {
-                // Not closed yet, keep it in the UI as a super-high confidence signal!
-                const cachedAnalysis = analyzeChart(klines15m, DEFAULT_RELIABILITY, [], symbol, '15m');
-                cachedAnalysis.confidence = 94; // Display consistently high for active trades
-                cachedAnalysis.signal = trade.direction as 'LONG' | 'SHORT';
-                cachedAnalysis.suggestedEntry = trade.entry;
-                cachedAnalysis.tp = trade.tp;
-                cachedAnalysis.sl = trade.sl;
-                allSignals.push({
-                   symbol,
-                   analysis: cachedAnalysis,
-                   lastPrice: lastClose,
-                   entryDirection: 'none'
-                });
-                continue; // Skip creating a NEW signal, we already have an active one
-            }
+            // Not closed yet, keep it in the UI as a super-high confidence signal!
+            const cachedAnalysis = analyzeChart(klines15m, DEFAULT_RELIABILITY, [], symbol, '15m');
+            cachedAnalysis.confidence = 94; // Display consistently high for active trades
+            cachedAnalysis.signal = trade.direction as 'LONG' | 'SHORT';
+            cachedAnalysis.suggestedEntry = trade.entry;
+            cachedAnalysis.tp = trade.tp;
+            cachedAnalysis.sl = trade.sl;
+            allSignals.push({
+               symbol,
+               analysis: cachedAnalysis,
+               lastPrice: lastClose,
+               entryDirection: 'none'
+            });
+            continue; // Skip creating a NEW signal, we already have an active one
         }
 
         const htfDirection = getHTFDirection(klines4h);
@@ -243,7 +248,7 @@ export function useSignalScanner() {
                entryDirection: 'none'
              });
 
-             if ((!lastSent || now - lastSent.timestamp > COOLDOWN_MS) && dailyTracker.current.count < DAILY_LIMIT) {
+             if (!lastSent || now - lastSent.timestamp > COOLDOWN_MS) {
                  const typeIcon = mtfAnalysis.signal === "LONG" ? "📈" : "📉";
                  const message = `🤖 <b>ENDELLION SECURE SIGNAL</b> 🤖\n\n🪙 <b>Pair:</b> #${symbol}\n${typeIcon} <b>Type:</b> ${mtfAnalysis.signal}\n⚡ <b>Confidence:</b> ${mtfAnalysis.confidence.toFixed(1)}%\n\n🎯 <b>Entry Zone:</b> <code>${formatPrice(mtfAnalysis.suggestedEntry || lastClose)}</code>\n💰 <b>Take Profit:</b> <code>${mtfAnalysis.tp ? formatPrice(mtfAnalysis.tp) : "N/A"}</code>\n🛑 <b>Stop Loss:</b> <code>${mtfAnalysis.sl ? formatPrice(mtfAnalysis.sl) : "N/A"}</code>\n\n⚠️ <i>Risk Warning: High leverage = high risk.</i>`;
                  
