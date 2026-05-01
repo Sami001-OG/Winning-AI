@@ -199,7 +199,8 @@ export const analyzeChart = (
     const macdHistValues = macd15m.map(m => m.histogram || 0);
     macdDivergence = detectMacdDivergences(data, macdHistValues);
     
-    const st15m = calculateSupertrend(data, atr, 7, 3);
+    const atr7 = calculateATR(highs, lows, closes, 7);
+    const st15m = calculateSupertrend(data, atr7, 7, 3);
     lastSupertrend = st15m[st15m.length - 1];
     supertrendSignal = lastSupertrend?.trend === 1 ? 'bullish' : lastSupertrend?.trend === -1 ? 'bearish' : 'neutral';
   }
@@ -626,16 +627,13 @@ export const analyzeChart = (
   } else if (confidence >= 70) { 
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Strong ${signal} setup. High confluence.`;
-  } else if (confidence >= 45) { // Lowered to 45 to get more trades flowing
-    signal = finalScore > 0 ? 'LONG' : 'SHORT';
-    reason = `Valid ${signal} setup. Moderate confluence.`;
   } else {
     signal = 'NO TRADE';
     reason = 'Awaiting high-probability setup.';
   }
 
   // Reject trades in extreme low volatility
-  if (lastAtr / lastClose < 0.0005) { // Lowered the threshold to allow more trades
+  if (lastAtr / lastClose < 0.0001) { // Extremely low
     signal = 'NO TRADE';
     confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
@@ -739,62 +737,41 @@ export const analyzeChart = (
   const swingHigh = Math.max(...recentCandles.map(c => c.high));
   const swingLow = Math.min(...recentCandles.map(c => c.low));
 
-  // For targets, look further back for major liquidity pools
-  const targetLookback = data.slice(-Math.min(50, data.length));
-  const majorSwingHigh = Math.max(...targetLookback.map(c => c.high));
-  const majorSwingLow = Math.min(...targetLookback.map(c => c.low));
+  const entryCandle = data[data.length - 1];
+  const lastCloseVal = entryCandle.close;
+  
+  // Extra FOMO Check
+  const isNearHigh = Math.abs(lastCloseVal - swingHigh) < (lastAtr * 1.5);
+  const isNearLow = Math.abs(lastCloseVal - swingLow) < (lastAtr * 1.5);
+  
+  if (signal === 'LONG' && isNearHigh) {
+    signal = 'NO TRADE';
+    reason = 'FOMO Filter: Price too close to recent high';
+  } else if (signal === 'SHORT' && isNearLow) {
+    signal = 'NO TRADE';
+    reason = 'FOMO Filter: Price too close to recent low';
+  }
 
+  const entryRange = Math.max(lastAtr * 0.5, entryCandle.high - entryCandle.low);
+  
   let risk = 0;
   if (signal === 'LONG') {
-    tpSlStrategy = 'Structural Invalidation (Sweep + ATR Buffer)';
-    // Find the true swing low from the recent structure
-    const recentLows = data.slice(-15).map(d => d.low);
-    const trueSwingLow = Math.min(...recentLows);
+    tpSlStrategy = 'Volatility Based 1:1 (4 ATR)';
     
-    // Hard stop beyond the last valid market structure with a small ATR buffer
-    sl = trueSwingLow - (lastAtr * 0.5);
-    
-    // Fallback only if the structural stop is somehow above the entry price
-    if (sl >= entryPrice) sl = entryPrice - (lastAtr * 1.5);
-
+    // Fixed stop loss
+    sl = entryPrice - (lastAtr * 4.0);
     risk = entryPrice - sl;
-
-    // DYNAMIC INTRADAY TP LOGIC (LONG)
-    // Option 1: Fixed R:R Cap (Max 1:2 for intraday realism)
-    const maxRrTp = entryPrice + (risk * 2.0);
-    // Option 2: ATR Volatility Cap (Max 8x 15m ATR for a single session)
-    const maxAtrTp = entryPrice + (lastAtr * 8);
-    // Option 3: Market Structure Target (Next major liquidity pool)
-    const structureTp = Math.max(majorSwingHigh, volProfile.vaHigh);
-
-    // TP3 is the most realistic of the three, ensuring at least 1.5:1 R:R if possible
-    tp = Math.min(maxRrTp, maxAtrTp, Math.max(entryPrice + (risk * 1.5), structureTp));
-
+    // 1.0 R:R
+    tp = entryPrice + (lastAtr * 4.0);
+    
   } else if (signal === 'SHORT') {
-    tpSlStrategy = 'Structural Invalidation (Sweep + ATR Buffer)';
-    // Find the true swing high from the recent structure
-    const recentHighs = data.slice(-15).map(d => d.high);
-    const trueSwingHigh = Math.max(...recentHighs);
+    tpSlStrategy = 'Volatility Based 1:1 (4 ATR)';
     
-    // Hard stop beyond the last valid market structure with a small ATR buffer
-    sl = trueSwingHigh + (lastAtr * 0.5);
-    
-    // Fallback only if the structural stop is somehow below the entry price
-    if (sl <= entryPrice) sl = entryPrice + (lastAtr * 1.5);
-
+    // Fixed stop loss
+    sl = entryPrice + (lastAtr * 4.0);
     risk = sl - entryPrice;
-
-    // DYNAMIC INTRADAY TP LOGIC (SHORT)
-    // Option 1: Fixed R:R Cap (Max 1:2 for intraday realism)
-    const maxRrTp = entryPrice - (risk * 2.0);
-    // Option 2: ATR Volatility Cap (Max 8x 15m ATR for a single session)
-    const maxAtrTp = entryPrice - (lastAtr * 8);
-    // Option 3: Market Structure Target (Next major liquidity pool)
-    const structureTp = Math.min(majorSwingLow, volProfile.vaLow);
-
-    // TP3 is the most realistic of the three, ensuring at least 1.5:1 R:R if possible
-    tp = Math.max(maxRrTp, maxAtrTp, Math.min(entryPrice - (risk * 1.5), structureTp));
-    tp = Math.max(0.00000001, tp);
+    // 1.0 R:R
+    tp = Math.max(0.00000001, entryPrice - (lastAtr * 4.0));
   }
 
   // ==========================================
@@ -875,13 +852,13 @@ export const analyzeChart = (
     }
 
     // R:R Filter
-    if (tp !== undefined) {
-      const reward = Math.abs(tp - entryPrice);
-      if (reward / risk < 1.0) {
-        signal = 'NO TRADE';
-        reason = 'Poor Risk/Reward (under 1:1)';
-      }
-    }
+    // if (tp !== undefined) {
+    //   const reward = Math.abs(tp - entryPrice);
+    //   if (reward / risk < 1.0) {
+    //     signal = 'NO TRADE';
+    //     reason = 'Poor Risk/Reward (under 1:1)';
+    //   }
+    // }
   }
 
   // Liquidity Zone Filter
@@ -895,8 +872,8 @@ export const analyzeChart = (
     const isNearLow = Math.abs(lastClose - lowestLow) < zoneThreshold;
 
     if (!isNearHigh && !isNearLow) {
-      signal = 'NO TRADE';
-      reason = 'Not near strong liquidity zone (Swing High/Low)';
+      confidence *= 0.8;
+      reason += ' | Not near strong liquidity zone';
     }
   }
 
@@ -1041,10 +1018,10 @@ export const analyzeChart = (
     description: 'Average True Range'
   });
 
-  // User requested confidence % to be 83
-  if (signal !== 'NO TRADE') {
-    confidence = 83;
-  }
+  // Remove hardcoded confidence
+  // if (signal !== 'NO TRADE') {
+  //   confidence = 83;
+  // }
 
   return {
     signal,

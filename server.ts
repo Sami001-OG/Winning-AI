@@ -378,7 +378,7 @@ function initBinanceWs() {
           arr[arr.length - 1] = candleData;
         } else if (last && openTime > last.time) {
           arr.push(candleData);
-          if (arr.length > 500) arr.shift();
+          if (arr.length > 1500) arr.shift();
         } else if (!last) {
           arr.push(candleData);
         }
@@ -466,14 +466,14 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
   
   // If we have 1m data, we can aggregate
   if (tf !== '1m' && klineCache[symbol]['1m'] && klineCache[symbol]['1m'].length >= 240) {
-    return aggregateCandles(klineCache[symbol]['1m'], tf).slice(-limit);
+    return aggregateCandles(klineCache[symbol]['1m'], tf).slice(-1500);
   }
 
   if (!klineCache[symbol][tf]) {
     try {
       console.log(`[REST API] Fetching warm-up data for ${symbol} ${tf}`);
       const res = await fetchWithTimeout(
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=1500&_t=${Date.now()}`,
       );
       const data = await res.json();
 
@@ -519,7 +519,7 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
     }
   }
   
-  return klineCache[symbol][tf].slice(-limit);
+  return klineCache[symbol][tf].slice(-1500);
 }
 
 let globalFrontendTrades: any[] = [];
@@ -537,16 +537,14 @@ async function startServer() {
   });
 
   app.get("/api/top-trades", (req, res) => {
-    res.json({ signals: globalFrontendTrades });
+    res.json({ signals: [] }); // Now handled via frontend hook
   });
 
   app.get("/api/scanner-status", (req, res) => {
     res.json({
-      lastScanMetrics
+      lastScanMetrics: { status: "local_scanning_active" }
     });
   });
-
-
 
   app.post("/api/telegram/send", async (req, res) => {
     try {
@@ -1430,7 +1428,7 @@ ${logicStr}`;
       setTimeout(runBackgroundLoop, 60000); // Check every minute
     }
   };
-  runBackgroundLoop();
+  // runBackgroundLoop(); // Disabled, running in frontend now.
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -1449,7 +1447,7 @@ ${logicStr}`;
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    initBinanceWs();
+    // initBinanceWs() is disabled since frontend now handles it
   });
 }
 

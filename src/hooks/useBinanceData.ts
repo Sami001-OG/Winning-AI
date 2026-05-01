@@ -30,7 +30,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
 
       try {
         // Use Futures API to match the rest of the app
-        const response = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=500`);
+        const response = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=1500`);
         if (!response.ok) throw new Error('Failed to fetch data');
         
         const rawData = await response.json();
@@ -47,7 +47,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
         if (isMounted) {
           setData(prev => {
             // If WS data already populated some candles while we were fetching
-            if (prev.length > 0 && prev.length < 500) {
+            if (prev.length > 0 && prev.length < 1500) {
               const lastHistoricalTime = candles[candles.length - 1].time;
               // Add any WS candles that are newer than the latest historical candle
               const newerWsCandles = prev.filter(c => c.time > lastHistoricalTime);
@@ -83,7 +83,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
             newData[newData.length - 1] = candle;
           } else if (lastCandle && candle.time > lastCandle.time) {
             newData.push(candle);
-            if (newData.length > 500) newData.shift();
+            if (newData.length > 1500) newData.shift();
           }
           dataCache[key] = newData;
           return newData;

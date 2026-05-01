@@ -104,9 +104,9 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
 
   // 5. Divergence (Removed from 4h, handled in 15m)
 
-  // Require a strong conviction for HTF trend
-  if (longScore >= 3.0 && shortScore <= 3.5) return 'LONG';
-  if (shortScore >= 3.0 && longScore <= 3.5) return 'SHORT';
+  // Require a strong conviction for HTF trend, and ensure it strictly beats the opposing side
+  if (longScore >= 2.0 && longScore > shortScore) return 'LONG';
+  if (shortScore >= 2.0 && shortScore > longScore) return 'SHORT';
   
   return 'NEUTRAL';
 };
@@ -130,13 +130,13 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
 
   if (htfBias === 'LONG') {
     // VETO: Strong counter-trend momentum (Dark Red MACD)
-    if (hist < 0 && hist < prevHist) {
+    if (hist < 0 && hist < prevHist && hist < -0.05) {
       return { state: 'VETO', reason: 'Strong Bearish Pullback (Dark Red MACD)' };
     }
     
     // NEW VETO: RSI too high (late to the party)
-    if (lastRsi > 65) {
-      return { state: 'VETO', reason: '1H RSI Overbought (>65) - Too late to enter LONG' };
+    if (lastRsi > 85) {
+      return { state: 'VETO', reason: '1H RSI Overbought (>85) - Too late to enter LONG' };
     }
     
     // CONTINUATION: Aligned momentum (Dark Green MACD), RSI > 50, Price > EMAs
@@ -156,13 +156,13 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
   } else {
     // SHORT BIAS
     // VETO: Strong counter-trend momentum (Dark Green MACD)
-    if (hist > 0 && hist > prevHist) {
+    if (hist > 0 && hist > prevHist && hist > 0.05) {
       return { state: 'VETO', reason: 'Strong Bullish Pullback (Dark Green MACD)' };
     }
     
     // NEW VETO: RSI too low (late to the party)
-    if (lastRsi < 25) {
-      return { state: 'VETO', reason: '1H RSI Oversold (<25) - Too late to enter SHORT' };
+    if (lastRsi < 15) {
+      return { state: 'VETO', reason: '1H RSI Oversold (<15) - Too late to enter SHORT' };
     }
     
     // CONTINUATION: Aligned momentum (Dark Red MACD), RSI < 50, Price < EMAs

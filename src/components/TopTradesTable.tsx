@@ -1,59 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Trade } from '../types';
 import { TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Lock, Unlock } from 'lucide-react';
 import { formatPrice } from '../utils/format';
-
-interface TradeSignal {
-  symbol: string;
-  analysis: any;
-  lastPrice: number;
-  entryDirection: 'up' | 'down' | 'none';
-}
+import { useSignalScanner } from '../hooks/useSignalScanner';
 
 interface TopTradesTableProps {
   trades: Trade[]; // Kept for prop compatibility
 }
 
 export const TopTradesTable: React.FC<TopTradesTableProps> = () => {
-  const [signals, setSignals] = useState<TradeSignal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const { signals, loading, error, lastUpdate } = useSignalScanner();
   const [frozenEntries, setFrozenEntries] = useState<Record<string, number>>({});
   
-  useEffect(() => {
-    let isMounted = true;
-    let pollInterval: any;
-
-    const fetchSignals = async () => {
-      try {
-        const response = await fetch('/api/top-trades');
-        if (!response.ok) throw new Error('Failed to fetch top trades from backend');
-        const data = await response.json();
-        
-        if (isMounted) {
-          setSignals(data.signals || []);
-          setLastUpdate(new Date());
-          setError(null);
-          setLoading(false);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          console.error("Error fetching signals:", err);
-          setError(err.message);
-        }
-      }
-    };
-
-    fetchSignals();
-    pollInterval = setInterval(fetchSignals, 5000); // Poll every 5 seconds for fast updates
-
-    return () => {
-      isMounted = false;
-      clearInterval(pollInterval);
-    };
-  }, []);
-
   const toggleFreeze = (symbol: string) => {
     setFrozenEntries(prev => {
       const isFrozen = !!prev[symbol];

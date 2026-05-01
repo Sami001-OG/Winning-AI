@@ -177,7 +177,7 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
     for (const tf of tfs) {
       try {
         const response = await fetchWithRetry(
-          `https://api.binance.com/api/v3/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=300`,
+          `https://fapi.binance.com/fapi/v1/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=1500`,
         );
         if (response.ok) {
           const data = await response.json();

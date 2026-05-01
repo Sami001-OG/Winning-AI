@@ -57,9 +57,9 @@ export const calculateSupertrend = (data: Candle[], atrArray: number[], period: 
       finalLowerband = prevFinalLowerband;
     }
 
-    if (prevTrend === 1 && data[i].close <= finalUpperband) {
+    if (prevTrend === 1 && data[i].close < finalLowerband) {
       trend = -1;
-    } else if (prevTrend === -1 && data[i].close >= finalLowerband) {
+    } else if (prevTrend === -1 && data[i].close > finalUpperband) {
       trend = 1;
     } else {
       trend = prevTrend;
