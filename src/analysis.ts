@@ -33,7 +33,9 @@ export const analyzeChart = (
   trades: Trade[] = [],
   symbol: string,
   timeframe: string = '15m',
-  customWeights?: number[]
+  customWeights?: number[],
+  fomoMultiplier: number = 0.2, // Loose FOMO filter
+  confMult: number = 80
 ): AnalysisResult => {
   const closes = data.map(d => d.close);
   const highs = data.map(d => d.high);
@@ -483,7 +485,7 @@ export const analyzeChart = (
   let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
   // Base confidence squeezed to 85 max so that bonuses are required to reach >90
-  let confidence = Math.abs(finalScore) * 85;
+  let confidence = Math.abs(finalScore) * confMult;
   
   // Squeeze Multiplier
   if (isSqueeze && orderFlow.netFlow > 0 && finalScore > 0) {
@@ -729,9 +731,9 @@ export const analyzeChart = (
   // ==========================================
   let tp: number | undefined;
   let sl: number | undefined;
-  let tpSlStrategy = 'ATR Multiplier';
+  let tpSlStrategy = 'Dynamic';
 
-  // Calculate recent swing high/low for structure-based stops
+  // Calculate recent swing high/low for structure-based stops and targets
   const lookbackPeriod = Math.min(20, data.length);
   const recentCandles = data.slice(-lookbackPeriod);
   const swingHigh = Math.max(...recentCandles.map(c => c.high));
@@ -741,8 +743,9 @@ export const analyzeChart = (
   const lastCloseVal = entryCandle.close;
   
   // Extra FOMO Check
-  const isNearHigh = Math.abs(lastCloseVal - swingHigh) < (lastAtr * 1.5);
-  const isNearLow = Math.abs(lastCloseVal - swingLow) < (lastAtr * 1.5);
+  const fomoMultiplierToUse = fomoMultiplier ?? 0.2; // Default to 0.2 if not set (loose FOMO)
+  const isNearHigh = Math.abs(lastCloseVal - swingHigh) < (lastAtr * fomoMultiplierToUse);
+  const isNearLow = Math.abs(lastCloseVal - swingLow) < (lastAtr * fomoMultiplierToUse);
   
   if (signal === 'LONG' && isNearHigh) {
     signal = 'NO TRADE';
@@ -755,23 +758,85 @@ export const analyzeChart = (
   const entryRange = Math.max(lastAtr * 0.5, entryCandle.high - entryCandle.low);
   
   let risk = 0;
-  if (signal === 'LONG') {
-    tpSlStrategy = 'Volatility Based 1:1 (4 ATR)';
+  
+  // Dynamic Trade Condition Evaluator
+  const computeDynamicStops = () => {
+    let calcSl = 0;
+    let calcTp = 0;
+    let strategyDesc = '';
     
-    // Fixed stop loss
-    sl = entryPrice - (lastAtr * 4.0);
-    risk = entryPrice - sl;
-    // 1.0 R:R
-    tp = entryPrice + (lastAtr * 4.0);
+    const atrBonus = isHighVolatility ? 1.5 : 1.0;
     
-  } else if (signal === 'SHORT') {
-    tpSlStrategy = 'Volatility Based 1:1 (4 ATR)';
-    
-    // Fixed stop loss
-    sl = entryPrice + (lastAtr * 4.0);
-    risk = sl - entryPrice;
-    // 1.0 R:R
-    tp = Math.max(0.00000001, entryPrice - (lastAtr * 4.0));
+    if (isTrending && Math.abs(layer4Score) > 0.5) {
+      // 3. ATR Volatility-Based TP/SL / 25. Trend Continuation TP/SL
+      // Trade condition: Trending heavily with strong volume
+      const atrMultSl = 2.5 * atrBonus;
+      const atrMultTp = 3.5 * atrBonus;
+      calcSl = signal === 'LONG' ? entryPrice - (lastAtr * atrMultSl) : entryPrice + (lastAtr * atrMultSl);
+      calcTp = signal === 'LONG' ? entryPrice + (lastAtr * atrMultTp) : Math.max(0.00000001, entryPrice - (lastAtr * atrMultTp));
+      strategyDesc = 'Trend Continuation (ATR Volatility-Based)';
+    } else if (isSideways) {
+      // 24. Mean Reversion TP/SL / 32. Bollinger Band Exit / 19. Channel Boundary
+      // Trade condition: Sideways and ranging
+      if (signal === 'LONG') {
+        calcSl = Math.min(swingLow - (lastAtr * 0.5), (lastBB?.lower || entryPrice - lastAtr));
+        calcTp = (volProfile && volProfile.pocPrice > entryPrice) ? volProfile.pocPrice : (lastBB?.upper || entryPrice + lastAtr*1.5);
+        if (calcTp <= entryPrice) calcTp = entryPrice + (lastAtr * 1.5);
+      } else {
+        calcSl = Math.max(swingHigh + (lastAtr * 0.5), (lastBB?.upper || entryPrice + lastAtr));
+        calcTp = (volProfile && volProfile.pocPrice < entryPrice) ? volProfile.pocPrice : (lastBB?.lower || entryPrice - lastAtr*1.5);
+        if (calcTp >= entryPrice) calcTp = entryPrice - (lastAtr * 1.5);
+        calcTp = Math.max(0.00000001, calcTp);
+      }
+      strategyDesc = 'Mean Reversion (Bollinger/Volume POC)';
+    } else if (Math.abs(structureScore) > 0.5) {
+      // 4. Market Structure TP/SL / 13. Liquidity-Based TP/SL
+      // Trade condition: Structure driven (Fakeouts, sweeps)
+      if (signal === 'LONG') {
+         calcSl = swingLow - (lastAtr * 0.5);
+         calcTp = swingHigh + (lastAtr * 1.0); // Target liquidity above recent high
+         if (calcTp <= entryPrice) calcTp = entryPrice + Math.abs(entryPrice - calcSl) * 2;
+      } else {
+         calcSl = swingHigh + (lastAtr * 0.5);
+         calcTp = swingLow - (lastAtr * 1.0); // Target liquidity below recent low
+         if (calcTp >= entryPrice) calcTp = entryPrice - Math.abs(calcSl - entryPrice) * 2;
+         calcTp = Math.max(0.00000001, calcTp);
+      }
+      strategyDesc = 'Market Structure (Liquidity-Based)';
+    } else {
+      // 2. Risk-Reward Ratio TP/SL
+      // Fallback: Fixed R:R based on confidence
+      const targetRr = confidence >= 80 ? 2.0 : 1.5;
+      const fallbackSlAtr = 2.0 * atrBonus;
+      calcSl = signal === 'LONG' ? entryPrice - (lastAtr * fallbackSlAtr) : entryPrice + (lastAtr * fallbackSlAtr);
+      const r = Math.abs(entryPrice - calcSl);
+      calcTp = signal === 'LONG' ? entryPrice + (r * targetRr) : Math.max(0.00000001, entryPrice - (r * targetRr));
+      strategyDesc = `Risk-Reward Ratio (${targetRr}R)`;
+    }
+
+    // Enforce Minimum Distance Constraints (Anti-chop)
+    const minDistance = lastAtr * 0.8;
+    const calcRisk = Math.abs(entryPrice - calcSl);
+    if (calcRisk < minDistance) {
+       if (signal === 'LONG') {
+         calcSl = entryPrice - minDistance;
+         calcTp = Math.max(calcTp, entryPrice + minDistance * 1.5);
+       } else {
+         calcSl = entryPrice + minDistance;
+         calcTp = Math.min(calcTp, Math.max(0.00000001, entryPrice - minDistance * 1.5));
+       }
+       strategyDesc += ' (Adjusted for minimum ATR)';
+    }
+
+    return { calcSl, calcTp, strategyDesc };
+  };
+
+  if (signal !== 'NO TRADE') {
+    const { calcSl, calcTp, strategyDesc } = computeDynamicStops();
+    sl = calcSl;
+    tp = calcTp;
+    tpSlStrategy = strategyDesc;
+    risk = Math.abs(entryPrice - sl);
   }
 
   // ==========================================
