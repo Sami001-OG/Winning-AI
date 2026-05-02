@@ -1428,7 +1428,7 @@ ${logicStr}`;
       setTimeout(runBackgroundLoop, 60000); // Check every minute
     }
   };
-  // runBackgroundLoop(); // Disabled, running in frontend now.
+  runBackgroundLoop(); // Enable 24/7 background Telegram scanning
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

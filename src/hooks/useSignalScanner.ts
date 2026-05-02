@@ -42,15 +42,7 @@ export function useSignalScanner() {
     return p.toFixed(2);
   };
   
-  const sendTelegramSignal = async (message: string, imageUrl?: string) => {
-    try {
-       await fetch('/api/telegram/send', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ message, imageUrl })
-       });
-    } catch(e) {}
-  };
+  // Telegram sending removed from frontend
 
   useEffect(() => {
     let isMounted = true;
@@ -146,26 +138,7 @@ export function useSignalScanner() {
                 }
               }
 
-              // INSTANT TP/SL CHECK EVERY TICK
-              if (activeTrades.current[s]) {
-                const trade = activeTrades.current[s];
-                let hitTp = false; let hitSl = false;
-                
-                if (trade.direction === 'LONG') {
-                   if (candle.high >= trade.tp) hitTp = true;
-                   if (candle.low <= trade.sl) hitSl = true;
-                } else {
-                   if (candle.low <= trade.tp) hitTp = true;
-                   if (candle.high >= trade.sl) hitSl = true;
-                }
-
-                if (hitTp || hitSl) {
-                    const exitPrice = hitTp ? trade.tp : trade.sl;
-                    const pnl = (trade.direction === 'LONG') ? ((exitPrice - trade.entry)/trade.entry)*100*10 : ((trade.entry - exitPrice)/trade.entry)*100*10;
-                    sendTelegramSignal(`🚨 <b>TRADE CLOSED</b> 🚨\n\n🪙 <b>Pair:</b> #${s}\n📋 Status: ${hitTp ? 'Take Profit Hit ✅' : 'Stop Loss Hit ❌'}\n💰 PnL: ${pnl.toFixed(2)}% (10x)`);
-                    delete activeTrades.current[s];
-                }
-              }
+// Frontend TP/SL tracking is removed as the backend loop handles it now
 
             }
           } catch (e) {}
@@ -252,11 +225,7 @@ export function useSignalScanner() {
                  const typeIcon = mtfAnalysis.signal === "LONG" ? "📈" : "📉";
                  const message = `🤖 <b>ENDELLION SECURE SIGNAL</b> 🤖\n\n🪙 <b>Pair:</b> #${symbol}\n${typeIcon} <b>Type:</b> ${mtfAnalysis.signal}\n⚡ <b>Confidence:</b> ${mtfAnalysis.confidence.toFixed(1)}%\n\n🎯 <b>Entry Zone:</b> <code>${formatPrice(mtfAnalysis.suggestedEntry || lastClose)}</code>\n💰 <b>Take Profit:</b> <code>${mtfAnalysis.tp ? formatPrice(mtfAnalysis.tp) : "N/A"}</code>\n🛑 <b>Stop Loss:</b> <code>${mtfAnalysis.sl ? formatPrice(mtfAnalysis.sl) : "N/A"}</code>\n\n⚠️ <i>Risk Warning: High leverage = high risk.</i>`;
                  
-                 const url = mtfAnalysis.signal === "LONG" 
-                     ? "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}"
-                     : "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
-
-                 sendTelegramSignal(message, url);
+// (Telegram sending is handled by server background loop)
                  dailyTracker.current.count++;
                  lastSentSignals.current[symbol] = { direction: mtfAnalysis.signal, timestamp: now };
                  activeTrades.current[symbol] = {
