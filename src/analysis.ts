@@ -763,56 +763,76 @@ export const analyzeChart = (
   const computeDynamicStops = () => {
     let calcSl = 0;
     let calcTp = 0;
+    let calcTp1 = undefined as number | undefined;
+    let calcTp2 = undefined as number | undefined;
+    let breakEvenTrigger = undefined as number | undefined;
+    let trailingStopMode = undefined as 'ATR' | 'Percentage' | 'Structure' | undefined;
     let strategyDesc = '';
     
     const atrBonus = isHighVolatility ? 1.5 : 1.0;
     
     if (isTrending && Math.abs(layer4Score) > 0.5) {
-      // 3. ATR Volatility-Based TP/SL / 25. Trend Continuation TP/SL
-      // Trade condition: Trending heavily with strong volume
+      // 3. ATR Volatility-Based + 25. Trend Continuation + 30. ATR Trailing Stop
+      // Trend following: Wide TP to catch the full extension, using trailing stop.
       const atrMultSl = 2.5 * atrBonus;
-      const atrMultTp = 3.5 * atrBonus;
       calcSl = signal === 'LONG' ? entryPrice - (lastAtr * atrMultSl) : entryPrice + (lastAtr * atrMultSl);
-      calcTp = signal === 'LONG' ? entryPrice + (lastAtr * atrMultTp) : Math.max(0.00000001, entryPrice - (lastAtr * atrMultTp));
-      strategyDesc = 'Trend Continuation (ATR Volatility-Based)';
+      calcTp1 = signal === 'LONG' ? entryPrice + (lastAtr * 2.0 * atrBonus) : entryPrice - (lastAtr * 2.0 * atrBonus); // Scalp partial
+      calcTp  = signal === 'LONG' ? entryPrice + (lastAtr * 4.5 * atrBonus) : entryPrice - (lastAtr * 4.5 * atrBonus); // Full runner TP
+      breakEvenTrigger = calcTp1; // Move to BE when TP1 is hit (8. Break-Even Stop)
+      trailingStopMode = 'ATR'; // 30. ATR Trailing Stop
+      strategyDesc = 'Trend Continuation (ATR Trailing + Partial TP + BE Stop)';
     } else if (isSideways) {
-      // 24. Mean Reversion TP/SL / 32. Bollinger Band Exit / 19. Channel Boundary
-      // Trade condition: Sideways and ranging
+      // 24. Mean Reversion + 47. Volume Profile + 32. Bollinger Band Exit
       if (signal === 'LONG') {
         calcSl = Math.min(swingLow - (lastAtr * 0.5), (lastBB?.lower || entryPrice - lastAtr));
-        calcTp = (volProfile && volProfile.pocPrice > entryPrice) ? volProfile.pocPrice : (lastBB?.upper || entryPrice + lastAtr*1.5);
-        if (calcTp <= entryPrice) calcTp = entryPrice + (lastAtr * 1.5);
+        calcTp1 = volProfile.pocPrice; // Target 1: POC
+        calcTp = lastBB?.upper || entryPrice + lastAtr*1.5; // Target 2: BB Upper
+        if (calcTp1 <= entryPrice) calcTp1 = entryPrice + (lastAtr * 1.0);
+        if (calcTp <= calcTp1) calcTp = calcTp1 + (lastAtr * 0.8);
       } else {
         calcSl = Math.max(swingHigh + (lastAtr * 0.5), (lastBB?.upper || entryPrice + lastAtr));
-        calcTp = (volProfile && volProfile.pocPrice < entryPrice) ? volProfile.pocPrice : (lastBB?.lower || entryPrice - lastAtr*1.5);
-        if (calcTp >= entryPrice) calcTp = entryPrice - (lastAtr * 1.5);
-        calcTp = Math.max(0.00000001, calcTp);
+        calcTp1 = volProfile.pocPrice; // Target 1: POC
+        calcTp = lastBB?.lower || entryPrice - lastAtr*1.5; // Target 2: BB Lower
+        if (calcTp1 >= entryPrice) calcTp1 = entryPrice - (lastAtr * 1.0);
+        if (calcTp >= calcTp1) calcTp = calcTp1 - (lastAtr * 0.8);
       }
-      strategyDesc = 'Mean Reversion (Bollinger/Volume POC)';
+      breakEvenTrigger = calcTp1;
+      trailingStopMode = 'Structure'; // Use structure (BB middle) as moving stop
+      strategyDesc = 'Mean Reversion (Bollinger/Volume POC + Scaling Out)';
     } else if (Math.abs(structureScore) > 0.5) {
-      // 4. Market Structure TP/SL / 13. Liquidity-Based TP/SL
-      // Trade condition: Structure driven (Fakeouts, sweeps)
+      // 4. Market Structure + 13. Liquidity-Based TP/SL + 18. Swing High/Low
+      // Fakeout / Sweep -> price aims for opposite liquidity
       if (signal === 'LONG') {
-         calcSl = swingLow - (lastAtr * 0.5);
-         calcTp = swingHigh + (lastAtr * 1.0); // Target liquidity above recent high
+         calcSl = swingLow - (lastAtr * 0.2); // Tight stop behind the sweep
+         calcTp1 = entryPrice + (entryPrice - calcSl); // 1:1 Risk Reward
+         calcTp = swingHigh + (lastAtr * 0.5); // Target liquidity pool above recent high
          if (calcTp <= entryPrice) calcTp = entryPrice + Math.abs(entryPrice - calcSl) * 2;
       } else {
-         calcSl = swingHigh + (lastAtr * 0.5);
-         calcTp = swingLow - (lastAtr * 1.0); // Target liquidity below recent low
+         calcSl = swingHigh + (lastAtr * 0.2); // Tight stop behind the sweep
+         calcTp1 = entryPrice - (calcSl - entryPrice); // 1:1 Risk Reward
+         calcTp = swingLow - (lastAtr * 0.5); // Target liquidity pool below recent low
          if (calcTp >= entryPrice) calcTp = entryPrice - Math.abs(calcSl - entryPrice) * 2;
-         calcTp = Math.max(0.00000001, calcTp);
       }
-      strategyDesc = 'Market Structure (Liquidity-Based)';
+      breakEvenTrigger = calcTp1; // Move to BE early because fakeouts can reverse sharply
+      trailingStopMode = 'Percentage'; // Tight percentage trailing for aggressive moves
+      strategyDesc = 'Market Structure (Liquidity Pools + Fast BE Stop)';
     } else {
-      // 2. Risk-Reward Ratio TP/SL
-      // Fallback: Fixed R:R based on confidence
-      const targetRr = confidence >= 80 ? 2.0 : 1.5;
-      const fallbackSlAtr = 2.0 * atrBonus;
+      // 2. Risk-Reward Ratio + 50. Expectancy-Optimized TP/SL
+      // High confidence fallback
+      const targetRr = confidence >= 80 ? 2.5 : 1.5;
+      const fallbackSlAtr = 1.5 * atrBonus;
       calcSl = signal === 'LONG' ? entryPrice - (lastAtr * fallbackSlAtr) : entryPrice + (lastAtr * fallbackSlAtr);
       const r = Math.abs(entryPrice - calcSl);
+      calcTp1 = signal === 'LONG' ? entryPrice + r : entryPrice - r; // 1R partial
       calcTp = signal === 'LONG' ? entryPrice + (r * targetRr) : Math.max(0.00000001, entryPrice - (r * targetRr));
-      strategyDesc = `Risk-Reward Ratio (${targetRr}R)`;
+      breakEvenTrigger = calcTp1;
+      strategyDesc = `Expectancy-Optimized R:R (${targetRr}R + Partials)`;
     }
+
+    // Default cleanup
+    calcTp = Math.max(0.00000001, calcTp);
+    if (calcTp1) calcTp1 = Math.max(0.00000001, calcTp1);
+    if (breakEvenTrigger) breakEvenTrigger = Math.max(0.00000001, breakEvenTrigger);
 
     // Enforce Minimum Distance Constraints (Anti-chop)
     const minDistance = lastAtr * 0.8;
@@ -828,13 +848,22 @@ export const analyzeChart = (
        strategyDesc += ' (Adjusted for minimum ATR)';
     }
 
-    return { calcSl, calcTp, strategyDesc };
+    return { calcSl, calcTp, calcTp1, calcTp2, breakEvenTrigger, trailingStopMode, strategyDesc };
   };
 
+  let tp1: number | undefined;
+  let tp2: number | undefined;
+  let breakEvenTrigger: number | undefined;
+  let trailingStopMode: 'ATR' | 'Percentage' | 'Structure' | undefined;
+
   if (signal !== 'NO TRADE') {
-    const { calcSl, calcTp, strategyDesc } = computeDynamicStops();
+    const { calcSl, calcTp, calcTp1, calcTp2: _tp2, breakEvenTrigger: calcBE, trailingStopMode: calcTS, strategyDesc } = computeDynamicStops();
     sl = calcSl;
     tp = calcTp;
+    tp1 = calcTp1;
+    tp2 = _tp2;
+    breakEvenTrigger = calcBE;
+    trailingStopMode = calcTS;
     tpSlStrategy = strategyDesc;
     risk = Math.abs(entryPrice - sl);
   }
@@ -1099,7 +1128,11 @@ export const analyzeChart = (
       neutral: indicators.filter(i => i.signal === 'neutral').map(i => i.name)
     },
     tp,
+    tp1,
+    tp2,
     sl,
+    breakEvenTrigger,
+    trailingStopMode,
     suggestedEntry: entryPrice, // For backward compatibility
     limitEntry,
     entryStrategy,

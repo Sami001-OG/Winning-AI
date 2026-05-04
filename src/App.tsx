@@ -999,17 +999,49 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-white/40">Take Profit</span>
+                <span className="text-white/40">Take Profit (Main)</span>
                 <span className="text-emerald-400">
                   {activeAnalysis.tp?.toFixed(2)}
                 </span>
               </div>
+              {activeAnalysis.tp1 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-white/40">Take Profit 1 (Scale Out)</span>
+                  <span className="text-emerald-400">
+                    {activeAnalysis.tp1?.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              {activeAnalysis.tp2 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-white/40">Take Profit 2 (Scale Out)</span>
+                  <span className="text-emerald-400">
+                    {activeAnalysis.tp2?.toFixed(2)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="text-white/40">Stop Loss</span>
                 <span className="text-rose-400">
                   {activeAnalysis.sl?.toFixed(2)}
                 </span>
               </div>
+              {activeAnalysis.breakEvenTrigger && (
+                <div className="flex justify-between items-center">
+                  <span className="text-white/40">Break Even Trigger</span>
+                  <span className="text-blue-400">
+                    {activeAnalysis.breakEvenTrigger?.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              {activeAnalysis.trailingStopMode && (
+                <div className="flex justify-between items-center">
+                  <span className="text-white/40">Trailing Stop</span>
+                  <span className="text-blue-400">
+                    {activeAnalysis.trailingStopMode}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="p-4 border-t border-white/10 bg-white/[0.02] flex gap-3">
               <button

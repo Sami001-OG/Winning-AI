@@ -37,7 +37,11 @@ export interface AnalysisResult {
     neutral: string[];
   };
   tp?: number;
+  tp1?: number;
+  tp2?: number;
   sl?: number;
+  breakEvenTrigger?: number;
+  trailingStopMode?: 'ATR' | 'Percentage' | 'Structure';
   suggestedEntry?: number; // Deprecated, keeping for backward compatibility
   limitEntry?: number; // The calculated pullback entry price
   entryStrategy?: 'Market (CMP)' | 'Limit (Pullback)' | 'Split (50/50)';
