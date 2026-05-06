@@ -114,33 +114,49 @@ export default function App() {
     return [];
   });
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState(() => {
+    return localStorage.getItem("endellion_auto_trade") === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("endellion_auto_trade", String(autoTradeEnabled));
+  }, [autoTradeEnabled]);
 
   const { data, error, isConnected } = useBinanceData(symbol, interval);
 
   const prevTradesForAlerts = useRef<Trade[]>(trades);
 
-  const sendTradeAlert = async (trade: Trade) => {
+  const sendTradeAlert = async (trade: Trade, type: "OPENED" | "CLOSED" = "CLOSED") => {
     try {
-      const isWin = trade.status === "SUCCESS";
-      const icon = isWin ? "✅" : "❌";
       const typeIcon = trade.type === "LONG" ? "📈" : "📉";
-      const pnl = isWin
-        ? Math.abs(((trade.tp - trade.entry) / trade.entry) * 100 * 10).toFixed(
-            2,
-          )
-        : -Math.abs(
-            ((trade.entry - trade.sl) / trade.entry) * 100 * 10,
-          ).toFixed(2);
+      let msg = "";
 
-      const msg = `🚨 <b>TRADE CLOSED</b> 🚨
+      if (type === "OPENED") {
+        msg = `🚀 <b>TRADE OPENED</b> 🚀
       
+🪙 <b>Pair:</b> #${trade.symbol}
+${typeIcon} <b>Direction:</b> ${trade.type}
+  
+🎯 <b>Entry:</b> <code>${formatPrice(trade.entry)}</code>
+✅ <b>Take Profit:</b> <code>${formatPrice(trade.tp)}</code>
+❌ <b>Stop Loss:</b> <code>${formatPrice(trade.sl)}</code>`;
+      } else {
+        const isWin = trade.status === "SUCCESS";
+        const icon = isWin ? "✅" : "❌";
+        const pnl = isWin
+          ? Math.abs(((trade.tp - trade.entry) / trade.entry) * 100 * 10).toFixed(2)
+          : -Math.abs(((trade.entry - trade.sl) / trade.entry) * 100 * 10).toFixed(2);
+
+        msg = `🚨 <b>TRADE CLOSED</b> 🚨
+        
 🪙 <b>Pair:</b> #${trade.symbol}
 ${typeIcon} <b>Direction:</b> ${trade.type}
 ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
 💰 <b>PnL:</b> ${pnl}% (10x Lev)
-  
+    
 🎯 <b>Entry:</b> <code>${formatPrice(trade.entry)}</code>
 🏁 <b>Exit:</b> <code>${isWin ? formatPrice(trade.tp) : formatPrice(trade.sl)}</code>`;
+      }
 
       await fetch("/api/telegram/send", {
         method: "POST",
@@ -160,7 +176,7 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
     trades.forEach((trade) => {
       const prev = prevTradesForAlerts.current.find((t) => t.id === trade.id);
       if (prev && prev.status === "PENDING" && trade.status !== "PENDING") {
-        sendTradeAlert(trade);
+        sendTradeAlert(trade, "CLOSED");
       }
     });
     prevTradesForAlerts.current = trades;
@@ -318,8 +334,10 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
     // Prevent duplicate active trades for the same coin
     const hasActiveTrade = trades.some(t => t.symbol === symbol && t.status === 'PENDING');
     if (hasActiveTrade) {
-      alert(`There is already an active trade for ${symbol}. Please wait for it to finish or delete it before starting a new one.`);
-      setShowConfirmDialog(false);
+      if (showConfirmDialog) {
+        alert(`There is already an active trade for ${symbol}. Please wait for it to finish or delete it before starting a new one.`);
+        setShowConfirmDialog(false);
+      }
       return;
     }
 
@@ -345,7 +363,18 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
 
     setTrades((prev) => [newTrade, ...prev].slice(0, 100));
     setShowConfirmDialog(false);
+    sendTradeAlert(newTrade, "OPENED");
   };
+
+  // Auto-trade Logic
+  useEffect(() => {
+    if (autoTradeEnabled && activeAnalysis && activeAnalysis.signal !== "NO TRADE" && activeAnalysis.tp && activeAnalysis.sl) {
+      const hasActiveTrade = trades.some(t => t.symbol === symbol && t.status === 'PENDING');
+      if (!hasActiveTrade) {
+        executeTrade();
+      }
+    }
+  }, [activeAnalysis, autoTradeEnabled, trades, symbol]);
 
   return (
     <div className="h-screen w-screen bg-[#050505] text-white/90 font-sans overflow-hidden flex flex-col selection:bg-emerald-500/30">
@@ -412,10 +441,29 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
             )}
           </form>
 
-          {/* Layout Toggle */}
-          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10 shrink-0">
-            <button
-              onClick={() => setLayout("single")}
+          {/* Action Row */}
+          <div className="flex items-center gap-3 shrink-0 ml-auto">
+            {/* Auto Trade Toggle */}
+            <div
+              onClick={() => setAutoTradeEnabled(!autoTradeEnabled)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-md border text-[10px] sm:text-xs font-mono transition-colors cursor-pointer select-none",
+                autoTradeEnabled 
+                  ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" 
+                  : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white/80"
+              )}
+            >
+              <div className={cn(
+                "w-2 h-2 rounded-full",
+                autoTradeEnabled ? "bg-emerald-400 animate-pulse" : "bg-white/20"
+              )} />
+              Auto Trade
+            </div>
+
+            {/* Layout Toggle */}
+            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10 shrink-0 hidden sm:flex">
+              <button
+                onClick={() => setLayout("single")}
               className={cn(
                 "p-1.5 rounded transition-all",
                 layout === "single"
@@ -439,6 +487,7 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
               <LayoutGrid size={14} />
             </button>
           </div>
+        </div>
         </div>
 
         <div className="flex items-center gap-3 sm:gap-6 shrink-0 ml-4">
