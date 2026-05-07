@@ -81,7 +81,7 @@ async function sendTelegramSignal(
   chatId: string,
   message: string,
   imageUrl?: string,
-  retries = 3
+  retries = 15
 ) {
   const cleanToken = botToken.replace(/^["']|["']$/g, "").trim();
   let cleanChatId = chatId.replace(/^["']|["']$/g, "").trim();
@@ -536,6 +536,13 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Self-ping to keep server alive (prevent sleeping)
+  setInterval(() => {
+    try {
+      fetch(`http://127.0.0.1:${PORT}/api/health`).catch(() => {});
+    } catch(e) {}
+  }, 45000);
+
   app.get("/api/top-trades", (req, res) => {
     res.json({ signals: [] }); // Now handled via frontend hook
   });
@@ -569,6 +576,44 @@ async function startServer() {
     } catch (error) {
       console.error("Error sending Telegram message via proxy:", error);
       res.status(500).json({ error: "Failed to send message" });
+    }
+  });
+
+  app.post("/api/trade/register-active", express.json(), async (req, res) => {
+    try {
+      const trade = req.body;
+      if (trade && trade.symbol) {
+        activeTrades[trade.symbol] = {
+           symbol: trade.symbol,
+           direction: trade.type || trade.direction,
+           entry: trade.entry,
+           tp: trade.tp,
+           sl: trade.sl,
+           achieved: 0
+        };
+        console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
+
+        const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+        const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+        if (botToken && chatId) {
+          const typeIcon = trade.type === "LONG" ? "📈" : "📉";
+          const msg = `🚀 <b>TRADE OPENED</b> 🚀
+      
+🪙 <b>Pair:</b> #${trade.symbol}
+${typeIcon} <b>Direction:</b> ${trade.type}
+  
+🎯 <b>Entry:</b> <code>${trade.entry}</code>
+✅ <b>Take Profit:</b> <code>${trade.tp}</code>
+❌ <b>Stop Loss:</b> <code>${trade.sl}</code>`;
+          sendTelegramSignal(botToken as string, chatId as string, msg).catch(console.error);
+        }
+
+        res.json({ success: true });
+      } else {
+        res.status(400).json({ error: "Invalid trade data" });
+      }
+    } catch (e) {
+      res.status(500).json({ error: "Server error" });
     }
   });
 

@@ -134,69 +134,7 @@ export default function App() {
 
   const prevTradesForAlerts = useRef<Trade[]>(trades);
 
-  const sendTradeAlert = async (trade: Trade, type: "OPENED" | "CLOSED" = "CLOSED", attempt = 1) => {
-    try {
-      const typeIcon = trade.type === "LONG" ? "📈" : "📉";
-      let msg = "";
-
-      if (type === "OPENED") {
-        msg = `🚀 <b>TRADE OPENED</b> 🚀
-      
-🪙 <b>Pair:</b> #${trade.symbol}
-${typeIcon} <b>Direction:</b> ${trade.type}
-  
-🎯 <b>Entry:</b> <code>${formatPrice(trade.entry)}</code>
-✅ <b>Take Profit:</b> <code>${formatPrice(trade.tp)}</code>
-❌ <b>Stop Loss:</b> <code>${formatPrice(trade.sl)}</code>`;
-      } else {
-        const isWin = trade.status === "SUCCESS";
-        const icon = isWin ? "✅" : "❌";
-        const pnl = isWin
-          ? Math.abs(((trade.tp - trade.entry) / trade.entry) * 100 * 10).toFixed(2)
-          : -Math.abs(((trade.entry - trade.sl) / trade.entry) * 100 * 10).toFixed(2);
-
-        msg = `🚨 <b>TRADE CLOSED</b> 🚨
-        
-🪙 <b>Pair:</b> #${trade.symbol}
-${typeIcon} <b>Direction:</b> ${trade.type}
-${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
-💰 <b>PnL:</b> ${pnl}% (10x Lev)
-    
-🎯 <b>Entry:</b> <code>${formatPrice(trade.entry)}</code>
-🏁 <b>Exit:</b> <code>${isWin ? formatPrice(trade.tp) : formatPrice(trade.sl)}</code>`;
-      }
-
-      const response = await fetch("/api/telegram/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          botToken: import.meta.env.VITE_TELEGRAM_BOT_TOKEN,
-          chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID,
-          message: msg,
-        }),
-      });
-
-      if (!response.ok && attempt < 10) {
-        console.warn(`Telegram alert failed on frontend. Retrying attempt ${attempt + 1}...`);
-        setTimeout(() => sendTradeAlert(trade, type, attempt + 1), 3000);
-      }
-    } catch (error) {
-      if (attempt < 10) {
-        console.warn(`Telegram fetch error. Retrying attempt ${attempt + 1}...`);
-        setTimeout(() => sendTradeAlert(trade, type, attempt + 1), 3000);
-      } else {
-        console.error("Failed to send Telegram alert on UX update completely:", error);
-      }
-    }
-  };
-
   useEffect(() => {
-    trades.forEach((trade) => {
-      const prev = prevTradesForAlerts.current.find((t) => t.id === trade.id);
-      if (prev && prev.status === "PENDING" && trade.status !== "PENDING") {
-        sendTradeAlert(trade, "CLOSED");
-      }
-    });
     prevTradesForAlerts.current = trades;
   }, [trades]);
 
@@ -381,7 +319,13 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
 
     setTrades((prev) => [newTrade, ...prev].slice(0, 100));
     setShowConfirmDialog(false);
-    sendTradeAlert(newTrade, "OPENED");
+
+    // Tell backend to explicitly monitor this trade, keeping Telegram alive regardless of frontend.
+    fetch("/api/trade/register-active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newTrade)
+    }).catch(console.error);
   };
 
   // Auto-trade Logic
