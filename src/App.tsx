@@ -122,11 +122,19 @@ export default function App() {
     localStorage.setItem("endellion_auto_trade", String(autoTradeEnabled));
   }, [autoTradeEnabled]);
 
+  useEffect(() => {
+    // Keep backend alive so it never goes off
+    const pingInterval = setInterval(() => {
+      fetch("/api/health").catch(() => {});
+    }, 45000); // 45 seconds
+    return () => clearInterval(pingInterval);
+  }, []);
+
   const { data, error, isConnected } = useBinanceData(symbol, interval);
 
   const prevTradesForAlerts = useRef<Trade[]>(trades);
 
-  const sendTradeAlert = async (trade: Trade, type: "OPENED" | "CLOSED" = "CLOSED") => {
+  const sendTradeAlert = async (trade: Trade, type: "OPENED" | "CLOSED" = "CLOSED", attempt = 1) => {
     try {
       const typeIcon = trade.type === "LONG" ? "📈" : "📉";
       let msg = "";
@@ -158,7 +166,7 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
 🏁 <b>Exit:</b> <code>${isWin ? formatPrice(trade.tp) : formatPrice(trade.sl)}</code>`;
       }
 
-      await fetch("/api/telegram/send", {
+      const response = await fetch("/api/telegram/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -167,8 +175,18 @@ ${icon} <b>Status:</b> ${isWin ? "Take Profit Hit" : "Stop Loss Hit"}
           message: msg,
         }),
       });
+
+      if (!response.ok && attempt < 10) {
+        console.warn(`Telegram alert failed on frontend. Retrying attempt ${attempt + 1}...`);
+        setTimeout(() => sendTradeAlert(trade, type, attempt + 1), 3000);
+      }
     } catch (error) {
-      console.error("Failed to send Telegram alert on UX update:", error);
+      if (attempt < 10) {
+        console.warn(`Telegram fetch error. Retrying attempt ${attempt + 1}...`);
+        setTimeout(() => sendTradeAlert(trade, type, attempt + 1), 3000);
+      } else {
+        console.error("Failed to send Telegram alert on UX update completely:", error);
+      }
     }
   };
 
