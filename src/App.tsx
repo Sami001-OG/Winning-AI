@@ -124,10 +124,10 @@ export default function App() {
 
   useEffect(() => {
     // Keep backend alive so it never goes off
-    const pingInterval = setInterval(() => {
+    const pingInterval = window.setInterval(() => {
       fetch("/api/health").catch(() => {});
     }, 45000); // 45 seconds
-    return () => clearInterval(pingInterval);
+    return () => window.clearInterval(pingInterval);
   }, []);
 
   const { data, error, isConnected } = useBinanceData(symbol, interval);
