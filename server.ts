@@ -83,6 +83,8 @@ async function sendTelegramSignal(
   imageUrl?: string,
   retries = 15
 ) {
+  if (!botToken || !chatId) return false;
+
   const cleanToken = botToken.replace(/^["']|["']$/g, "").trim();
   let cleanChatId = chatId.replace(/^["']|["']$/g, "").trim();
 
@@ -466,14 +468,14 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
   
   // If we have 1m data, we can aggregate
   if (tf !== '1m' && klineCache[symbol]['1m'] && klineCache[symbol]['1m'].length >= 240) {
-    return aggregateCandles(klineCache[symbol]['1m'], tf).slice(-1500);
+    return aggregateCandles(klineCache[symbol]['1m'], tf).slice(-limit);
   }
 
   if (!klineCache[symbol][tf]) {
     try {
       console.log(`[REST API] Fetching warm-up data for ${symbol} ${tf}`);
       const res = await fetchWithTimeout(
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=1500&_t=${Date.now()}`,
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
       );
       const data = await res.json();
 
@@ -844,20 +846,20 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
   const runBackgroundLoop = async () => {
     const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+    const telegramEnabled = !!(botToken && chatId);
 
-    if (!botToken || !chatId) {
-      if (!hasLoggedMissingTokens) {
-        console.log(
-          "Telegram Scanner skipped: Missing VITE_TELEGRAM_BOT_TOKEN or VITE_TELEGRAM_CHAT_ID in environment variables.",
-        );
-        hasLoggedMissingTokens = true;
-      }
-      setTimeout(runBackgroundLoop, 60000);
-      return;
+    if (!telegramEnabled && !hasLoggedMissingTokens) {
+      console.log(
+        "Telegram tokens missing. Scanner will run locally but skip Telegram alerts.",
+      );
+      hasLoggedMissingTokens = true;
     }
-    hasLoggedMissingTokens = false; // Reset if tokens are added later
+    
+    if (telegramEnabled) {
+      hasLoggedMissingTokens = false;
+    }
 
-    if (!hasSentStartupNotification) {
+    if (telegramEnabled && !hasSentStartupNotification) {
       sendTelegramSignal(
         botToken,
         chatId,
@@ -983,17 +985,20 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
         console.error("Failed to fetch BTC 1H trend for King Filter:", e);
       }
 
-      // Pre-heat all timeframes concurrently for better REST loop performance
-      await Promise.all(symbols.map(async (symbol) => {
-        try {
-          await Promise.all([
-            fetchKlines(symbol, "3m"),
-            fetchKlines(symbol, "15m"),
-            fetchKlines(symbol, "1h"),
-            fetchKlines(symbol, "4h")
-          ]);
-        } catch(e) {}
-      }));
+      // Pre-heat all timeframes with chunking to avoid Binance rate limits
+      const chunkSize = 5;
+      for (let i = 0; i < symbols.length; i += chunkSize) {
+        const chunk = symbols.slice(i, i + chunkSize);
+        await Promise.all(chunk.map(async (symbol) => {
+          try {
+            await fetchKlines(symbol, "3m");
+            await fetchKlines(symbol, "15m");
+            await fetchKlines(symbol, "1h");
+            await fetchKlines(symbol, "4h");
+          } catch(e) {}
+        }));
+        await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between chunks
+      }
 
       // Process symbols sequentially since WS cache avoids rate limits
       let diagnosticCounts = { total: symbols.length, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };

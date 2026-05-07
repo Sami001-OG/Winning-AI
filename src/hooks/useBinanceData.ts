@@ -30,7 +30,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
 
       try {
         // Use Futures API to match the rest of the app
-        const response = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=1500`);
+        const response = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=500`);
         if (!response.ok) throw new Error('Failed to fetch data');
         
         const rawData = await response.json();

@@ -52,7 +52,8 @@ export const fetchWithRetry = async (
         if (fallbackResponse.ok) {
           return fallbackResponse;
         } else {
-          throw new Error(`Direct fetch failed with status: ${fallbackResponse.status}`);
+          const body = await fallbackResponse.text().catch(() => '');
+          throw new Error(`Direct fetch failed with status: ${fallbackResponse.status} - ${body}`);
         }
       }
       

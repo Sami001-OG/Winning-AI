@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { analyzeChart } from '../analysis';
 import { getHTFDirection, get1HControlState } from '../multiTimeframe';
 import { Candle, AnalysisResult, Trade } from '../types';
+import { fetchWithRetry } from '../utils/api';
 
 interface TradeSignal {
   symbol: string;
@@ -51,7 +52,7 @@ export function useSignalScanner() {
       try {
         setLoading(true);
         // 1. Fetch top symbols
-        const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`);
+        const res = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`);
         const data = await res.json();
         const topSymbols = data
           .filter((t: any) => t.symbol.endsWith("USDT") && parseFloat(t.volume) > 0 && !t.symbol.includes("UPUSDT") && !t.symbol.includes("DOWNUSDT"))
@@ -66,7 +67,7 @@ export function useSignalScanner() {
           
           for (const tf of ['3m', '15m', '1h', '4h']) {
             try {
-              const kRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=250`);
+              const kRes = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=250`);
               const kData = await kRes.json();
               klineCache.current[sym][tf] = kData.map((d: any) => ({
                 time: Math.floor(d[0] / 1000),
