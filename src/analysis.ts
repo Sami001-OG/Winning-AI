@@ -314,7 +314,7 @@ export const analyzeChart = (
   }
 
   const emaRel = adjustedReliability.ema;
-  const macdRel = adjustedReliability.macd * 2; // Increase weight since it's now a leading indicator
+  const macdRel = adjustedReliability.macd; // Exact match to screenshot
   const layer2Score = (emaScore * emaRel + macdScore * macdRel) / (emaRel + macdRel);
 
   indicators.push({
@@ -413,67 +413,67 @@ export const analyzeChart = (
   // ADAPTIVE WEIGHTS & FINAL SCORE (Refined & Balanced)
   // ==========================================
   // Base Weights (User Requested Distribution)
-  let w1 = customWeights ? customWeights[0] : 0.15; // Market Condition (15% - ADX/Volatility)
-  let w2 = customWeights ? customWeights[1] : 0.07; // Trend (7% - Lagging EMAs)
-  let w3 = customWeights ? customWeights[2] : 0.10; // Entry Timing (10% - RSI/Sweeps)
-  let w4 = customWeights ? customWeights[3] : 0.20; // Confirmation (20% - Volume/OBV)
-  let w5 = customWeights ? customWeights[4] : 0.33; // Structure (33% - BOS/Fakeouts/Divergence)
-  let w6 = customWeights ? customWeights[5] : 0.15; // Volatility/Order Flow (15% - Institutional Footprint)
+  // Layer 1: Market Condition (5%)
+  // Layer 2: Trend Direction (5%)
+  // Layer 3: Entry Timing (20%)
+  // Layer 4: Confirmation (5%)
+  // Layer 5: Market Structure (35%)
+  // Layer 6: Volume/Volatility (30%)
+
+  let w1 = customWeights ? customWeights[0] : 0.05; // Market Condition
+  let w2 = customWeights ? customWeights[1] : 0.05; // Trend Direction
+  let w3 = customWeights ? customWeights[2] : 0.20; // Entry Timing
+  let w4 = customWeights ? customWeights[3] : 0.05; // Confirmation
+  let w5 = customWeights ? customWeights[4] : 0.35; // Structure
+  let w6 = customWeights ? customWeights[5] : 0.30; // Volume/Volatility
 
   // Dynamic adjustment based on market state
-  if (isTrending) {
-    // Trending -> follow trend & momentum
-    w2 += 0.10; // Trend matters more
-    w1 += 0.05; // Market condition (ADX strength) matters more
-    w5 += 0.05; // Structure (BOS) matters more
-    w3 -= 0.10; // Mean reversion (RSI extremes) is less reliable
-  } else if (isSideways) {
-    // Sideways -> use oscillators & fakeouts
-    w3 += 0.15; // Entry timing (Oscillators/Sweeps) rules sideways markets
-    w5 += 0.10; // Structure (Fakeouts/Liquidity Grabs) are common
-    w2 -= 0.15; // Trend (EMAs) will whip-saw and give false signals
-    w1 -= 0.05; // Market condition is flat
+  if (isTrending) { // ADX > 25
+    w2 += 0.20; // Trend weight increases by up to +20%
+    w5 += 0.10; // Structure weight increases by up to +10%
+    w3 -= 0.10; // Entry Timing weight decreases by -10%
+  } else if (isSideways) { // ADX <= 25
+    w3 += 0.20; // Entry Timing weight increases by up to +20%
+    w6 += 0.10; // Volume/Volatility weight increases by up to +10%
+    w2 -= 0.20; // Trend weight decreases by -20%
   }
 
-  // Volatility Modifier
+  // Volatility Modifier (Bollinger Band Width > 1.5x)
   if (isHighVolatility) {
-    w6 += 0.10; // Order flow and volatility footprint matter more
-    w4 += 0.05; // Volume confirmation is crucial during high volatility
+    w1 += 0.10; // Market Condition weight increases by up to +10%
+    w6 += 0.10; // Volume/Volatility weight increases by up to +10%
+    w3 -= 0.10; // Entry Timing weight decreases by -10%
   }
   
   const trendStrength = Math.abs(layer1Score); // 0 to 1
 
-  // Structure Score (Heavily weighted towards leading indicators)
+  // Structure Score (Market Structure 35%)
+  // BOS (50%), Liquidity Grab (30%), Fakeout (20%)
   let structureScore = 0;
-  if (bos === 'bullish') structureScore += 0.3;
-  else if (bos === 'bearish') structureScore -= 0.3;
-  if (liquidityGrab === 'bullish') structureScore += 0.4;
-  else if (liquidityGrab === 'bearish') structureScore -= 0.4;
-  if (fakeout === 'bullish') structureScore += 0.2;
-  else if (fakeout === 'bearish') structureScore -= 0.2;
+  if (bos === 'bullish') structureScore += 0.50;
+  else if (bos === 'bearish') structureScore -= 0.50;
+  if (liquidityGrab === 'bullish') structureScore += 0.30;
+  else if (liquidityGrab === 'bearish') structureScore -= 0.30;
+  if (fakeout === 'bullish') structureScore += 0.20;
+  else if (fakeout === 'bearish') structureScore -= 0.20;
 
-  if (timeframe === '15m') {
-    if (rsiDivergence === 'regular_bullish') structureScore += (lastRsi < 25 ? 0.8 : 0.5);
-    else if (rsiDivergence === 'regular_bearish') structureScore -= (lastRsi > 75 ? 0.8 : 0.5);
-    else if (rsiDivergence === 'hidden_bullish') structureScore += 0.3;
-    else if (rsiDivergence === 'hidden_bearish') structureScore -= 0.3;
-
-    if (macdDivergence === 'regular_bullish') structureScore += 0.5;
-    else if (macdDivergence === 'regular_bearish') structureScore -= 0.5;
-    else if (macdDivergence === 'hidden_bullish') structureScore += 0.3;
-    else if (macdDivergence === 'hidden_bearish') structureScore -= 0.3;
-  }
-
-  // Volume/Volatility Score
+  // Volume/Volatility Score (Layer 6)
+  // Volume Spike (40%), ATR Expansion (30%), Order Flow (30%)
   let volVolScore = 0;
   
-  if (orderFlow.signal === 'bullish') volVolScore += 0.5 + (flowIntensity * 0.5); // Up to 1.0
-  else if (orderFlow.signal === 'bearish') volVolScore -= 0.5 + (flowIntensity * 0.5); // Down to -1.0
+  if (orderFlow.signal === 'bullish') volVolScore += 0.30;
+  else if (orderFlow.signal === 'bearish') volVolScore -= 0.30;
   
-  if (volumeSpike > 1.5) volVolScore += 0.3;
-  if (atrExpansion > 1.2) volVolScore += 0.2;
+  if (volumeSpike > 1.5) volVolScore += (lastClose > closes[closes.length - 2] ? 0.40 : -0.40);
+  if (atrExpansion > 1.5) volVolScore += (isTrendingUp ? 0.30 : isTrendingDown ? -0.30 : 0);
 
   // Normalize weights to sum to 1
+  w1 = Math.max(0, w1);
+  w2 = Math.max(0, w2);
+  w3 = Math.max(0, w3);
+  w4 = Math.max(0, w4);
+  w5 = Math.max(0, w5);
+  w6 = Math.max(0, w6);
   const total = w1 + w2 + w3 + w4 + w5 + w6;
   w1 /= total;
   w2 /= total;
@@ -484,23 +484,39 @@ export const analyzeChart = (
 
   let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
-  // Base confidence squeezed to 85 max so that bonuses are required to reach >90
-  let confidence = Math.abs(finalScore) * confMult;
-  
-  // Squeeze Multiplier
-  if (isSqueeze && orderFlow.netFlow > 0 && finalScore > 0) {
-    confidence *= 1.2;
-  } else if (isSqueeze && orderFlow.netFlow < 0 && finalScore < 0) {
-    confidence *= 1.2;
+  // Base confidence absolute value converted to percentage
+  let confidence = Math.abs(finalScore) * 100;
+
+  // 3. Candlestick Pattern Boost
+  if (patternNames.includes('Bullish Engulfing') && finalScore > 0) {
+    confidence += 10;
+  } else if (patternNames.includes('Bearish Engulfing') && finalScore < 0) {
+    confidence += 10;
+  } else if (patternNames.includes('Hammer') && finalScore > 0) {
+    confidence += 5;
+  }
+
+  // 4. Volatility Penalty
+  if (isHighVolatility) {
+    confidence *= 0.80; // 20% penalty
+  }
+
+  // 5. Historical Performance Penalty
+  const assetTrades = trades.filter(t => t.symbol === symbol).sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+  if (assetTrades.length === 5) {
+    const wins = assetTrades.filter(t => t.pnl && t.pnl > 0).length;
+    const winRate = wins / 5;
+    if (winRate < 0.40) {
+      confidence *= 0.50; // Slashed by 50%
+    } else if (winRate < 0.60) {
+      confidence *= 0.80; // Slashed by 20%
+    }
   }
 
   // Session Logic - Based on UTC Time
   const latestCandle = data[data.length - 1];
   const lastCandleDate = new Date(latestCandle.time * 1000);
-  
   const utcHour = lastCandleDate.getUTCHours();
-  
-  // Standard UTC Trading Sessions
   const inAsianSession = utcHour >= 0 && utcHour < 9;
   const inLondonSession = utcHour >= 8 && utcHour < 17;
   const inNewYorkSession = utcHour >= 13 && utcHour < 22;
@@ -510,85 +526,8 @@ export const analyzeChart = (
   else if (inLondonSession) currentSession = 'London';
   else if (inAsianSession) currentSession = 'Asian';
 
-  if (currentSession !== 'OUTSIDE') {
-    confidence *= 1.10; // +10% confidence boost during active sessions
-  }
-
-  // ==========================================
-  // LOGICAL PENALTIES
-  // ==========================================
-  const isLong = finalScore > 0;
-  const isShort = finalScore < 0;
-
-  // 1. Low Volume Penalty (Dead Market)
-  // Trading breakouts or trends in low volume is highly risky (fakeouts)
-  if (lastVol < lastVolSma * 0.5) {
-    confidence *= 0.85; // -15% penalty
-  }
-
-  // 2. Extreme Over-extension Penalty
-  // Buying when already extremely overbought, or selling when extremely oversold
-  if (isLong && lastRsi > 80) {
-    confidence *= 0.80; // -20% penalty
-  } else if (isShort && lastRsi < 20) {
-    confidence *= 0.80; // -20% penalty
-  }
-
-  // 3. Choppy Market / No Clear Structure Penalty
-  // If the market is sideways and we have no structural trigger (sweep/fakeout), it's just noise
-  if (isSideways && Math.abs(structureScore) < 0.3) {
-    confidence *= 0.85; // -15% penalty
-  }
-  
-  // 4. Against Major Trend Penalty
-  // If we are longing but price is below the 200 EMA, or shorting but price is above 200 EMA
-  if (isLong && lastClose < lastEma200) {
-    confidence *= 0.90; // -10% penalty
-  } else if (isShort && lastClose > lastEma200) {
-    confidence *= 0.90; // -10% penalty
-  }
-
-  // 5. Indecision Candle Penalty (Doji) & VSA Absorption Filter
-  const lastCandleBodySize = Math.abs(lastClose - latestCandle.open);
-  const lastCandleRange = latestCandle.high - latestCandle.low;
-  
-  if (lastCandleRange > 0 && lastCandleBodySize / lastCandleRange < 0.15) {
-    confidence *= 0.90; // -10% penalty for indecision
-  }
-
-  // VSA Absorption Filter
-  if (lastVol > lastVolSma * 1.5 && lastCandleRange > 0 && (lastCandleBodySize / lastCandleRange) < 0.3) {
-    const recentData50 = data.slice(-50);
-    const highestHigh50 = Math.max(...recentData50.map(d => d.high));
-    const lowestLow50 = Math.min(...recentData50.map(d => d.low));
-    
-    const isNearHigh = Math.abs(lastClose - highestHigh50) < (lastAtr * 2);
-    const isNearLow = Math.abs(lastClose - lowestLow50) < (lastAtr * 2);
-
-    if (isLong && isNearHigh) {
-      // Smart money is absorbing retail buying at the top. Fakeout.
-      finalScore = 0; // Kill the trade
-      confidence = 0;
-    } else if (isLong && isNearLow) {
-      // Smart money is absorbing retail selling at the bottom. Accumulation.
-      confidence *= 1.25;
-    } else if (isShort && isNearLow) {
-      // Smart money is absorbing retail selling at the bottom. Fakeout.
-      finalScore = 0; // Kill the trade
-      confidence = 0;
-    } else if (isShort && isNearHigh) {
-      // Smart money is absorbing retail buying at the top. Distribution.
-      confidence *= 1.25;
-    }
-  }
-
-  // 6. Volume Profile (Value Area) Boost
-  // If the current price is outside the Value Area (VA) and the trading signal aligns with moving out of the VA
-  if (isLong && lastClose > volProfile.vaHigh) {
-    confidence *= 1.15; // +15% boost for bullish breakout of VA
-  } else if (isShort && lastClose < volProfile.vaLow) {
-    confidence *= 1.15; // +15% boost for bearish breakout of VA
-  }
+  // Optional: Cap confidence at 100
+  confidence = Math.min(100, confidence);
 
   // ==========================================
   // ANTI-NOISE FILTER & DECISION RULE

@@ -38,7 +38,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = () => {
               <Activity className="w-5 h-5 text-indigo-400" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white">Live AI Scanner</h2>
+              <h2 className="text-xl font-bold text-white">Live Confluence Scanner</h2>
               <p className="text-sm text-zinc-400">Loading data from backend...</p>
             </div>
           </div>
@@ -62,7 +62,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = () => {
           </div>
           <div>
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              Live AI Scanner
+              Live Confluence Scanner
             </h2>
             <p className="text-sm text-zinc-400 flex items-center gap-2">
               <span className="relative flex h-2 w-2">

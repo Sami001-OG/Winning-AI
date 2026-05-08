@@ -17,7 +17,13 @@ export const fetchWithRetry = async (
 ): Promise<Response> => {
   // Rewrite Binance URLs to use our backend proxy to avoid CORS
   let proxyUrl = url;
-  if (url.includes('fapi.binance.com/fapi/')) {
+  if (url.includes('fapi.binance.com/fapi/v1/klines')) {
+    const urlParams = new URL(url).searchParams;
+    const symbol = urlParams.get('symbol');
+    const interval = urlParams.get('interval');
+    const limit = urlParams.get('limit') || 250;
+    proxyUrl = `/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  } else if (url.includes('fapi.binance.com/fapi/')) {
     const pathAndQuery = url.split('fapi.binance.com/fapi/')[1];
     proxyUrl = `/api/proxy/fapi/${pathAndQuery}`;
   } else if (url.includes('api.binance.com/api/')) {

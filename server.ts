@@ -132,22 +132,7 @@ async function sendTelegramSignal(
       });
 
       if (!response.ok && imageUrl) {
-        console.log(`[Telegram] Photo failed on attempt ${attempt}. Fallback to text...`);
-        // Fallback to text message if photo fails (e.g. quickchart.io is down)
-        url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
-        body = {
-          chat_id: cleanChatId,
-          text: message,
-          parse_mode: "HTML",
-        };
-        response = await fetchWithTimeout(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-          timeout: 10000,
-        });
+        throw new Error(`Telegram API responded with ${response.status} when sending photo`);
       }
 
       if (response.ok) {
@@ -206,6 +191,19 @@ async function sendTelegramSignal(
       }
     } catch (error: any) {
       console.warn(`[Telegram] Fetch error on attempt ${attempt}:`, error.message || error);
+      
+      // Fallback to text message if photo fails (e.g. quickchart.io is down or times out)
+      if (imageUrl) {
+        console.log(`[Telegram] Photo failed on attempt ${attempt}. Fallback to text...`);
+        imageUrl = undefined; // Do not try photo again
+        url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+        body = {
+          chat_id: cleanChatId,
+          text: message,
+          parse_mode: "HTML",
+        };
+      }
+      
       await sleep(attempt * 1000);
     }
   }
@@ -622,6 +620,37 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 
 
   // Proxy endpoints for frontend to bypass CORS/Adblockers
+  app.get("/api/klines", async (req, res) => {
+    try {
+      const symbol = req.query.symbol as string;
+      const interval = req.query.interval as string;
+      const limit = parseInt(req.query.limit as string) || 250;
+      
+      if (!symbol || !interval) return res.status(400).json({ error: "Missing symbol or interval" });
+
+      const data = await fetchKlines(symbol, interval, limit);
+      // fetchKlines returns array of our Candle objects, but the frontend expects Binance format arrays
+      // Let's reconstruct or just adapt the frontend to accept our format.
+      // Wait, let's keep the backend returning the format frontend expects (Binance raw format) OR
+      // frontend expects `data.map(d => ...)`, we can just send it as is, but we must be careful.
+      // Actually, frontend uses fetchWithRetry('.../v1/klines?symbol=...') so it expects Binance format:
+      // [[time, open, high, low, close, volume, closeTime, ...]]
+      
+      const binanceFormat = data.map((c: any) => [
+        c.time * 1000,
+        c.open.toString(),
+        c.high.toString(),
+        c.low.toString(),
+        c.close.toString(),
+        c.volume.toString()
+      ]);
+      
+      res.json(binanceFormat);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/proxy/fapi/*", async (req, res) => {
     try {
       const endpoint = req.params[0];
@@ -902,11 +931,11 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
           const key = `${session.name}_START_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
             const timeString = `${utcHour.toString().padStart(2, "0")}:${utcMinute.toString().padStart(2, "0")} UTC`;
-            await sendTelegramSignal(
+            sendTelegramSignal(
               botToken,
               chatId,
               `🌐 <b>MARKET UPDATE</b>\n\n🟢 <b>${session.name} Session</b> is now OPEN.\n⏰ Time: <code>${timeString}</code>`,
-            );
+            ).catch(console.error);
             sentSessionNotifications.add(key);
           }
         }
@@ -931,11 +960,11 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
           const key = `${session.name}_END_${sessionDateStr}`;
           if (!sentSessionNotifications.has(key)) {
             const timeString = `${utcHour.toString().padStart(2, "0")}:${utcMinute.toString().padStart(2, "0")} UTC`;
-            await sendTelegramSignal(
+            sendTelegramSignal(
               botToken,
               chatId,
               `🌐 <b>MARKET UPDATE</b>\n\n🔴 <b>${session.name} Session</b> is now CLOSED.\n⏰ Time: <code>${timeString}</code>`,
-            );
+            ).catch(console.error);
             sentSessionNotifications.add(key);
           }
         }
@@ -1087,11 +1116,11 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                   console.log(
                     `[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`,
                   );
-                  await sendTelegramSignal(
+                  sendTelegramSignal(
                     botToken,
                     chatId,
                     `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
-                  );
+                  ).catch(console.error);
                   delete activeTrades[symbol];
                   tradeClosed = true;
                   break;
@@ -1102,21 +1131,21 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                     console.log(
                       `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`,
                     );
-                    await sendTelegramSignal(
+                    sendTelegramSignal(
                       botToken,
                       chatId,
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "LONG")})`,
-                    );
+                    ).catch(console.error);
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   } else if (
                     currentHigh >= activeTrade.tp
                   ) {
-                    await sendTelegramSignal(
+                    sendTelegramSignal(
                       botToken,
                       chatId,
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "LONG")})`,
-                    );
+                    ).catch(console.error);
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   }
@@ -1125,21 +1154,21 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                     console.log(
                       `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`,
                     );
-                    await sendTelegramSignal(
+                    sendTelegramSignal(
                       botToken,
                       chatId,
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "SHORT")})`,
-                    );
+                    ).catch(console.error);
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   } else if (
                     currentLow <= activeTrade.tp
                   ) {
-                    await sendTelegramSignal(
+                    sendTelegramSignal(
                       botToken,
                       chatId,
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "SHORT")})`,
-                    );
+                    ).catch(console.error);
                     delete activeTrades[symbol];
                     tradeClosed = true;
                   }
@@ -1447,7 +1476,7 @@ ${logicStr}`;
           const imageUrl =
             sig.analysis.signal === "LONG" ? bullishImageUrl : bearishImageUrl;
 
-          await sendTelegramSignal(botToken, chatId, message, imageUrl);
+          sendTelegramSignal(botToken, chatId, message, imageUrl).catch(console.error);
           // dailySignalCount++;
         }
       }
