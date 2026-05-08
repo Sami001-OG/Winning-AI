@@ -333,13 +333,37 @@ let binanceWs: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let rateLimitNotified = false;
 
+function updateHTFCandle(arr: any[], candle1m: any, multiplier: number) {
+  if (!arr || arr.length === 0) return;
+  const htfOpenTime = Math.floor(candle1m.time / (multiplier * 60)) * (multiplier * 60);
+  const lastHTF = arr[arr.length - 1];
+
+  if (lastHTF.time === htfOpenTime) {
+    lastHTF.high = Math.max(lastHTF.high, candle1m.high);
+    lastHTF.low = Math.min(lastHTF.low, candle1m.low);
+    lastHTF.close = candle1m.close;
+    lastHTF.volume += candle1m.volume; // Simple accumulation, not perfectly exact if updates are partial but okay for indicator approximation
+    // We don't bother strictly with volume reset on partials because we just want the overall direction
+  } else if (htfOpenTime > lastHTF.time) {
+    arr.push({
+      time: htfOpenTime,
+      open: candle1m.open,
+      high: candle1m.high,
+      low: candle1m.low,
+      close: candle1m.close,
+      volume: candle1m.volume,
+      isFinal: false
+    });
+    if (arr.length > 1500) arr.shift();
+  }
+}
+
 function initBinanceWs() {
   if (binanceWs) return;
   binanceWs = new WebSocket('wss://fstream.binance.com/stream');
 
   binanceWs.on('open', () => {
     console.log('[Binance WS] Connected for background scanner');
-    // Start with all top symbols
     fetchTopSymbols().then(symbols => {
       symbols.forEach(s => subscribedStreams.add(`${s.toLowerCase()}@kline_1m`));
       if (subscribedStreams.size > 0) {
@@ -354,7 +378,7 @@ function initBinanceWs() {
       const msg = JSON.parse(data.toString());
       if (msg.data && msg.data.e === 'kline') {
         const s = msg.data.s;
-        const i = msg.data.k.i;
+        const i = msg.data.k.i; // This will now ALWAYS be "1m" because we only subscribe to 1m
         const k = msg.data.k;
         
         if (!klineCache[s]) klineCache[s] = {};
@@ -374,13 +398,46 @@ function initBinanceWs() {
           isFinal: k.x
         };
 
+        const TIMEFRAMES: Record<string, number> = {'3m': 3, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '2h': 120, '4h': 240, '1d': 1440};
+
+        let updated = false;
         if (last && last.time === openTime) {
+          // It's a partial update to the current 1m candle. 
+          // Since we might accumulate volume, we should calculate volume delta
+          const volDelta = candleData.volume - last.volume;
           arr[arr.length - 1] = candleData;
+          
+          Object.entries(TIMEFRAMES).forEach(([tf, m]) => {
+            if (klineCache[s][tf] && klineCache[s][tf].length > 0) {
+              const htfArr = klineCache[s][tf];
+              const htfLast = htfArr[htfArr.length - 1];
+              if (htfLast.time === Math.floor(candleData.time / (m * 60)) * (m * 60)) {
+                htfLast.high = Math.max(htfLast.high, candleData.high);
+                htfLast.low = Math.min(htfLast.low, candleData.low);
+                htfLast.close = candleData.close;
+                htfLast.volume += volDelta;
+              }
+            }
+          });
         } else if (last && openTime > last.time) {
+          if (openTime > last.time + 60) {
+            // Gap detected! WS missed data. Invalidate cache to force REST recovery.
+            console.warn(`[Binance WS] Gap detected for ${s}. Invalidating cache for recovery.`);
+            delete klineCache[s];
+            return;
+          }
+
           arr.push(candleData);
           if (arr.length > 1500) arr.shift();
+          
+          Object.entries(TIMEFRAMES).forEach(([tf, m]) => {
+            updateHTFCandle(klineCache[s][tf], candleData, m);
+          });
         } else if (!last) {
           arr.push(candleData);
+          Object.entries(TIMEFRAMES).forEach(([tf, m]) => {
+            updateHTFCandle(klineCache[s][tf], candleData, m);
+          });
         }
       }
     } catch (err) {
@@ -405,7 +462,8 @@ function initBinanceWs() {
 }
 
 function subscribeToWs(symbol: string, tf: string) {
-  const streamName = `${symbol.toLowerCase()}@kline_${tf}`;
+  // We ONLY subscribe to 1m stream now
+  const streamName = `${symbol.toLowerCase()}@kline_1m`;
   if (!subscribedStreams.has(streamName)) {
     subscribedStreams.add(streamName);
     wsSubscribeQueue.push(streamName);
@@ -467,11 +525,6 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
 
   if (!klineCache[symbol]) klineCache[symbol] = {};
   
-  // If we have 1m data, we can aggregate
-  if (tf !== '1m' && klineCache[symbol]['1m'] && klineCache[symbol]['1m'].length >= 240) {
-    return aggregateCandles(klineCache[symbol]['1m'], tf).slice(-limit);
-  }
-
   if (!klineCache[symbol][tf]) {
     const cacheKey = `${symbol}_${tf}`;
     if (inflightKlines.has(cacheKey)) {

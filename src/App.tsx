@@ -149,7 +149,7 @@ export default function App() {
     for (const tf of tfs) {
       try {
         const response = await fetchWithRetry(
-          `https://fapi.binance.com/fapi/v1/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=500`,
+          `/api/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=500`,
         );
         if (response.ok) {
           const data = await response.json();
