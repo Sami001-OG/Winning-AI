@@ -459,6 +459,9 @@ function aggregateCandles(candles1m: any[], timeframe: string): any[] {
   return result;
 }
 
+const inflightKlines = new Map<string, Promise<any>>();
+let isRateLimitedUntil = 0;
+
 async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
   if (!binanceWs) initBinanceWs();
 
@@ -470,53 +473,73 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
   }
 
   if (!klineCache[symbol][tf]) {
-    try {
-      console.log(`[REST API] Fetching warm-up data for ${symbol} ${tf}`);
-      const res = await fetchWithTimeout(
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
-      );
-      const data = await res.json();
-
-      if (!Array.isArray(data)) {
-        console.warn(
-          `[Binance API Warning] Expected array for ${symbol} ${tf}, got:`,
-          data,
-        );
-        if (
-          data &&
-          data.code === -1003 &&
-          (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) &&
-          (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) &&
-          !rateLimitNotified
-        ) {
-          rateLimitNotified = true;
-          sendTelegramSignal(
-            (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) as string,
-            (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) as string,
-            "⚠️ <b>Binance API Rate Limit Hit!</b>\nScanner is temporarily missing data.",
-          ).catch(console.error);
-          setTimeout(() => {
-            rateLimitNotified = false;
-          }, 3600000); // Reset after 1 hour
-        }
-        return [];
-      }
-
-      klineCache[symbol][tf] = data.map((d: any) => ({
-        time: Math.floor(d[0] / 1000),
-        open: parseFloat(d[1]),
-        high: parseFloat(d[2]),
-        low: parseFloat(d[3]),
-        close: parseFloat(d[4]),
-        volume: parseFloat(d[5]),
-        isFinal: true,
-      }));
-      
-      subscribeToWs(symbol, tf);
-    } catch (e) {
-      console.error(`Error fetching REST klines for ${symbol} ${tf}`, e);
+    const cacheKey = `${symbol}_${tf}`;
+    if (inflightKlines.has(cacheKey)) {
+      return inflightKlines.get(cacheKey);
+    }
+    
+    // Check if we are globally rate-limited
+    if (Date.now() < isRateLimitedUntil) {
       return [];
     }
+
+    const promise = (async () => {
+      try {
+        console.log(`[REST API] Fetching warm-up data for ${symbol} ${tf}`);
+        const res = await fetchWithTimeout(
+          `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
+        );
+        const data = await res.json();
+
+        if (!Array.isArray(data)) {
+          console.warn(
+            `[Binance API Warning] Expected array for ${symbol} ${tf}, got:`,
+            data,
+          );
+          if (
+            data &&
+            data.code === -1003 
+          ) {
+            isRateLimitedUntil = Date.now() + 60000; // Backoff for 1 minute
+            if ((process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) &&
+                (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) &&
+                !rateLimitNotified) {
+              rateLimitNotified = true;
+              sendTelegramSignal(
+                (process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN) as string,
+                (process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID) as string,
+                "⚠️ <b>Binance API Rate Limit Hit!</b>\nScanner is temporarily missing data.",
+              ).catch(console.error);
+              setTimeout(() => {
+                rateLimitNotified = false;
+              }, 3600000); // Reset after 1 hour
+            }
+          }
+          return [];
+        }
+
+        klineCache[symbol][tf] = data.map((d: any) => ({
+          time: Math.floor(d[0] / 1000),
+          open: parseFloat(d[1]),
+          high: parseFloat(d[2]),
+          low: parseFloat(d[3]),
+          close: parseFloat(d[4]),
+          volume: parseFloat(d[5]),
+          isFinal: true,
+        }));
+        
+        subscribeToWs(symbol, tf);
+        return klineCache[symbol][tf].slice(-1500);
+      } catch (e) {
+        console.error(`Error fetching REST klines for ${symbol} ${tf}`, e);
+        return [];
+      } finally {
+        inflightKlines.delete(cacheKey);
+      }
+    })();
+    
+    inflightKlines.set(cacheKey, promise);
+    return promise;
   }
   
   return klineCache[symbol][tf].slice(-1500);
@@ -527,7 +550,7 @@ let lastScanMetrics: any = { status: "not_started" };
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
