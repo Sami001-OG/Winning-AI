@@ -134,11 +134,6 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
       return { state: 'VETO', reason: 'Strong Bearish Pullback (Dark Red MACD)' };
     }
     
-    // NEW VETO: RSI too high (late to the party)
-    if (lastRsi > 85) {
-      return { state: 'VETO', reason: '1H RSI Overbought (>85) - Too late to enter LONG' };
-    }
-    
     // CONTINUATION: Aligned momentum (Dark Green MACD), RSI > 50, Price > EMAs
     if (hist > 0 && hist > prevHist && lastRsi > 50 && lastClose > lastEma20) {
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Green MACD)' };
@@ -158,11 +153,6 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
     // VETO: Strong counter-trend momentum (Dark Green MACD)
     if (hist > 0 && hist > prevHist && hist > 0.05) {
       return { state: 'VETO', reason: 'Strong Bullish Pullback (Dark Green MACD)' };
-    }
-    
-    // NEW VETO: RSI too low (late to the party)
-    if (lastRsi < 15) {
-      return { state: 'VETO', reason: '1H RSI Oversold (<15) - Too late to enter SHORT' };
     }
     
     // CONTINUATION: Aligned momentum (Dark Red MACD), RSI < 50, Price < EMAs
@@ -226,13 +216,6 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bullish';
     const isBullishOrderFlow = orderFlow.signal === 'bullish';
     
-    // Extremely restrictive check
-    if (!volumeSpike) {
-       return { isValid: false, reason: 'LTF Rejection: No Volume Spike' }
-    }
-    if (!isBullishOrderFlow) {
-       return { isValid: false, reason: 'LTF Rejection: Order flow does not support LONG' }
-    }
     if (!isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep && !isDisplacementUp) {
       return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Up, BOS, Sweep, Displacement)' };
     }
@@ -244,13 +227,6 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bearish';
     const isBearishOrderFlow = orderFlow.signal === 'bearish';
     
-    // Extremely restrictive check
-    if (!volumeSpike) {
-       return { isValid: false, reason: 'LTF Rejection: No Volume Spike' }
-    }
-    if (!isBearishOrderFlow) {
-       return { isValid: false, reason: 'LTF Rejection: Order flow does not support SHORT' }
-    }
     if (!isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep && !isDisplacementDown) {
       return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Down, BOS, Sweep, Displacement)' };
     }

@@ -603,7 +603,7 @@ let lastScanMetrics: any = { status: "not_started" };
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
@@ -615,17 +615,18 @@ async function startServer() {
   // Self-ping to keep server alive (prevent sleeping)
   setInterval(() => {
     try {
-      fetch(`http://127.0.0.1:${PORT}/api/health`).catch(() => {});
+      const pingUrl = process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}/api/health` : `http://127.0.0.1:${PORT}/api/health`;
+      fetch(pingUrl).catch(() => {});
     } catch(e) {}
   }, 45000);
 
   app.get("/api/top-trades", (req, res) => {
-    res.json({ signals: [] }); // Now handled via frontend hook
+    res.json({ signals: globalFrontendTrades });
   });
 
   app.get("/api/scanner-status", (req, res) => {
     res.json({
-      lastScanMetrics: { status: "local_scanning_active" }
+      lastScanMetrics
     });
   });
 
@@ -1056,7 +1057,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 75;
+      const requiredConfidence = 78;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1373,7 +1374,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
 
             // Cap confidence at 100 after premium upgrades
-            mtfAnalysis.confidence = 83; // User requested exactly 83
             mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
 
             currentFrontendTrades.push({

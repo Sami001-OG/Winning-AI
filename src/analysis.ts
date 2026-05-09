@@ -504,7 +504,7 @@ export const analyzeChart = (
   // 5. Historical Performance Penalty
   const assetTrades = trades.filter(t => t.symbol === symbol).sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
   if (assetTrades.length === 5) {
-    const wins = assetTrades.filter(t => t.pnl && t.pnl > 0).length;
+    const wins = assetTrades.filter(t => t.status === 'SUCCESS').length;
     const winRate = wins / 5;
     if (winRate < 0.40) {
       confidence *= 0.50; // Slashed by 50%
@@ -883,15 +883,6 @@ export const analyzeChart = (
       confidence *= 0.8; // Minor penalty for >8% stop loss
       reason += ' | High risk (SL > 8%)';
     }
-
-    // R:R Filter
-    // if (tp !== undefined) {
-    //   const reward = Math.abs(tp - entryPrice);
-    //   if (reward / risk < 1.0) {
-    //     signal = 'NO TRADE';
-    //     reason = 'Poor Risk/Reward (under 1:1)';
-    //   }
-    // }
   }
 
   // Liquidity Zone Filter
@@ -1051,10 +1042,6 @@ export const analyzeChart = (
     description: 'Average True Range'
   });
 
-  // Remove hardcoded confidence
-  // if (signal !== 'NO TRADE') {
-  //   confidence = 83;
-  // }
 
   return {
     signal,
