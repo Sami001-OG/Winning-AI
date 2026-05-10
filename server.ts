@@ -216,10 +216,21 @@ async function fetchWithTimeout(url: string, options: any = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       signal: controller.signal,
     });
+    
+    // Handle Binance Geoblocks on US environments (Render, etc.)
+    if (!response.ok && (response.status === 451 || response.status === 403) && url.includes('binance.com')) {
+      console.log(`[Binance ${response.status}] Blocked by geo-restriction. Attempting proxy...`);
+      // Use proxy to bypass IP ban
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+      response = await fetch(proxyUrl, {
+        ...options
+      });
+    }
+
     clearTimeout(id);
     return response;
   } catch (error) {
@@ -734,7 +745,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       const query = new URLSearchParams(req.query as any).toString();
       const targetUrl = `https://fapi.binance.com/fapi/${endpoint}${query ? "?" + query : ""}`;
 
-      const response = await fetch(targetUrl);
+      const response = await fetchWithTimeout(targetUrl);
       if (!response.ok) {
         return res
           .status(response.status)
@@ -753,7 +764,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       const query = new URLSearchParams(req.query as any).toString();
       const targetUrl = `https://api.binance.com/api/${endpoint}${query ? "?" + query : ""}`;
 
-      const response = await fetch(targetUrl);
+      const response = await fetchWithTimeout(targetUrl);
       if (!response.ok) {
         return res
           .status(response.status)
