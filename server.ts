@@ -38,17 +38,38 @@ function getBinanceSignature(queryString: string, secret: string) {
   return crypto.createHmac("sha256", secret).update(queryString).digest("hex");
 }
 
+function getRotatingKeys() {
+  const keys: {key: string, secret: string}[] = [];
+  
+  if (process.env.BINANCE_API_KEY && process.env.BINANCE_SECRET_KEY) {
+    keys.push({ key: process.env.BINANCE_API_KEY, secret: process.env.BINANCE_SECRET_KEY });
+  }
+  if (process.env.BINANCE_API_KEY_2 && process.env.BINANCE_SECRET_KEY_2) {
+    keys.push({ key: process.env.BINANCE_API_KEY_2, secret: process.env.BINANCE_SECRET_KEY_2 });
+  }
+  if (process.env.BINANCE_API_KEY_3 && process.env.BINANCE_SECRET_KEY_3) {
+    keys.push({ key: process.env.BINANCE_API_KEY_3, secret: process.env.BINANCE_SECRET_KEY_3 });
+  }
+
+  if (keys.length === 0) {
+    return null;
+  }
+  
+  const randomIndex = Math.floor(Math.random() * keys.length);
+  return keys[randomIndex];
+}
+
 async function binanceFuturesRequest(
   method: string,
   endpoint: string,
   params: Record<string, any> = {},
 ) {
-  const apiKey = process.env.BINANCE_API_KEY;
-  const apiSecret = process.env.BINANCE_SECRET_KEY;
-
-  if (!apiKey || !apiSecret) {
-    throw new Error("Binance API keys not configured");
+  const credentials = getRotatingKeys();
+  if (!credentials) {
+    throw new Error("Binance API keys not configured. Set BINANCE_API_KEY and BINANCE_SECRET_KEY or use 2/3 suffixes.");
   }
+  
+  const { key: apiKey, secret: apiSecret } = credentials;
 
   params.timestamp = Date.now();
   params.recvWindow = 10000;
@@ -216,6 +237,17 @@ async function fetchWithTimeout(url: string, options: any = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
+    // If it's a Binance request, inject a rotating API key to bypass potential IP rate limits
+    if (url.includes('binance.com')) {
+      const creds = getRotatingKeys();
+      if (creds && creds.key) {
+        options.headers = {
+          ...options.headers,
+          "X-MBX-APIKEY": creds.key
+        };
+      }
+    }
+
     let response = await fetch(url, {
       ...options,
       signal: controller.signal,
@@ -258,6 +290,9 @@ async function handleBybitFallback(binanceUrl: string, options: any) {
       
       const bybitUrl = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
       const res = await fetch(bybitUrl, options);
+      if (!res.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Bybit HTML error");
+      }
       const data = await res.json();
       
       if (data.retCode === 0 && data.result && data.result.list) {
@@ -286,6 +321,9 @@ async function handleBybitFallback(binanceUrl: string, options: any) {
       // Bybit Premium Index (Funding Rate) fallback
       const bybitUrl = `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`;
       const res = await fetch(bybitUrl, options);
+      if (!res.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Bybit HTML error");
+      }
       const data = await res.json();
       if (data.retCode === 0 && data.result?.list?.length > 0) {
         return {
@@ -370,6 +408,9 @@ async function fetchTopSymbols() {
     const res = await fetchWithTimeout(
       `https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`,
     );
+    if (!res.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("Binance HTML error");
+    }
     const data = await res.json();
     cachedTopSymbols = data
       .filter(
@@ -623,6 +664,9 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
         const res = await fetchWithTimeout(
           `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
         );
+        if (!res.headers.get("content-type")?.includes("application/json")) {
+           throw new Error("Binance HTML error");
+        }
         const data = await res.json();
 
         if (!Array.isArray(data)) {
@@ -684,7 +728,7 @@ let lastScanMetrics: any = { status: "not_started" };
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json());
 
@@ -821,6 +865,9 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
           .status(response.status)
           .json({ error: `Binance API error: ${response.statusText}` });
       }
+      if (!response.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Binance HTML error");
+      }
       const data = await response.json();
       res.json(data);
     } catch (error: any) {
@@ -839,6 +886,9 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
         return res
           .status(response.status)
           .json({ error: `Binance API error: ${response.statusText}` });
+      }
+      if (!response.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Binance HTML error");
       }
       const data = await response.json();
       res.json(data);
@@ -1172,14 +1222,11 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
         console.error("Failed to fetch BTC 1H trend for King Filter:", e);
       }
 
-      // Process symbols simultaneously (concurrently staggered to allow backend to do everything simultaneously without rate limiting itself internally)
+      // Process symbols simultaneously
       let diagnosticCounts = { total: symbols.length, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };
       
-      await Promise.all(symbols.map(async (symbol, idx) => {
+      await Promise.all(symbols.map(async (symbol) => {
         try {
-          // Stagger simultaneous executions slightly to ease concurrent pressure on fetching
-          await new Promise(r => setTimeout(r, idx * 30));
-
           // 1. Fetch 3M for active trade monitoring and sniper entry
           const klines3m = await fetchKlines(symbol, "3m");
 
@@ -1407,6 +1454,9 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                 const oiRes = await fetchWithTimeout(
                   `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
                 );
+                if (!oiRes.headers.get("content-type")?.includes("application/json")) {
+                  throw new Error("Binance HTML error");
+                }
                 const oiData = await oiRes.json();
                 if (Array.isArray(oiData) && oiData.length === 2) {
                   const prev = parseFloat(oiData[0].sumOpenInterestValue);
@@ -1424,6 +1474,9 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                 const frRes = await fetchWithTimeout(
                   `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
                 );
+                if (!frRes.headers.get("content-type")?.includes("application/json")) {
+                  throw new Error("Binance HTML error");
+                }
                 const frData = await frRes.json();
                 const fundingRate = parseFloat(frData.lastFundingRate);
 

@@ -26,6 +26,10 @@ export const useBinanceData = (symbol: string, interval: string) => {
         
         // Wait, the backend already gives us data mapped as Candle objects!
         // Let's check backend /api/klines response
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+           throw new Error("Received non-JSON response from server");
+        }
         const rawData = await response.json();
         
         // The backend proxy returns custom candle objects, not array of arrays!

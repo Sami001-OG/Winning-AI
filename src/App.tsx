@@ -152,6 +152,10 @@ export default function App() {
           `/api/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=500`,
         );
         if (response.ok) {
+          const contentType = response.headers.get("content-type");
+          if (!contentType || !contentType.includes("application/json")) {
+             throw new Error("Invalid content type");
+          }
           const data = await response.json();
           const candles: Candle[] = data.map((k: any) => ({
             time: Math.floor(k[0] / 1000),

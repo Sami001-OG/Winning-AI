@@ -21,16 +21,22 @@ export function useSignalScanner() {
       try {
         const res = await fetch('/api/top-trades');
         if (!res.ok) throw new Error('Failed to fetch from backend');
-        const data = await res.json();
         
-        if (!isMounted) return;
-        setSignals(data.signals || []);
-        setLastUpdate(new Date());
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          if (!isMounted) return;
+          setSignals(data.signals || []);
+          setLastUpdate(new Date());
+          setError(null);
+        } else {
+          // If we receive HTML (e.g. from Vite SPA fallback or cloud proxy), ignore it silently and retry later
+          throw new Error('Received non-JSON response, likely server rebooting...');
+        }
         setLoading(false);
       } catch (err: any) {
         if (isMounted) {
-          console.error("Signal scanner error:", err);
-          setError(err.message);
+          setError(err.message !== 'Received non-JSON response, likely server rebooting...' ? err.message : null);
           setLoading(false);
         }
       }
