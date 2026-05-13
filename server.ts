@@ -223,12 +223,12 @@ async function fetchWithTimeout(url: string, options: any = {}) {
     
     // Handle Binance Geoblocks on US environments (Render, etc.)
     if (!response.ok && (response.status === 451 || response.status === 403) && url.includes('binance.com')) {
-      console.log(`[Binance ${response.status}] Blocked by geo-restriction. Attempting proxy...`);
-      // Use proxy to bypass IP ban
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-      response = await fetch(proxyUrl, {
-        ...options
-      });
+      console.log(`[Binance ${response.status}] Blocked by geo-restriction. Missing data for ${url}`);
+      
+      // If it's a klines request, fallback to Bybit to bypass IP ban instantly
+      if (url.includes('/v1/klines') || url.includes('/v1/premiumIndex')) {
+        return handleBybitFallback(url, options);
+      }
     }
 
     clearTimeout(id);
@@ -237,6 +237,76 @@ async function fetchWithTimeout(url: string, options: any = {}) {
     clearTimeout(id);
     throw error;
   }
+}
+
+async function handleBybitFallback(binanceUrl: string, options: any) {
+  try {
+    const urlObj = new URL(binanceUrl);
+    const symbol = urlObj.searchParams.get('symbol');
+    
+    if (binanceUrl.includes('/v1/klines')) {
+      let interval = urlObj.searchParams.get('interval');
+      const limit = urlObj.searchParams.get('limit') || 200;
+      
+      // Map Binance interval to Bybit
+      const intervalMap: Record<string, string> = {
+        '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+        '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
+        '1d': 'D', '1w': 'W', '1M': 'M'
+      };
+      const bybitInterval = intervalMap[interval as string] || '1';
+      
+      const bybitUrl = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+      const res = await fetch(bybitUrl, options);
+      const data = await res.json();
+      
+      if (data.retCode === 0 && data.result && data.result.list) {
+        // Bybit returns list sorted DESCENDING (newest first)
+        // Binance expects ASCENDING (oldest first)
+        const mapped = data.result.list.reverse().map((k: any) => [
+          parseInt(k[0]), // open time
+          k[1], // open
+          k[2], // high
+          k[3], // low
+          k[4], // close
+          k[5], // volume
+          parseInt(k[0]) + 60000, // Bybit doesn't give closeTime directly by default
+          "0", "0", "0", "0", "0" // Padding to match Binance structure
+        ]);
+        
+        // Mock a response object to match `fetch` signature
+        return {
+          ok: true,
+          status: 200,
+          json: async () => mapped
+        } as Response;
+      }
+    } 
+    else if (binanceUrl.includes('/v1/premiumIndex')) {
+      // Bybit Premium Index (Funding Rate) fallback
+      const bybitUrl = `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`;
+      const res = await fetch(bybitUrl, options);
+      const data = await res.json();
+      if (data.retCode === 0 && data.result?.list?.length > 0) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            lastFundingRate: data.result.list[0].fundingRate
+          })
+        } as Response;
+      }
+    }
+  } catch (e) {
+    console.error("Bybit fallback failed:", e);
+  }
+  
+  // Return an empty successful format if all fails to not crash the engine
+  return {
+    ok: true,
+    status: 200,
+    json: async () => []
+  } as Response;
 }
 
 const MEME_COINS = new Set([
@@ -1102,25 +1172,14 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
         console.error("Failed to fetch BTC 1H trend for King Filter:", e);
       }
 
-      // Pre-heat all timeframes with chunking to avoid Binance rate limits
-      const chunkSize = 5;
-      for (let i = 0; i < symbols.length; i += chunkSize) {
-        const chunk = symbols.slice(i, i + chunkSize);
-        await Promise.all(chunk.map(async (symbol) => {
-          try {
-            await fetchKlines(symbol, "3m");
-            await fetchKlines(symbol, "15m");
-            await fetchKlines(symbol, "1h");
-            await fetchKlines(symbol, "4h");
-          } catch(e) {}
-        }));
-        await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between chunks
-      }
-
-      // Process symbols sequentially since WS cache avoids rate limits
+      // Process symbols simultaneously (concurrently staggered to allow backend to do everything simultaneously without rate limiting itself internally)
       let diagnosticCounts = { total: symbols.length, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };
-      for (const symbol of symbols) {
+      
+      await Promise.all(symbols.map(async (symbol, idx) => {
         try {
+          // Stagger simultaneous executions slightly to ease concurrent pressure on fetching
+          await new Promise(r => setTimeout(r, idx * 30));
+
           // 1. Fetch 3M for active trade monitoring and sniper entry
           const klines3m = await fetchKlines(symbol, "3m");
 
@@ -1263,18 +1322,18 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                 }
               }
             }
-            if (activeTrade || tradeClosed) continue; // Skip generating new signals if a trade is already active or just closed
+            if (activeTrade || tradeClosed) return; // Skip generating new signals if a trade is already active or just closed
             // --- END ACTIVE TRADE MONITORING ---
 
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
             const htfDirection = getHTFDirection(klines4h);
-            if (htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; continue; }
+            if (htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; return; }
 
             // 2.5 1H Control Layer (Veto Filter)
             const klines1h = await fetchKlines(symbol, "1h");
             const control1H = get1HControlState(klines1h, htfDirection);
-            if (control1H.state === "VETO") { diagnosticCounts.veto1h++; continue; }
+            if (control1H.state === "VETO") { diagnosticCounts.veto1h++; return; }
 
             // 3. 15M Confirmation (Confidence/Setup)
             const klines15m = await fetchKlines(symbol, "15m");
@@ -1284,8 +1343,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               [],
               symbol,
             );
-            if (mtfAnalysis.signal === "NO TRADE") { diagnosticCounts.mtfNoTrade++; continue; }
-            if (htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; continue; }
+            if (mtfAnalysis.signal === "NO TRADE") { diagnosticCounts.mtfNoTrade++; return; }
+            if (htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; return; }
 
             // Upgrade 1: King Filter Application
             if (symbol !== "BTCUSDT") {
@@ -1293,13 +1352,13 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { 
                 diagnosticCounts.btcConflict++; 
                 console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
-                continue; 
+                return; 
               }
               // Altcoin SHORT allowed only if BTC weak (SHORT)
               if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT") { 
                 diagnosticCounts.btcConflict++; 
                 console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
-                continue; 
+                return; 
               }
             }
 
@@ -1311,7 +1370,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             if (!ltfValidation.isValid) { 
               diagnosticCounts.ltfInvalid++; 
               console.log(`[Reject] ${symbol}: LTF Invalid (${ltfValidation.reason})`);
-              continue; 
+              return; 
             }
 
             // Upgrade 3: VWAP & Liquidity Sniping (Limit Entry)
@@ -1441,7 +1500,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                   console.log(
                     `Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Entry: ${entryPrice}, TP: ${tp}, SL: ${sl}`,
                   );
-                  continue;
+                  return;
                 }
                 // -------------------------------
 
@@ -1465,7 +1524,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               err,
             );
           }
-        } // End of for (const symbol of symbols)
+        })); // End of Promise.all mappings
 
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
