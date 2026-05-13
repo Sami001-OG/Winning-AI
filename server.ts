@@ -253,13 +253,20 @@ async function fetchWithTimeout(url: string, options: any = {}) {
       signal: controller.signal,
     });
     
-    // Handle Binance Geoblocks on US environments (Render, etc.)
-    if (!response.ok && (response.status === 451 || response.status === 403) && url.includes('binance.com')) {
-      console.log(`[Binance ${response.status}] Blocked by geo-restriction. Missing data for ${url}`);
-      
-      // If it's a klines request, fallback to Bybit to bypass IP ban instantly
-      if (url.includes('/v1/klines') || url.includes('/v1/premiumIndex')) {
-        return handleBybitFallback(url, options);
+    const contentType = response.headers.get("content-type");
+    const isHtml = contentType && contentType.includes("text/html");
+
+    // Handle Binance Geoblocks on US environments (Render, etc.) or HTML responses from Cloudflare
+    if ((!response.ok && (response.status === 451 || response.status === 403)) || (response.ok && isHtml)) {
+      if (url.includes('binance.com')) {
+        console.log(`[Binance] Blocked by geo-restriction or HTML captcha. Status: ${response.status}. URL: ${url}`);
+        
+        // If it's a klines request, fallback to Bybit to bypass IP ban instantly
+        if (url.includes('/v1/klines') || url.includes('/v1/premiumIndex')) {
+          return handleBybitFallback(url, options);
+        }
+      } else if (response.ok && isHtml) {
+        throw new Error(`Expected JSON but received HTML from ${url}`);
       }
     }
 
