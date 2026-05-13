@@ -1588,14 +1588,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
-        // 1. Dynamic Threshold: if too many signals, raise threshold
-        if (allSignals.length > 3) {
-          allSignals.sort(
-            (a, b) => b.analysis.confidence - a.analysis.confidence,
-          );
-          allSignals.splice(3); // Keep only top 3
-        }
-
         // 2. Correlation Grouping
         const groupBestSignal = new Map<string, any>();
         for (const sig of allSignals) {
