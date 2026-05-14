@@ -20,75 +20,93 @@ export const createNoTradeResult = (reason: string): AnalysisResult => ({
   layers: { marketCondition: 0, trend: 0, entry: 0, confirmation: 0, structure: 0, volatility: 0 }
 });
 
-export const analyzeChartPDF = (klines15m: Candle[], htfDirection: 'LONG' | 'SHORT' | 'NEUTRAL'): any => {
-  if (htfDirection === 'NEUTRAL' || klines15m.length < 50) return { signal: 'NO TRADE', confidence: 0 };
+export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' => {
+  if (data.length < 200) return 'NEUTRAL';
+  const closes = data.map(d => d.close);
+  const highs = data.map(d => d.high);
+  const lows = data.map(d => d.low);
   
-  const closes = klines15m.map(k => k.close);
-  const highs = klines15m.map(k => k.high);
-  const lows = klines15m.map(k => k.low);
+  const ema9 = EMA.calculate({ values: closes, period: 9 });
+  const ema21 = EMA.calculate({ values: closes, period: 21 });
+  const ema50 = EMA.calculate({ values: closes, period: 50 });
+  const ema200 = EMA.calculate({ values: closes, period: 200 });
+  const lastEma9 = ema9[ema9.length - 1];
+  const lastEma21 = ema21[ema21.length - 1];
+  const lastEma50 = ema50[ema50.length - 1];
+  const lastEma200 = ema200[ema200.length - 1];
   const lastClose = closes[closes.length - 1];
-  
-  const rsi = RSI.calculate({ values: closes, period: 14 });
-  const macd = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-  const atr = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
-  
-  const lastRsi = rsi[rsi.length - 1];
+
+  const macd = MACD.calculate({
+    values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9,
+    SimpleMAOscillator: false, SimpleMASignal: false
+  });
   const lastMacd = macd[macd.length - 1];
   const prevMacd = macd[macd.length - 2];
-  const lastAtr = atr[atr.length - 1];
+  const prevPrevMacd = macd[macd.length - 3];
 
-  let signal: 'LONG' | 'SHORT' | 'NO TRADE' = 'NO TRADE';
-  
-  if (htfDirection === 'LONG') {
-    // PDF Rule: RSI < 30 OR MACD histogram crosses above zero
-    const rsiOversold = lastRsi < 35; // slightly loose
-    const macdCrossUp = prevMacd.histogram !== undefined && lastMacd.histogram !== undefined && prevMacd.histogram <= 0 && lastMacd.histogram > 0;
-    
-    if (rsiOversold || macdCrossUp) {
-      signal = 'LONG';
-    }
-  } else if (htfDirection === 'SHORT') {
-    // PDF Rule: RSI > 70 OR MACD histogram crosses below zero
-    const rsiOverbought = lastRsi > 65; // slightly loose
-    const macdCrossDown = prevMacd.histogram !== undefined && lastMacd.histogram !== undefined && prevMacd.histogram >= 0 && lastMacd.histogram < 0;
-    
-    if (rsiOverbought || macdCrossDown) {
-      signal = 'SHORT';
+  const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: 20 });
+  const lastAdx = adx[adx.length - 1];
+
+  const bos = detectBOS(data);
+  const volProfile = calculateVolumeProfile(data);
+  const orderFlow = calculateOrderFlow(data, 10);
+  const liquidityGrab = detectLiquidityGrab(data);
+
+  let longScore = 0;
+  let shortScore = 0;
+
+  // Strict 200 EMA Macro Trend rule
+  if (lastClose < lastEma200 && lastEma9 < lastEma50) {
+    longScore = -100; // Veto long
+  } else if (lastClose > lastEma200 && lastEma9 > lastEma50) {
+    shortScore = -100; // Veto short
+  }
+
+  // 1. Trend Alignment (High Weight)
+  if (lastClose > lastEma9 && lastEma9 > lastEma21 && lastEma21 > lastEma50) longScore += 2;
+  if (lastClose < lastEma9 && lastEma9 < lastEma21 && lastEma21 < lastEma50) shortScore += 2;
+
+  // 2. Momentum (MACD as Leading Indicator)
+  if (lastMacd && prevMacd && prevPrevMacd) {
+    const hist = lastMacd.histogram || 0;
+    const prevHist = prevMacd.histogram || 0;
+    const prevPrevHist = prevPrevMacd.histogram || 0;
+
+    if (hist > 0) {
+      if (hist > prevHist && prevHist > prevPrevHist) longScore += 1.5; // Deep Green
+      else if (hist < prevHist) shortScore += 1; // Light Green (Weakening)
+      else longScore += 0.5;
+    } else if (hist < 0) {
+      if (hist < prevHist && prevHist < prevPrevHist) shortScore += 1.5; // Deep Red
+      else if (hist > prevHist) longScore += 1; // Light Red (Weakening)
+      else shortScore += 0.5;
     }
   }
-  
-  if (signal === 'NO TRADE') return { signal, confidence: 0 };
-  
-  // Set stops and targets based on PDF
-  const risk = lastAtr; // 1x ATR
-  let tp, sl;
-  if (signal === 'LONG') {
-    sl = lastClose - risk;
-    tp = lastClose + (risk * 2); // 2:1 RR
-  } else {
-    sl = lastClose + risk;
-    tp = lastClose - (risk * 2);
-  }
-  
-  return {
-    signal,
-    confidence: 85, // Set high confidence for passing strict strategy
-    sl,
-    tp,
-    indicators: [{ name: 'PDF Strategy', value: signal, signal: signal, description: 'Aligned with HTF Trend, confirmed by RSI/MACD extremes and structure' }],
-    layers: {},
-    confluences: { supporting: [], neutral: [], opposing: [] }
-  };
-};
-export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' => {
-  if (data.length < 100) return 'NEUTRAL';
-  const closes = data.map(d => d.close);
-  const ema100 = EMA.calculate({ values: closes, period: 100 });
-  const lastEma100 = ema100[ema100.length - 1];
-  const lastClose = closes[closes.length - 1];
 
-  if (lastClose > lastEma100) return 'LONG';
-  if (lastClose < lastEma100) return 'SHORT';
+  if (lastAdx && lastAdx.adx > 25) {
+    if (lastAdx.pdi > lastAdx.mdi) longScore += 1.5;
+    if (lastAdx.mdi > lastAdx.pdi) shortScore += 1.5;
+  }
+
+  // 3. Market Structure & Liquidity
+  if (bos === 'bullish') longScore += 1.5;
+  if (bos === 'bearish') shortScore += 1.5;
+
+  if (liquidityGrab === 'bullish') longScore += 1;
+  if (liquidityGrab === 'bearish') shortScore += 1;
+
+  // 4. Order Flow & Volume Profile
+  if (lastClose > volProfile.vaHigh) longScore += 1;
+  if (lastClose < volProfile.vaLow) shortScore += 1;
+
+  if (orderFlow.signal === 'bullish') longScore += 1;
+  if (orderFlow.signal === 'bearish') shortScore += 1;
+
+  // 5. Divergence (Removed from 4h, handled in 15m)
+
+  // Require a strong conviction for HTF trend, and ensure it strictly beats the opposing side
+  if (longScore >= 2.0 && longScore > shortScore) return 'LONG';
+  if (shortScore >= 2.0 && shortScore > longScore) return 'SHORT';
   
   return 'NEUTRAL';
 };

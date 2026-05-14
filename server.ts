@@ -8,7 +8,6 @@ import {
   getHTFDirection,
   validateLTFEntry,
   get1HControlState,
-  analyzeChartPDF
 } from "./src/multiTimeframe.ts";
 import { formatPrice } from "./src/utils/format.ts";
 import { EMA, MACD, RSI } from "technicalindicators";
@@ -435,7 +434,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 50) // background scanner will parse the top 50 volume pairs
+      .slice(0, 100) // background scanner will parse the top 100 volume pairs
       .map((t: any) => t.symbol);
     lastTopSymbolsUpdate = Date.now();
     return cachedTopSymbols;
@@ -745,11 +744,18 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Self-ping to keep server alive (prevent sleeping)
+  // Self-ping to keep server alive (prevent sleeping on Render free tier)
   setInterval(() => {
     try {
-      const pingUrl = process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}/api/health` : `http://127.0.0.1:${PORT}/api/health`;
-      fetch(pingUrl).catch(() => {});
+      if (process.env.RENDER_EXTERNAL_URL) {
+        // Bounce the ping through a public proxy so Render sees it as external inbound traffic!
+        const targetUrl = `${process.env.RENDER_EXTERNAL_URL}/api/health`;
+        const proxyBounceUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+        fetch(proxyBounceUrl).catch(() => {});
+      } else {
+        const pingUrl = `http://127.0.0.1:${PORT}/api/health`;
+        fetch(pingUrl).catch(() => {});
+      }
     } catch(e) {}
   }, 45000);
 
@@ -1230,11 +1236,14 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
         console.error("Failed to fetch BTC 1H trend for King Filter:", e);
       }
 
-      // Process symbols simultaneously
+      // Process symbols simultaneously but with concurrency limit (e.g. 5 at a time) to prevent network choke
       let diagnosticCounts = { total: symbols.length, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };
       
-      await Promise.all(symbols.map(async (symbol) => {
-        try {
+      const CONCURRENCY = 5;
+      for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+        const chunk = symbols.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(async (symbol) => {
+          try {
           // 1. Fetch 3M for active trade monitoring and sniper entry
           const klines3m = await fetchKlines(symbol, "3m");
 
@@ -1385,26 +1394,48 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             const htfDirection = getHTFDirection(klines4h);
             if (htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; return; }
 
+            // 2.5 1H Control Layer
+            const klines1h = await fetchKlines(symbol, "1h");
+            const control1H = get1HControlState(klines1h, htfDirection);
+
+
+            // 3. 15M Confirmation (Confidence/Setup)
+            const klines15m = await fetchKlines(symbol, "15m");
+            const mtfAnalysis = analyzeChart(
+              klines15m,
+              DEFAULT_RELIABILITY,
+              [],
+              symbol,
+            );
+            if (mtfAnalysis.signal === "NO TRADE") { diagnosticCounts.mtfNoTrade++; return; }
+            if (htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; return; }
+
             // Upgrade 1: King Filter Application
             if (symbol !== "BTCUSDT") {
               // Altcoin LONG allowed only if BTC not bearish (LONG or NEUTRAL)
-              if (htfDirection === "LONG" && btcTrend === "SHORT") { 
+              if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { 
                 diagnosticCounts.btcConflict++; 
-                console.log(`[Reject] ${symbol}: BTC Conflict (Direction: LONG, BTC: ${btcTrend})`);
+                console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
                 return; 
               }
               // Altcoin SHORT allowed only if BTC weak (SHORT)
-              if (htfDirection === "SHORT" && btcTrend !== "SHORT") { 
+              if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT") { 
                 diagnosticCounts.btcConflict++; 
-                console.log(`[Reject] ${symbol}: BTC Conflict (Direction: SHORT, BTC: ${btcTrend})`);
+                console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
                 return; 
               }
             }
 
-            // 3. 15M Confirmation & Entry Logic (pdf strategy)
-            const klines15m = await fetchKlines(symbol, "15m");
-            const mtfAnalysis = analyzeChartPDF(klines15m, htfDirection);
-            if (mtfAnalysis.signal === "NO TRADE") { diagnosticCounts.mtfNoTrade++; return; }
+            // 4. 3M Entry (already fetched klines3m)
+            const ltfValidation = validateLTFEntry(
+              klines3m,
+              mtfAnalysis.signal as "LONG" | "SHORT",
+            );
+            if (!ltfValidation.isValid) { 
+              diagnosticCounts.ltfInvalid++; 
+              console.log(`[Reject] ${symbol}: LTF Invalid (${ltfValidation.reason})`);
+              return; 
+            }
 
             // Upgrade 3: VWAP & Liquidity Sniping (Limit Entry)
             const closes3m = klines3m.map((k) => k.close);
@@ -1426,30 +1457,76 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                 ? cumulativeTypicalVolume / cumulativeVolume
                 : closes3m[closes3m.length - 1];
 
-            const entryPrice = closes3m[closes3m.length - 1] || klines15m[klines15m.length - 1].close;
-
             if (mtfAnalysis.signal === "LONG") {
               mtfAnalysis.limitEntry = Math.min(lastEma20_3m, vwap3m);
             } else {
               mtfAnalysis.limitEntry = Math.max(lastEma20_3m, vwap3m);
             }
-            mtfAnalysis.limitEntry = entryPrice; // simplified
-            mtfAnalysis.entryStrategy = "Market/Limit Breakdown";
+            mtfAnalysis.entryStrategy = "Limit (Pullback)";
 
-            let premiumLogicStr = "PDF Strategy Rules";
+            // Premium Upgrades: OI and Funding Rate
+            let premiumLogicStr = "";
+            try {
+              if (control1H.state === "CONTINUATION") {
+                const oiRes = await fetchWithTimeout(
+                  `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
+                );
+                if (!oiRes.headers.get("content-type")?.includes("application/json")) {
+                  throw new Error("Binance HTML error");
+                }
+                const oiData = await oiRes.json();
+                if (Array.isArray(oiData) && oiData.length === 2) {
+                  const prev = parseFloat(oiData[0].sumOpenInterestValue);
+                  const curr = parseFloat(oiData[1].sumOpenInterestValue);
+                  if (prev > 0) {
+                    const oiChange = (curr - prev) / prev;
+                    if (oiChange > 0.001) {
+                      // > 0.1% increase in 15m
+                      // mtfAnalysis.confidence += 5;
+                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising`;
+                    }
+                  }
+                }
+              } else if (control1H.state === "EXHAUSTION") {
+                const frRes = await fetchWithTimeout(
+                  `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
+                );
+                if (!frRes.headers.get("content-type")?.includes("application/json")) {
+                  throw new Error("Binance HTML error");
+                }
+                const frData = await frRes.json();
+                const fundingRate = parseFloat(frData.lastFundingRate);
+
+                if (mtfAnalysis.signal === "LONG" && fundingRate < -0.0001) {
+                  // mtfAnalysis.confidence += 8;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate`;
+                } else if (
+                  mtfAnalysis.signal === "SHORT" &&
+                  fundingRate > 0.0005
+                ) {
+                  // mtfAnalysis.confidence += 8;
+                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate`;
+                }
+              }
+            } catch (e) {
+              console.error(`Failed to fetch premium data for ${symbol}:`, e);
+            }
             (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
+
+            // Cap confidence at 100 after premium upgrades
+            mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
 
             currentFrontendTrades.push({
               symbol,
               analysis: mtfAnalysis,
-              lastPrice: entryPrice,
+              lastPrice: klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0,
               entryDirection: 'none'
             });
 
             // 5. Combine and Send
             if (mtfAnalysis.confidence >= requiredConfidence) {
               const now = Date.now();
-              const signalKey = `${symbol}-PDF (4h, 15m)`;
+              const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
               const lastSent = lastSentSignals[signalKey];
 
               if (
@@ -1457,21 +1534,29 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                 lastSent.direction !== mtfAnalysis.signal ||
                 now - lastSent.timestamp > COOLDOWN_MS
               ) {
+                const entryPrice =
+                  klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0;
                 const tp = mtfAnalysis.tp || 0;
                 const sl = mtfAnalysis.sl || 0;
 
+                // --- STALE SIGNAL PREVENTION ---
+                // If the current 3m price has already hit TP or SL (calculated from 15m), it's a stale signal.
                 let isStale = false;
+
+                // 1. Current Price Check & R:R Check
                 const risk = Math.abs(entryPrice - sl);
                 const rewardToTp = Math.abs(tp - entryPrice);
 
                 if (mtfAnalysis.signal === "LONG") {
                   if (entryPrice >= tp || entryPrice <= sl) isStale = true;
-                  if (rewardToTp < risk * 0.5) isStale = true; 
+                  if (rewardToTp < risk * 0.5) isStale = true; // Price already moved too far up
                 } else if (mtfAnalysis.signal === "SHORT") {
                   if (entryPrice <= tp || entryPrice >= sl) isStale = true;
-                  if (rewardToTp < risk * 0.5) isStale = true; 
+                  if (rewardToTp < risk * 0.5) isStale = true; // Price already moved too far down
                 }
 
+                // 2. Extended Wick Check (Last 45 minutes)
+                // If the price has already wicked to TP or SL recently, the move is over.
                 const recentCandles = klines3m.slice(-15);
                 for (const c of recentCandles) {
                   if (mtfAnalysis.signal === "LONG") {
@@ -1487,7 +1572,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                   );
                   return;
                 }
-                
+                // -------------------------------
+
                 allSignals.push({
                   symbol,
                   signalKey,
@@ -1495,8 +1581,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                   entryPrice,
                   tp,
                   sl,
+                  control1H,
                   sessionName,
-                  control1H: { state: 'CONFIRMED', reason: 'PDF System' }
                 });
               }
             } else {
@@ -1508,7 +1594,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               err,
             );
           }
-        })); // End of Promise.all mappings
+        })); // End of chunk Promise.all mappings
+      } // End of chunk loop
 
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
@@ -1577,11 +1664,12 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 
 🪙 <b>Pair:</b> #${sig.symbol}
 ${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
-⏱ <b>Timeframe:</b> Multi-TF (4h Trend, 15m Entry)
+⏱ <b>Timeframe:</b> Multi-TF (4h, 1h, 15m, 3m)${strategyStr}
+🛡 <b>1H State:</b> ${sig.control1H.state} (${sig.control1H.reason})
 👑 <b>BTC Trend:</b> ${btcTrend}
 🕒 <b>Session:</b> ${sig.sessionName}
 
-🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code> (Market/Limit Breakdown)
+🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>${limitEntryStr}
 ✅ <b>Target:</b> <code>${formatPrice(sig.tp)}</code>
 ❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>
 
