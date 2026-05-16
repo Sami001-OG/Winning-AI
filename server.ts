@@ -462,44 +462,16 @@ let binanceWs: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let rateLimitNotified = false;
 
-function updateHTFCandle(arr: any[], candle1m: any, multiplier: number) {
-  if (!arr || arr.length === 0) return;
-  const htfOpenTime = Math.floor(candle1m.time / (multiplier * 60)) * (multiplier * 60);
-  const lastHTF = arr[arr.length - 1];
-
-  if (lastHTF.time === htfOpenTime) {
-    lastHTF.high = Math.max(lastHTF.high, candle1m.high);
-    lastHTF.low = Math.min(lastHTF.low, candle1m.low);
-    lastHTF.close = candle1m.close;
-    lastHTF.volume += candle1m.volume; // Simple accumulation, not perfectly exact if updates are partial but okay for indicator approximation
-    // We don't bother strictly with volume reset on partials because we just want the overall direction
-  } else if (htfOpenTime > lastHTF.time) {
-    arr.push({
-      time: htfOpenTime,
-      open: candle1m.open,
-      high: candle1m.high,
-      low: candle1m.low,
-      close: candle1m.close,
-      volume: candle1m.volume,
-      isFinal: false
-    });
-    if (arr.length > 1500) arr.shift();
-  }
-}
-
 function initBinanceWs() {
   if (binanceWs) return;
   binanceWs = new WebSocket('wss://fstream.binance.com/stream');
 
   binanceWs.on('open', () => {
     console.log('[Binance WS] Connected for background scanner');
-    fetchTopSymbols().then(symbols => {
-      symbols.forEach(s => subscribedStreams.add(`${s.toLowerCase()}@kline_1m`));
-      if (subscribedStreams.size > 0) {
-        wsSubscribeQueue.push(...Array.from(subscribedStreams));
-        processWsQueue();
-      }
-    });
+    if (subscribedStreams.size > 0) {
+      wsSubscribeQueue.push(...Array.from(subscribedStreams));
+      processWsQueue();
+    }
   });
 
   binanceWs.on('message', (data: WebSocket.Data) => {
@@ -507,14 +479,14 @@ function initBinanceWs() {
       const msg = JSON.parse(data.toString());
       if (msg.data && msg.data.e === 'kline') {
         const s = msg.data.s;
-        const i = msg.data.k.i; // This will now ALWAYS be "1m" because we only subscribe to 1m
+        const i = msg.data.k.i;
         const k = msg.data.k;
         
         if (!klineCache[s]) klineCache[s] = {};
         if (!klineCache[s][i]) klineCache[s][i] = [];
         
         const arr = klineCache[s][i];
-        const last = arr[arr.length - 1];
+        const last = arr.length > 0 ? arr[arr.length - 1] : null;
         const openTime = Math.floor(k.t / 1000);
         
         const candleData = {
@@ -527,46 +499,13 @@ function initBinanceWs() {
           isFinal: k.x
         };
 
-        const TIMEFRAMES: Record<string, number> = {'3m': 3, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '2h': 120, '4h': 240, '1d': 1440};
-
-        let updated = false;
         if (last && last.time === openTime) {
-          // It's a partial update to the current 1m candle. 
-          // Since we might accumulate volume, we should calculate volume delta
-          const volDelta = candleData.volume - last.volume;
           arr[arr.length - 1] = candleData;
-          
-          Object.entries(TIMEFRAMES).forEach(([tf, m]) => {
-            if (klineCache[s][tf] && klineCache[s][tf].length > 0) {
-              const htfArr = klineCache[s][tf];
-              const htfLast = htfArr[htfArr.length - 1];
-              if (htfLast.time === Math.floor(candleData.time / (m * 60)) * (m * 60)) {
-                htfLast.high = Math.max(htfLast.high, candleData.high);
-                htfLast.low = Math.min(htfLast.low, candleData.low);
-                htfLast.close = candleData.close;
-                htfLast.volume += volDelta;
-              }
-            }
-          });
         } else if (last && openTime > last.time) {
-          if (openTime > last.time + 60) {
-            // Gap detected! WS missed data. Invalidate cache to force REST recovery.
-            console.warn(`[Binance WS] Gap detected for ${s}. Invalidating cache for recovery.`);
-            delete klineCache[s];
-            return;
-          }
-
           arr.push(candleData);
           if (arr.length > 1500) arr.shift();
-          
-          Object.entries(TIMEFRAMES).forEach(([tf, m]) => {
-            updateHTFCandle(klineCache[s][tf], candleData, m);
-          });
         } else if (!last) {
           arr.push(candleData);
-          Object.entries(TIMEFRAMES).forEach(([tf, m]) => {
-            updateHTFCandle(klineCache[s][tf], candleData, m);
-          });
         }
       }
     } catch (err) {
@@ -591,8 +530,7 @@ function initBinanceWs() {
 }
 
 function subscribeToWs(symbol: string, tf: string) {
-  // We ONLY subscribe to 1m stream now
-  const streamName = `${symbol.toLowerCase()}@kline_1m`;
+  const streamName = `${symbol.toLowerCase()}@kline_${tf}`;
   if (!subscribedStreams.has(streamName)) {
     subscribedStreams.add(streamName);
     wsSubscribeQueue.push(streamName);
@@ -623,28 +561,6 @@ function processWsQueue() {
   }, 250); // 4 messages per second (max is 5)
 }
 
-function aggregateCandles(candles1m: any[], timeframe: string): any[] {
-  const multipliers: Record<string, number> = { '3m': 3, '15m': 15, '1h': 60, '4h': 240 };
-  const m = multipliers[timeframe];
-  if (!m) return candles1m;
-
-  const result = [];
-  for (let i = 0; i < candles1m.length; i += m) {
-    const group = candles1m.slice(i, i + m);
-    if (group.length < m) break; // Incomplete candle
-
-    result.push({
-      time: group[0].time,
-      open: group[0].open,
-      high: Math.max(...group.map(c => c.high)),
-      low: Math.min(...group.map(c => c.low)),
-      close: group[group.length - 1].close,
-      volume: group.reduce((sum, c) => sum + c.volume, 0),
-      isFinal: group[group.length - 1].isFinal
-    });
-  }
-  return result;
-}
 
 const inflightKlines = new Map<string, Promise<any>>();
 let isRateLimitedUntil = 0;
@@ -1333,6 +1249,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                     `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
                   ).catch(console.error);
                   delete activeTrades[symbol];
+                  delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                   tradeClosed = true;
                   break;
                 }
@@ -1348,6 +1265,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "LONG")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
+                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   } else if (
                     currentHigh >= activeTrade.tp
@@ -1358,6 +1276,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "LONG")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
+                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   }
                 } else if (activeTrade.direction === "SHORT") {
@@ -1371,6 +1290,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "SHORT")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
+                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   } else if (
                     currentLow <= activeTrade.tp
@@ -1381,6 +1301,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "SHORT")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
+                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   }
                 }
@@ -1549,10 +1470,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 
                 if (mtfAnalysis.signal === "LONG") {
                   if (entryPrice >= tp || entryPrice <= sl) isStale = true;
-                  if (rewardToTp < risk * 0.5) isStale = true; // Price already moved too far up
                 } else if (mtfAnalysis.signal === "SHORT") {
                   if (entryPrice <= tp || entryPrice >= sl) isStale = true;
-                  if (rewardToTp < risk * 0.5) isStale = true; // Price already moved too far down
                 }
 
                 // 2. Extended Wick Check (Last 45 minutes)
@@ -1644,8 +1563,9 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
           const limitEntryStr = sig.analysis.limitEntry
             ? `\n⏳ Limit (Pullback): ${formatPrice(sig.analysis.limitEntry)}`
             : "";
+          const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           const strategyStr = sig.analysis.entryStrategy
-            ? `\n\n📝 Strategy: ${sig.analysis.entryStrategy}`
+            ? `\n\n📝 Strategy: ${escapeHtml(sig.analysis.entryStrategy)}`
             : "";
 
           const logicStrRaw =
@@ -1658,16 +1578,16 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               .map((i: any) => `• ${i.name}: ${i.description}`)
               .join("\n") + ((sig.analysis as any).premiumLogicStr || "");
               
-          const logicStr = logicStrRaw.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const logicStr = escapeHtml(logicStrRaw);
 
           const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
 
 🪙 <b>Pair:</b> #${sig.symbol}
 ${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
 ⏱ <b>Timeframe:</b> Multi-TF (4h, 1h, 15m, 3m)${strategyStr}
-🛡 <b>1H State:</b> ${sig.control1H.state} (${sig.control1H.reason})
-👑 <b>BTC Trend:</b> ${btcTrend}
-🕒 <b>Session:</b> ${sig.sessionName}
+🛡 <b>1H State:</b> ${escapeHtml(sig.control1H.state)} (${escapeHtml(sig.control1H.reason)})
+👑 <b>BTC Trend:</b> ${escapeHtml(btcTrend)}
+🕒 <b>Session:</b> ${escapeHtml(sig.sessionName)}
 
 🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>${limitEntryStr}
 ✅ <b>Target:</b> <code>${formatPrice(sig.tp)}</code>
@@ -1679,9 +1599,9 @@ ${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
 ${logicStr}`;
 
           const bullishImageUrl =
-            "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+            "https://quickchart.io/chart?c=" + encodeURIComponent("{type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}");
           const bearishImageUrl =
-            "https://quickchart.io/chart?c={type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}";
+            "https://quickchart.io/chart?c=" + encodeURIComponent("{type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}");
           const imageUrl =
             sig.analysis.signal === "LONG" ? bullishImageUrl : bearishImageUrl;
 
