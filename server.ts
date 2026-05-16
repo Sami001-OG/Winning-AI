@@ -38,25 +38,20 @@ function getBinanceSignature(queryString: string, secret: string) {
   return crypto.createHmac("sha256", secret).update(queryString).digest("hex");
 }
 
-function getRotatingKeys() {
-  const keys: {key: string, secret: string}[] = [];
-  
-  if (process.env.BINANCE_API_KEY && process.env.BINANCE_SECRET_KEY) {
-    keys.push({ key: process.env.BINANCE_API_KEY, secret: process.env.BINANCE_SECRET_KEY });
-  }
-  if (process.env.BINANCE_API_KEY_2 && process.env.BINANCE_SECRET_KEY_2) {
-    keys.push({ key: process.env.BINANCE_API_KEY_2, secret: process.env.BINANCE_SECRET_KEY_2 });
-  }
-  if (process.env.BINANCE_API_KEY_3 && process.env.BINANCE_SECRET_KEY_3) {
-    keys.push({ key: process.env.BINANCE_API_KEY_3, secret: process.env.BINANCE_SECRET_KEY_3 });
-  }
+function getTradingKey() {
+  return { key: process.env.BINANCE_API_KEY, secret: process.env.BINANCE_SECRET_KEY };
+}
 
-  if (keys.length === 0) {
-    return null;
-  }
-  
-  const randomIndex = Math.floor(Math.random() * keys.length);
-  return keys[randomIndex];
+function getIndicatorKey() {
+  const key = process.env.BINANCE_API_KEY_2 || process.env.BINANCE_API_KEY;
+  const secret = process.env.BINANCE_SECRET_KEY_2 || process.env.BINANCE_SECRET_KEY;
+  return { key, secret };
+}
+
+function getWsKey() {
+  const key = process.env.BINANCE_API_KEY_3 || process.env.BINANCE_API_KEY;
+  const secret = process.env.BINANCE_SECRET_KEY_3 || process.env.BINANCE_SECRET_KEY;
+  return { key, secret };
 }
 
 async function binanceFuturesRequest(
@@ -64,9 +59,9 @@ async function binanceFuturesRequest(
   endpoint: string,
   params: Record<string, any> = {},
 ) {
-  const credentials = getRotatingKeys();
-  if (!credentials) {
-    throw new Error("Binance API keys not configured. Set BINANCE_API_KEY and BINANCE_SECRET_KEY or use 2/3 suffixes.");
+  const credentials = getTradingKey();
+  if (!credentials.key || !credentials.secret) {
+    throw new Error("Binance trading API keys not configured. Set BINANCE_API_KEY and BINANCE_SECRET_KEY.");
   }
   
   const { key: apiKey, secret: apiSecret } = credentials;
@@ -232,14 +227,18 @@ async function sendTelegramSignal(
   return false;
 }
 
-async function fetchWithTimeout(url: string, options: any = {}) {
+async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICATOR' | 'WEBSOCKET' | 'TRADING' = 'INDICATOR') {
   const timeout = options.timeout || 10000;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
-    // If it's a Binance request, inject a rotating API key to bypass potential IP rate limits
+    // If it's a Binance request, inject a specifically targeted API key to bypass potential IP rate limits
     if (url.includes('binance.com')) {
-      const creds = getRotatingKeys();
+      let creds;
+      if (intent === 'WEBSOCKET') creds = getWsKey();
+      else if (intent === 'TRADING') creds = getTradingKey();
+      else creds = getIndicatorKey();
+
       if (creds && creds.key) {
         options.headers = {
           ...options.headers,
@@ -414,6 +413,8 @@ async function fetchTopSymbols() {
   try {
     const res = await fetchWithTimeout(
       `https://fapi.binance.com/fapi/v1/ticker/24hr?_t=${Date.now()}`,
+      { timeout: 10000 },
+      'INDICATOR'
     );
     if (!res.headers.get("content-type")?.includes("application/json")) {
       throw new Error("Binance HTML error");
@@ -464,7 +465,14 @@ let rateLimitNotified = false;
 
 function initBinanceWs() {
   if (binanceWs) return;
-  binanceWs = new WebSocket('wss://fstream.binance.com/stream');
+  const wsOptions: WebSocket.ClientOptions = {};
+  const wsCreds = getWsKey();
+  if (wsCreds && wsCreds.key) {
+    wsOptions.headers = {
+      "X-MBX-APIKEY": wsCreds.key
+    };
+  }
+  binanceWs = new WebSocket('wss://fstream.binance.com/stream', wsOptions);
 
   binanceWs.on('open', () => {
     console.log('[Binance WS] Connected for background scanner');
@@ -506,6 +514,23 @@ function initBinanceWs() {
           if (arr.length > 1500) arr.shift();
         } else if (!last) {
           arr.push(candleData);
+        }
+
+        const subsMap = (global as any).clientSubscriptions;
+        if (subsMap) {
+           subsMap.forEach((subs: any, wsClient: any) => {
+              if (wsClient.readyState === 1 && subs.some((sub: any) => sub.symbol === s && sub.interval === i)) {
+                 const now = Date.now();
+                 const cKey = `${s}_${i}_last_emit` as any;
+                 if (!(klineCache as any)[cKey] || now - (klineCache as any)[cKey] > 1000) {
+                    (klineCache as any)[cKey] = now;
+                    try {
+                       const updatedAnalysis = analyzeChart(arr, undefined, [], s, i);
+                       wsClient.send(JSON.stringify({ type: 'market-data', symbol: s, interval: i, data: arr, indicators: updatedAnalysis }));
+                    } catch(e) {}
+                 }
+              }
+           });
         }
       }
     } catch (err) {
@@ -586,6 +611,8 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
         console.log(`[REST API] Fetching warm-up data for ${symbol} ${tf}`);
         const res = await fetchWithTimeout(
           `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=${limit}&_t=${Date.now()}`,
+          { timeout: 10000 },
+          'INDICATOR'
         );
         if (!res.headers.get("content-type")?.includes("application/json")) {
            throw new Error("Binance HTML error");
@@ -789,7 +816,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       const query = new URLSearchParams(req.query as any).toString();
       const targetUrl = `https://fapi.binance.com/fapi/${endpoint}${query ? "?" + query : ""}`;
 
-      const response = await fetchWithTimeout(targetUrl);
+      const response = await fetchWithTimeout(targetUrl, { timeout: 10000 }, 'INDICATOR');
       if (!response.ok) {
         return res
           .status(response.status)
@@ -811,7 +838,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       const query = new URLSearchParams(req.query as any).toString();
       const targetUrl = `https://api.binance.com/api/${endpoint}${query ? "?" + query : ""}`;
 
-      const response = await fetchWithTimeout(targetUrl);
+      const response = await fetchWithTimeout(targetUrl, { timeout: 10000 }, 'INDICATOR');
       if (!response.ok) {
         return res
           .status(response.status)
@@ -1391,6 +1418,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               if (control1H.state === "CONTINUATION") {
                 const oiRes = await fetchWithTimeout(
                   `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
+                  { timeout: 10000 },
+                  'INDICATOR'
                 );
                 if (!oiRes.headers.get("content-type")?.includes("application/json")) {
                   throw new Error("Binance HTML error");
@@ -1411,6 +1440,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               } else if (control1H.state === "EXHAUSTION") {
                 const frRes = await fetchWithTimeout(
                   `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
+                  { timeout: 10000 },
+                  'INDICATOR'
                 );
                 if (!frRes.headers.get("content-type")?.includes("application/json")) {
                   throw new Error("Binance HTML error");
@@ -1630,6 +1661,12 @@ ${logicStr}`;
           signalCandidatesCount: allSignals.length
       };
 
+      if ((global as any).broadcastToClients) {
+          (global as any).broadcastToClients({ type: 'top-trades', payload: globalFrontendTrades });
+          // Note: Since multiAnalysis uses the indicators from top-trades analysis, 
+          // we can also extract indicators or just let frontend extract it.
+      }
+
     } catch (err) {
       console.error("Error in background loop:", err);
     } finally {
@@ -1653,10 +1690,62 @@ ${logicStr}`;
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const httpServer = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    // initBinanceWs() is disabled since frontend now handles it
   });
+
+  const { WebSocketServer } = await import('ws');
+  const wss = new WebSocketServer({ server: httpServer });
+
+  const clientSubscriptions = new Map<any, { symbol: string, interval: string }[]>();
+
+  wss.on('connection', (ws) => {
+    console.log('Client connected to WebSocket');
+    
+    // Send current active trades immediately
+    ws.send(JSON.stringify({ type: 'top-trades', data: Object.values(activeTrades) }));
+
+    ws.on('message', (message) => {
+      try {
+        const msg = JSON.parse(message.toString());
+        if (msg.type === 'subscribe') {
+           const subs = clientSubscriptions.get(ws) || [];
+           subs.push({ symbol: msg.symbol, interval: msg.interval });
+           clientSubscriptions.set(ws, subs);
+           subscribeToWs(msg.symbol, msg.interval);
+           
+           fetchKlines(msg.symbol, msg.interval).then(klines => {
+              try {
+                const analysis = analyzeChart(klines, undefined, [], msg.symbol, msg.interval);
+                ws.send(JSON.stringify({ type: 'market-data', symbol: msg.symbol, interval: msg.interval, data: klines, indicators: analysis }));
+              } catch (e) { console.error(e) }
+           });
+        } else if (msg.type === 'unsubscribe') {
+           let subs = clientSubscriptions.get(ws) || [];
+           subs = subs.filter(s => !(s.symbol === msg.symbol && s.interval === msg.interval));
+           clientSubscriptions.set(ws, subs);
+        }
+      } catch(e){}
+    });
+
+    ws.on('close', () => {
+      clientSubscriptions.delete(ws);
+      console.log('Client disconnected');
+    });
+  });
+
+  (global as any).clientSubscriptions = clientSubscriptions;
+
+  // Make wss accessible to other functions if needed, or broadcast from runBackgroundLoop
+  // Oh wait, I can just export or pass it, but since it's inside startServer I'll just use a local reference
+  // We can inject a lightweight broadcast function.
+  (global as any).broadcastToClients = (payload: any) => {
+    wss.clients.forEach((client) => {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        client.send(JSON.stringify(payload));
+      }
+    });
+  };
 }
 
 startServer();

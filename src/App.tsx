@@ -130,7 +130,7 @@ export default function App() {
     return () => window.clearInterval(pingInterval);
   }, []);
 
-  const { data, error, isConnected } = useBinanceData(symbol, interval);
+  const { data, indicators, error, isConnected } = useBinanceData(symbol, interval);
 
   const prevTradesForAlerts = useRef<Trade[]>(trades);
 
@@ -141,65 +141,16 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("demo_trades", JSON.stringify(trades));
   }, [trades]);
-  const fetchMultiTimeframeData = async (targetSymbol: string) => {
-    setMultiAnalysis({}); // Clear old multi-timeframe analysis immediately
-    const tfs = ["5m", "15m", "1h", "4h"];
-    const results: Record<string, AnalysisResult> = {};
 
-    for (const tf of tfs) {
-      try {
-        const response = await fetchWithRetry(
-          `/api/klines?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=500`,
-        );
-        if (response.ok) {
-          const contentType = response.headers.get("content-type");
-          if (!contentType || !contentType.includes("application/json")) {
-             throw new Error("Invalid content type");
-          }
-          const data = await response.json();
-          const candles: Candle[] = data.map((k: any) => ({
-            time: Math.floor(k[0] / 1000),
-            open: parseFloat(k[1]),
-            high: parseFloat(k[2]),
-            low: parseFloat(k[3]),
-            close: parseFloat(k[4]),
-            volume: parseFloat(k[5]),
-          }));
-          results[tf] = analyzeChart(
-            candles,
-            DEFAULT_RELIABILITY,
-            trades,
-            symbol,
-            tf,
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200)); // Small delay between fetches
-      } catch (e) {
-        console.error(`Failed to fetch ${tf}`, e);
-      }
-    }
-
-    setMultiAnalysis(results);
-  };
+  // fetchMultiTimeframeData removed -> data and needed indicators will come through websocket stream
 
   useEffect(() => {
-    fetchMultiTimeframeData(symbol);
-  }, [symbol]);
-
-  useEffect(() => {
-    if (data.length === 0) {
+    if (indicators) {
+      setAnalysis(indicators);
+    } else if (data.length === 0) {
       setAnalysis(null);
-      return;
     }
-
-    const handler = setTimeout(() => {
-      setAnalysis(
-        analyzeChart(data, DEFAULT_RELIABILITY, trades, symbol, interval)
-      );
-    }, 500); // Debounce to prevent UI freezing on high-frequency WS updates
-
-    return () => clearTimeout(handler);
-  }, [data, trades, symbol, interval]);
+  }, [indicators, data.length]);
 
   useEffect(() => {
     if (["5m", "15m", "1h", "4h"].includes(interval)) {

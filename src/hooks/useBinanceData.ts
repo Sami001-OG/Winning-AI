@@ -1,11 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Candle } from '../types';
-import { fetchWithRetry } from '../utils/api';
+import { Candle, AnalysisResult } from '../types';
 
 const dataCache: Record<string, Candle[]> = {};
+let sharedWs: WebSocket | null = null;
+const subscribers = new Set<(msg: any) => void>();
+
+function getWs() {
+  if (!sharedWs || sharedWs.readyState === WebSocket.CLOSED) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    sharedWs = new WebSocket(`${protocol}//${window.location.host}`);
+    sharedWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        subscribers.forEach(sub => sub(msg));
+      } catch(e) {}
+    };
+  }
+  return sharedWs;
+}
 
 export const useBinanceData = (symbol: string, interval: string) => {
   const [data, setData] = useState<Candle[]>([]);
+  const [indicators, setIndicators] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const key = `${symbol.toLowerCase()}_${interval}`;
@@ -19,62 +35,44 @@ export const useBinanceData = (symbol: string, interval: string) => {
       setData(dataCache[key]);
     }
 
-    const fetchData = async () => {
-      try {
-        const response = await fetchWithRetry(`/api/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=500`);
-        if (!response.ok) throw new Error('Failed to fetch data');
-        
-        // Wait, the backend already gives us data mapped as Candle objects!
-        // Let's check backend /api/klines response
-        const contentType = response.headers.get("content-type");
-        if (!contentType || !contentType.includes("application/json")) {
-           throw new Error("Received non-JSON response from server");
-        }
-        const rawData = await response.json();
-        
-        // The backend proxy returns custom candle objects, not array of arrays!
-        // Because fetchKlines returns klineCache slices, which are formatted as { time, open, high, low, close... }
-        let candles: Candle[];
-        
-        if (Array.isArray(rawData) && rawData.length > 0) {
-           if (Array.isArray(rawData[0])) {
-               candles = rawData.map((k: any) => ({
-                 time: Math.floor(k[0] / 1000),
-                 open: parseFloat(k[1]),
-                 high: parseFloat(k[2]),
-                 low: parseFloat(k[3]),
-                 close: parseFloat(k[4]),
-                 volume: parseFloat(k[5]),
-                 isFinal: true
-               }));
-           } else {
-               candles = rawData as Candle[];
-           }
-        } else {
-            candles = [];
-        }
+    const ws = getWs();
 
-        if (isMounted) {
-          dataCache[key] = candles;
-          setData(candles);
-          setIsConnected(true);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-            setError(err.message);
-            setIsConnected(false);
-        }
+    const handleOpen = () => {
+      if (isMounted) setIsConnected(true);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'subscribe', symbol, interval }));
       }
     };
 
-    fetchData();
-    const intervalId = setInterval(fetchData, 3000);
+    if (ws.readyState === WebSocket.OPEN) {
+      handleOpen();
+    } else {
+      ws.addEventListener('open', handleOpen);
+    }
+
+    const handleMessage = (msg: any) => {
+      if (!isMounted) return;
+      if (msg.type === 'market-data' && msg.symbol === symbol && msg.interval === interval) {
+        const candles = msg.data;
+        dataCache[key] = candles;
+        setData(candles);
+        if (msg.indicators) {
+           setIndicators(msg.indicators);
+        }
+      }
+    };
+    
+    subscribers.add(handleMessage);
 
     return () => {
       isMounted = false;
-      clearInterval(intervalId);
+      subscribers.delete(handleMessage);
+      ws.removeEventListener('open', handleOpen);
+      if (ws.readyState === WebSocket.OPEN) {
+         ws.send(JSON.stringify({ type: 'unsubscribe', symbol, interval }));
+      }
     };
   }, [symbol, interval, key]);
 
-  return { data, error, isConnected };
+  return { data, indicators, error, isConnected };
 };
