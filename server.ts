@@ -507,6 +507,26 @@ function initBinanceWs() {
           isFinal: k.x
         };
 
+        let broadcastTopTrades = false;
+        for (let t = 0; t < globalFrontendTrades.length; t++) {
+           if (globalFrontendTrades[t].symbol === s) {
+              if (globalFrontendTrades[t].lastPrice !== candleData.close) {
+                 globalFrontendTrades[t].lastPrice = candleData.close;
+                 broadcastTopTrades = true;
+              }
+           }
+        }
+
+        if (broadcastTopTrades) {
+           const now = Date.now();
+           if (!klineCache['LAST_TOP_TRADES_BROADCAST'] || now - (klineCache['LAST_TOP_TRADES_BROADCAST'] as any) > 1000) {
+              (klineCache as any)['LAST_TOP_TRADES_BROADCAST'] = now;
+              if ((global as any).broadcastToClients) {
+                 (global as any).broadcastToClients({ type: 'top-trades', payload: globalFrontendTrades, signals: globalFrontendTrades });
+              }
+           }
+        }
+
         if (last && last.time === openTime) {
           arr[arr.length - 1] = candleData;
         } else if (last && openTime > last.time) {

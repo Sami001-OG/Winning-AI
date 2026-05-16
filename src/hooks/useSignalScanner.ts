@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AnalysisResult } from '../types';
+import { getSharedWs, wsSubscribers } from './useBinanceData';
 
 interface TradeSignal {
   symbol: string;
@@ -45,9 +46,23 @@ export function useSignalScanner() {
     fetchSignals();
     const intervalId = setInterval(fetchSignals, 5000);
 
+    const handleWsMessage = (msg: any) => {
+      if (!isMounted) return;
+      if (msg.type === 'top-trades') {
+        setSignals(msg.data || msg.payload || msg.signals || []);
+        setLastUpdate(new Date());
+        setError(null);
+        setLoading(false);
+      }
+    };
+    
+    getSharedWs(); // Ensure connection is open
+    wsSubscribers.add(handleWsMessage);
+
     return () => {
       isMounted = false;
       clearInterval(intervalId);
+      wsSubscribers.delete(handleWsMessage);
     };
   }, []);
 

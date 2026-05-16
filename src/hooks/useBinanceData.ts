@@ -3,16 +3,16 @@ import { Candle, AnalysisResult } from '../types';
 
 const dataCache: Record<string, Candle[]> = {};
 let sharedWs: WebSocket | null = null;
-const subscribers = new Set<(msg: any) => void>();
+export const wsSubscribers = new Set<(msg: any) => void>();
 
-function getWs() {
+export function getSharedWs() {
   if (!sharedWs || sharedWs.readyState === WebSocket.CLOSED) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     sharedWs = new WebSocket(`${protocol}//${window.location.host}`);
     sharedWs.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        subscribers.forEach(sub => sub(msg));
+        wsSubscribers.forEach(sub => sub(msg));
       } catch(e) {}
     };
   }
@@ -35,7 +35,7 @@ export const useBinanceData = (symbol: string, interval: string) => {
       setData(dataCache[key]);
     }
 
-    const ws = getWs();
+    const ws = getSharedWs();
 
     const handleOpen = () => {
       if (isMounted) setIsConnected(true);
@@ -62,11 +62,11 @@ export const useBinanceData = (symbol: string, interval: string) => {
       }
     };
     
-    subscribers.add(handleMessage);
+    wsSubscribers.add(handleMessage);
 
     return () => {
       isMounted = false;
-      subscribers.delete(handleMessage);
+      wsSubscribers.delete(handleMessage);
       ws.removeEventListener('open', handleOpen);
       if (ws.readyState === WebSocket.OPEN) {
          ws.send(JSON.stringify({ type: 'unsubscribe', symbol, interval }));
