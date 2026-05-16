@@ -970,12 +970,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
   });
 
   // Background loop
-  const lastSentSignals: Record<
-    string,
-    { direction: string; timestamp: number }
-  > = {};
   const sentSessionNotifications = new Set<string>();
-  const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours cooldown
 
   interface ActiveTrade {
     symbol: string;
@@ -986,51 +981,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
     achieved: number;
   }
   const activeTrades: Record<string, ActiveTrade> = {};
-
-  const CORRELATION_GROUPS: Record<string, string[]> = {
-    BTC: ["BTCUSDT", "BCHUSDT", "STXUSDT", "ORDIUSDT", "SATSUSDT"],
-    ETH: ["ETHUSDT", "ARBUSDT", "OPUSDT", "LDOUSDT", "ETCUSDT", "ENSUSDT"],
-    AI: [
-      "FETUSDT",
-      "AGIXUSDT",
-      "OCEANUSDT",
-      "RNDRUSDT",
-      "TAOUSDT",
-      "WLDUSDT",
-      "NEARUSDT",
-    ],
-    MEME: [
-      "DOGEUSDT",
-      "SHIBUSDT",
-      "PEPEUSDT",
-      "FLOKIUSDT",
-      "BONKUSDT",
-      "WIFUSDT",
-      "BOMEUSDT",
-    ],
-    L1: [
-      "SOLUSDT",
-      "AVAXUSDT",
-      "ADAUSDT",
-      "SUIUSDT",
-      "APTUSDT",
-      "SEIUSDT",
-      "INJUSDT",
-      "DOTUSDT",
-      "LINKUSDT",
-    ],
-  };
-
-  function getCorrelationGroup(symbol: string): string {
-    for (const [group, coins] of Object.entries(CORRELATION_GROUPS)) {
-      if (coins.includes(symbol)) return group;
-    }
-    return symbol; // Treat ungrouped coins as their own group
-  }
-
-  let dailySignalCount = 0;
-  let currentDay = new Date().getUTCDate();
-  const DAILY_LIMIT = 5;
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
@@ -1145,7 +1095,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 70;
+      const requiredConfidence = 60;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1276,7 +1226,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                     `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
                   ).catch(console.error);
                   delete activeTrades[symbol];
-                  delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                   tradeClosed = true;
                   break;
                 }
@@ -1292,7 +1241,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "LONG")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
-                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   } else if (
                     currentHigh >= activeTrade.tp
@@ -1303,7 +1251,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "LONG")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
-                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   }
                 } else if (activeTrade.direction === "SHORT") {
@@ -1317,7 +1264,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "SHORT")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
-                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   } else if (
                     currentLow <= activeTrade.tp
@@ -1328,7 +1274,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                       `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "SHORT")})`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
-                    delete lastSentSignals[`${symbol}-Multi-TF (4h, 15m, 3m)`];
                     tradeClosed = true;
                   }
                 }
@@ -1468,73 +1413,31 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             // Cap confidence at 100 after premium upgrades
             mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
 
-            currentFrontendTrades.push({
-              symbol,
-              analysis: mtfAnalysis,
-              lastPrice: klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0,
-              entryDirection: 'none'
-            });
-
             // 5. Combine and Send
             if (mtfAnalysis.confidence >= requiredConfidence) {
-              const now = Date.now();
               const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
-              const lastSent = lastSentSignals[signalKey];
+              
+              const entryPrice = klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0;
+              const tp = mtfAnalysis.tp || 0;
+              const sl = mtfAnalysis.sl || 0;
 
-              if (
-                !lastSent ||
-                lastSent.direction !== mtfAnalysis.signal ||
-                now - lastSent.timestamp > COOLDOWN_MS
-              ) {
-                const entryPrice =
-                  klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0;
-                const tp = mtfAnalysis.tp || 0;
-                const sl = mtfAnalysis.sl || 0;
+              currentFrontendTrades.push({
+                symbol,
+                analysis: mtfAnalysis,
+                lastPrice: entryPrice,
+                entryDirection: 'none'
+              });
 
-                // --- STALE SIGNAL PREVENTION ---
-                // If the current 3m price has already hit TP or SL (calculated from 15m), it's a stale signal.
-                let isStale = false;
-
-                // 1. Current Price Check & R:R Check
-                const risk = Math.abs(entryPrice - sl);
-                const rewardToTp = Math.abs(tp - entryPrice);
-
-                if (mtfAnalysis.signal === "LONG") {
-                  if (entryPrice >= tp || entryPrice <= sl) isStale = true;
-                } else if (mtfAnalysis.signal === "SHORT") {
-                  if (entryPrice <= tp || entryPrice >= sl) isStale = true;
-                }
-
-                // 2. Extended Wick Check (Last 45 minutes)
-                // If the price has already wicked to TP or SL recently, the move is over.
-                const recentCandles = klines3m.slice(-15);
-                for (const c of recentCandles) {
-                  if (mtfAnalysis.signal === "LONG") {
-                    if (c.high >= tp || c.low <= sl) isStale = true;
-                  } else if (mtfAnalysis.signal === "SHORT") {
-                    if (c.low <= tp || c.high >= sl) isStale = true;
-                  }
-                }
-
-                if (isStale) {
-                  console.log(
-                    `Skipped stale signal for ${symbol} (${mtfAnalysis.signal}). Entry: ${entryPrice}, TP: ${tp}, SL: ${sl}`,
-                  );
-                  return;
-                }
-                // -------------------------------
-
-                allSignals.push({
-                  symbol,
-                  signalKey,
-                  analysis: mtfAnalysis,
-                  entryPrice,
-                  tp,
-                  sl,
-                  control1H,
-                  sessionName,
-                });
-              }
+              allSignals.push({
+                symbol,
+                signalKey,
+                analysis: mtfAnalysis,
+                entryPrice,
+                tp,
+                sl,
+                control1H,
+                sessionName,
+              });
             } else {
               diagnosticCounts.lowConfidence++;
             }
@@ -1549,37 +1452,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
-        // 2. Correlation Grouping
-        const groupBestSignal = new Map<string, any>();
         for (const sig of allSignals) {
-          const group = getCorrelationGroup(sig.symbol);
-          if (
-            !groupBestSignal.has(group) ||
-            groupBestSignal.get(group).analysis.confidence <
-              sig.analysis.confidence
-          ) {
-            groupBestSignal.set(group, sig);
-          }
-        }
-
-        const finalSignals = Array.from(groupBestSignal.values());
-
-        // 3. Daily Limit & Send
-        const nowDay = new Date().getUTCDate();
-        if (nowDay !== currentDay) {
-          dailySignalCount = 0;
-          currentDay = nowDay;
-        }
-
-        for (const sig of finalSignals) {
-
-
-          const now = Date.now();
-          lastSentSignals[sig.signalKey] = {
-            direction: sig.analysis.signal,
-            timestamp: now,
-          };
-
           activeTrades[sig.symbol] = {
             symbol: sig.symbol,
             direction: sig.analysis.signal as "LONG" | "SHORT",
@@ -1637,7 +1510,6 @@ ${logicStr}`;
             sig.analysis.signal === "LONG" ? bullishImageUrl : bearishImageUrl;
 
           sendTelegramSignal(botToken, chatId, message, imageUrl).catch(console.error);
-          // dailySignalCount++;
         }
       }
 
