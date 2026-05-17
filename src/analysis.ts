@@ -565,7 +565,7 @@ export const analyzeChart = (
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     confidence = Math.min(100, confidence + 10); // Boost confidence for perfect setup
     reason = `PERFECT ${signal} setup. High confluence & divergence.`;
-  } else if (confidence >= 70) { 
+  } else if (confidence >= 55) { 
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Strong ${signal} setup. High confluence.`;
   } else {

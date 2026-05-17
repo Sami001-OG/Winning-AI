@@ -1115,7 +1115,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 65;
+      const requiredConfidence = 55;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1402,7 +1402,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                     }
                   }
                 }
-              } else if (control1H.state === "EXHAUSTION") {
+              } else if (control1H.state === "WAIT") {
                 const frRes = await fetchWithTimeout(
                   `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
                   { timeout: 10000 },

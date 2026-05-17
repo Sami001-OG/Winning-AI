@@ -42,7 +42,6 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   });
   const lastMacd = macd[macd.length - 1];
   const prevMacd = macd[macd.length - 2];
-  const prevPrevMacd = macd[macd.length - 3];
 
   const adx = ADX.calculate({ high: highs, low: lows, close: closes, period: 20 });
   const lastAdx = adx[adx.length - 1];
@@ -55,63 +54,48 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   let longScore = 0;
   let shortScore = 0;
 
-  // Strict 200 EMA Macro Trend rule
-  if (lastClose < lastEma200 && lastEma9 < lastEma50) {
-    longScore = -100; // Veto long
-  } else if (lastClose > lastEma200 && lastEma9 > lastEma50) {
-    shortScore = -100; // Veto short
-  }
+  // 1. Price vs 200 EMA (30 pts)
+  if (lastClose > lastEma200) longScore += 30;
+  if (lastClose < lastEma200) shortScore += 30;
 
-  // 1. Trend Alignment (High Weight)
-  if (lastClose > lastEma9 && lastEma9 > lastEma21 && lastEma21 > lastEma50) longScore += 2;
-  if (lastClose < lastEma9 && lastEma9 < lastEma21 && lastEma21 < lastEma50) shortScore += 2;
+  // 2. 9 EMA vs 50 EMA (20 pts)
+  if (lastEma9 > lastEma50) longScore += 20;
+  if (lastEma9 < lastEma50) shortScore += 20;
 
-  // 2. Momentum (MACD as Leading Indicator)
-  if (lastMacd && prevMacd && prevPrevMacd) {
+  // 3. MACD Histogram (25 pts max)
+  if (lastMacd && prevMacd) {
     const hist = lastMacd.histogram || 0;
     const prevHist = prevMacd.histogram || 0;
-    const prevPrevHist = prevPrevMacd.histogram || 0;
+    
+    if (hist > 0 && hist > prevHist) longScore += 25; // Dark green
+    else if (hist > 0) longScore += 10; // Light green
 
-    if (hist > 0) {
-      if (hist > prevHist && prevHist > prevPrevHist) longScore += 1.5; // Deep Green
-      else if (hist < prevHist) shortScore += 1; // Light Green (Weakening)
-      else longScore += 0.5;
-    } else if (hist < 0) {
-      if (hist < prevHist && prevHist < prevPrevHist) shortScore += 1.5; // Deep Red
-      else if (hist > prevHist) longScore += 1; // Light Red (Weakening)
-      else shortScore += 0.5;
+    if (hist < 0 && hist < prevHist) shortScore += 25; // Dark red
+    else if (hist < 0) shortScore += 10; // Light red
+  }
+
+  // 4. ADX (15 pts) - Looser ADX requirement
+  if (lastAdx) {
+    if (lastAdx.adx > 25) {
+      if (lastAdx.pdi > lastAdx.mdi) longScore += 15;
+      if (lastAdx.mdi > lastAdx.pdi) shortScore += 15;
+    } else if (lastAdx.adx > 20) {
+      if (lastAdx.pdi > lastAdx.mdi) longScore += 5;
+      if (lastAdx.mdi > lastAdx.pdi) shortScore += 5;
     }
   }
 
-  if (lastAdx && lastAdx.adx > 25) {
-    if (lastAdx.pdi > lastAdx.mdi) longScore += 1.5;
-    if (lastAdx.mdi > lastAdx.pdi) shortScore += 1.5;
-  }
+  // 5. Market Structure / BOS (10 pts)
+  if (bos === 'bullish') longScore += 10;
+  if (bos === 'bearish') shortScore += 10;
 
-  // 3. Market Structure & Liquidity
-  if (bos === 'bullish') longScore += 1.5;
-  if (bos === 'bearish') shortScore += 1.5;
-
-  if (liquidityGrab === 'bullish') longScore += 1;
-  if (liquidityGrab === 'bearish') shortScore += 1;
-
-  // 4. Order Flow & Volume Profile
-  if (lastClose > volProfile.vaHigh) longScore += 1;
-  if (lastClose < volProfile.vaLow) shortScore += 1;
-
-  if (orderFlow.signal === 'bullish') longScore += 1;
-  if (orderFlow.signal === 'bearish') shortScore += 1;
-
-  // 5. Divergence (Removed from 4h, handled in 15m)
-
-  // Require a strong conviction for HTF trend, and ensure it strictly beats the opposing side
-  if (longScore >= 2.0 && longScore > shortScore) return 'LONG';
-  if (shortScore >= 2.0 && shortScore > longScore) return 'SHORT';
+  if (longScore >= 60) return 'LONG';
+  if (shortScore >= 60) return 'SHORT';
   
   return 'NEUTRAL';
 };
 
-export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { state: 'CONTINUATION' | 'EXHAUSTION' | 'VETO', reason: string } => {
+export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { state: 'CONTINUATION' | 'WAIT' | 'VETO', reason: string } => {
   if (data.length < 50) return { state: 'VETO', reason: 'Not enough data' };
   
   const closes = data.map(d => d.close);
@@ -129,43 +113,37 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
   const lastClose = closes[closes.length - 1];
 
   if (htfBias === 'LONG') {
-    // VETO: Strong counter-trend momentum (Dark Red MACD)
+    // EXHAUSTION TYPE B (Deep) / VETO
     if (hist < 0 && hist < prevHist && hist < -0.05) {
       return { state: 'VETO', reason: 'Strong Bearish Pullback (Dark Red MACD)' };
     }
     
-    // CONTINUATION: Aligned momentum (Dark Green MACD), RSI > 50, Price > EMAs
+    // CONTINUATION
     if (hist > 0 && hist > prevHist && lastRsi > 50 && lastClose > lastEma20) {
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Green MACD)' };
     }
     
-    // EXHAUSTION: Pullback is losing steam (Light Red MACD) or minor dip (Light Green MACD)
-    if (hist < 0 && hist >= prevHist) {
-      return { state: 'EXHAUSTION', reason: 'Bearish Exhaustion (Light Red MACD)' };
-    }
-    if (hist > 0 && hist <= prevHist) {
-      return { state: 'EXHAUSTION', reason: 'Minor Pullback (Light Green MACD)' };
+    // EXHAUSTION TYPE A (Shallow) -> WAIT
+    if (hist <= 0 || hist <= prevHist) {
+      return { state: 'WAIT', reason: 'Bearish Exhaustion or Minor Pullback' };
     }
     
     return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
   } else {
     // SHORT BIAS
-    // VETO: Strong counter-trend momentum (Dark Green MACD)
+    // EXHAUSTION TYPE B (Deep) / VETO
     if (hist > 0 && hist > prevHist && hist > 0.05) {
       return { state: 'VETO', reason: 'Strong Bullish Pullback (Dark Green MACD)' };
     }
     
-    // CONTINUATION: Aligned momentum (Dark Red MACD), RSI < 50, Price < EMAs
+    // CONTINUATION
     if (hist < 0 && hist < prevHist && lastRsi < 55) {
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Red MACD)' };
     }
     
-    // EXHAUSTION: Pullback is losing steam (Light Green MACD) or minor pump (Light Red MACD)
-    if (hist > 0 && hist <= prevHist) {
-      return { state: 'EXHAUSTION', reason: 'Bullish Exhaustion (Light Green MACD)' };
-    }
-    if (hist < 0 && hist >= prevHist) {
-      return { state: 'EXHAUSTION', reason: 'Minor Pullback (Light Red MACD)' };
+    // EXHAUSTION TYPE A (Shallow) -> WAIT
+    if (hist >= 0 || hist >= prevHist) {
+      return { state: 'WAIT', reason: 'Bullish Exhaustion or Minor Pullback' };
     }
     
     return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
@@ -208,6 +186,22 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
 
   const volumeSpike = lastVol > lastVolSma * 1.5 || prevVol > lastVolSma * 1.5 || prevVol2 > lastVolSma * 1.5;
 
+  const rsi = RSI.calculate({ values: closes, period: 14 });
+  const lastRsi = rsi[rsi.length - 1];
+
+  let cumulativeTypicalVolume = 0;
+  let cumulativeVolume = 0;
+  for (const candle of data.slice(-100)) {
+    const tp = (candle.high + candle.low + candle.close) / 3;
+    cumulativeTypicalVolume += tp * candle.volume;
+    cumulativeVolume += candle.volume;
+  }
+  const vwap = cumulativeVolume > 0 ? cumulativeTypicalVolume / cumulativeVolume : closes[closes.length - 1];
+  const priceAtVwap = Math.abs(lastCandle.close - vwap) / vwap < 0.003;
+
+  const isEmaCrossImminentUp = lastEma10 < lastEma30 && (lastEma30 - lastEma10) / lastEma30 < 0.001;
+  const isEmaCrossImminentDown = lastEma10 > lastEma30 && (lastEma10 - lastEma30) / lastEma30 < 0.001;
+
   if (direction === 'LONG') {
     const isEmaAligned = lastCandle.close > lastEma10 && lastEma10 > lastEma30;
     const isMomentumUp = lastAdx && lastAdx.adx > 20 && lastAdx.pdi > lastAdx.mdi;
@@ -216,8 +210,11 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bullish';
     const isBullishOrderFlow = orderFlow.signal === 'bullish';
     
-    if (!isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep && !isDisplacementUp) {
-      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Up, BOS, Sweep, Displacement)' };
+    // Anticipatory Triggers
+    const isAnticipatory = (priceAtVwap && lastRsi < 45 && isEmaCrossImminentUp) || (volumeSpike && isBullishOrderFlow);
+    
+    if (!isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep && !isDisplacementUp && !isAnticipatory) {
+      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Up, BOS, Sweep, Displacement, Anticipatory Limit)' };
     }
   } else {
     const isEmaAligned = lastCandle.close < lastEma10 && lastEma10 < lastEma30;
@@ -227,8 +224,11 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isLiquiditySweep = liquidityGrab === 'bearish';
     const isBearishOrderFlow = orderFlow.signal === 'bearish';
     
-    if (!isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep && !isDisplacementDown) {
-      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Down, BOS, Sweep, Displacement)' };
+    // Anticipatory Triggers
+    const isAnticipatory = (priceAtVwap && lastRsi > 55 && isEmaCrossImminentDown) || (volumeSpike && isBearishOrderFlow);
+    
+    if (!isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep && !isDisplacementDown && !isAnticipatory) {
+      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Down, BOS, Sweep, Displacement, Anticipatory Limit)' };
     }
   }
 
