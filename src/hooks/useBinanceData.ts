@@ -59,6 +59,21 @@ export const useBinanceData = (symbol: string, interval: string) => {
         if (msg.indicators) {
            setIndicators(msg.indicators);
         }
+      } else if (msg.type === 'market-data-update' && msg.symbol === symbol && msg.interval === interval) {
+        if (!dataCache[key] || dataCache[key].length === 0) return;
+        const arr = dataCache[key];
+        const candleToUpdate = msg.data;
+        const last = arr[arr.length - 1];
+        if (last && candleToUpdate.time === last.time) {
+          arr[arr.length - 1] = candleToUpdate;
+        } else if (last && candleToUpdate.time > last.time) {
+          arr.push(candleToUpdate);
+          if (arr.length > 1500) arr.shift();
+        }
+        setData([...arr]);
+        if (msg.indicators) {
+           setIndicators(msg.indicators);
+        }
       }
     };
     

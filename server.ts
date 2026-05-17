@@ -519,7 +519,7 @@ function initBinanceWs() {
 
         if (broadcastTopTrades) {
            const now = Date.now();
-           if (!klineCache['LAST_TOP_TRADES_BROADCAST'] || now - (klineCache['LAST_TOP_TRADES_BROADCAST'] as any) > 1000) {
+           if (!klineCache['LAST_TOP_TRADES_BROADCAST'] || now - (klineCache['LAST_TOP_TRADES_BROADCAST'] as any) > 200) {
               (klineCache as any)['LAST_TOP_TRADES_BROADCAST'] = now;
               if ((global as any).broadcastToClients) {
                  (global as any).broadcastToClients({ type: 'top-trades', payload: globalFrontendTrades, signals: globalFrontendTrades });
@@ -538,19 +538,32 @@ function initBinanceWs() {
 
         const subsMap = (global as any).clientSubscriptions;
         if (subsMap) {
+           let emittedKey = false;
+           // We can throttle indicators if we want, but letting data stream 
+           // continuously is fine as market-data-update only sends 1 object.
+           const now = Date.now();
+           const cKey = `${s}_${i}_last_emit` as any;
+           // throttle indicators calculation to every 1s to save CPU
+           const shouldCalcIndicators = !(klineCache as any)[cKey] || now - (klineCache as any)[cKey] > 1000;
+           let updatedAnalysis: any = null;
+
            subsMap.forEach((subs: any, wsClient: any) => {
               if (wsClient.readyState === 1 && subs.some((sub: any) => sub.symbol === s && sub.interval === i)) {
-                 const now = Date.now();
-                 const cKey = `${s}_${i}_last_emit` as any;
-                 if (!(klineCache as any)[cKey] || now - (klineCache as any)[cKey] > 1000) {
-                    (klineCache as any)[cKey] = now;
-                    try {
-                       const updatedAnalysis = analyzeChart(arr, undefined, [], s, i);
-                       wsClient.send(JSON.stringify({ type: 'market-data', symbol: s, interval: i, data: arr, indicators: updatedAnalysis }));
-                    } catch(e) {}
-                 }
+                 try {
+                    const payload: any = { type: 'market-data-update', symbol: s, interval: i, data: candleData };
+                    if (shouldCalcIndicators) {
+                        if (!updatedAnalysis) updatedAnalysis = analyzeChart(arr, undefined, [], s, i);
+                        payload.indicators = updatedAnalysis;
+                    }
+                    wsClient.send(JSON.stringify(payload));
+                 } catch(e) {}
+                 emittedKey = true;
               }
            });
+           
+           if (emittedKey && shouldCalcIndicators) {
+               (klineCache as any)[cKey] = now;
+           }
         }
       }
     } catch (err) {
