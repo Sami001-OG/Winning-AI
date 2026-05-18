@@ -593,27 +593,35 @@ export default function App() {
                 <div className="grid grid-cols-2 sm:flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
                   <div className="flex flex-col items-start sm:items-end">
                     <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                      Confidence
+                      Patience
                     </span>
                     <div
                       className={cn(
                         "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
                         activeAnalysis?.confidence &&
-                          activeAnalysis.confidence >= 85
+                          activeAnalysis.confidence >= 13
                           ? "text-emerald-400"
                           : activeAnalysis?.confidence &&
-                              activeAnalysis.confidence < 60
+                              activeAnalysis.confidence < 10
                             ? "text-rose-400"
                             : "text-white",
                       )}
                     >
                       {typeof activeAnalysis?.confidence === "number" &&
                       !isNaN(activeAnalysis.confidence) ? (
-                        <AnimatedNumber value={activeAnalysis.confidence} />
+                        <div className="flex items-baseline"><AnimatedNumber value={activeAnalysis.confidence} /><span className="text-xs text-white/40 ml-0.5">/16</span></div>
                       ) : (
-                        "0"
+                        "0/16"
                       )}
-                      %
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-start sm:items-end">
+                    <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                      Position Size
+                    </span>
+                    <div className="text-sm sm:text-base font-bold font-mono text-emerald-400">
+                      {activeAnalysis?.positionSize || "N/A"}
                     </div>
                   </div>
 

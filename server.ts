@@ -1371,7 +1371,12 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             const strategyAnalysis = executeStrategy(klines4h, klines1h, klines15m, klines3m);
             
             if (!strategyAnalysis) {
-               // Strategy returned no signal, increment diagnostic counters if needed
+               // Strategy returned no signal
+               diagnosticCounts.lowConfidence++;
+               return;
+            }
+            if ('type' in strategyAnalysis && strategyAnalysis.type === "SKIP") {
+               // Layer 2 skip or early skip
                diagnosticCounts.lowConfidence++;
                return;
             }
@@ -1389,7 +1394,8 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                tp: strategyAnalysis.tp,
                tp1: strategyAnalysis.tp1,
                sl: strategyAnalysis.sl,
-               reason: strategyAnalysis.reason
+               reason: strategyAnalysis.reason,
+               positionSize: strategyAnalysis.positionSize
             };
 
             currentFrontendTrades.push({
@@ -1407,7 +1413,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               tp: strategyAnalysis.tp,
               tp1: strategyAnalysis.tp1,
               sl: strategyAnalysis.sl,
-              control1H: { state: 'CONTINUATION', reason: strategyAnalysis.reason },
+              control1H: strategyAnalysis.control1H,
               sessionName,
             });
           } catch (err) {
@@ -1455,23 +1461,17 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               
           const logicStr = escapeHtml(logicStrRaw);
 
+          const riskStr = sig.analysis.positionSize || "Normal Size";
           const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
 
 🪙 <b>Pair:</b> #${sig.symbol}
 ${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
-⏱ <b>Timeframe:</b> Multi-TF (4h, 1h, 15m, 3m)${strategyStr}
-👑 <b>BTC Trend:</b> ${escapeHtml(btcTrend)}
-🕒 <b>Session:</b> ${escapeHtml(sig.sessionName)}
+💰 <b>Action:</b> Trade with ${escapeHtml(riskStr)}
 
 🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>${limitEntryStr}
 ✅ <b>TP1 (1:1):</b> <code>${formatPrice(sig.tp1)}</code>
 ✅ <b>TP2 (Target):</b> <code>${formatPrice(sig.tp)}</code>
-❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>
-
-🧠 <b>Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
-
-💡 <b>Logic:</b>
-${escapeHtml(sig.analysis.reason)}`;
+❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>`;
 
           const bullishImageUrl =
             "https://quickchart.io/chart?c=" + encodeURIComponent("{type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}");
