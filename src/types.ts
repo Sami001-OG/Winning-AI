@@ -21,11 +21,9 @@ export interface Trade {
   type: 'LONG' | 'SHORT';
   entry: number;
   tp: number;
-  tp1?: number;
   sl: number;
   status: 'PENDING' | 'SUCCESS' | 'FAILED';
   timestamp: number;
-  riskFree?: boolean; // Trailing SL to breakeven after TP1
 }
 
 export interface AnalysisResult {
@@ -41,14 +39,13 @@ export interface AnalysisResult {
   tp?: number;
   tp1?: number;
   tp2?: number;
+  tp3?: number;
   sl?: number;
   breakEvenTrigger?: number;
   trailingStopMode?: 'ATR' | 'Percentage' | 'Structure';
   suggestedEntry?: number; // Deprecated, keeping for backward compatibility
   limitEntry?: number; // The calculated pullback entry price
   entryStrategy?: 'Market (CMP)' | 'Limit (Pullback)' | 'Split (50/50)';
-  reason?: string;
-  positionSize?: string;
   layers?: {
     marketCondition: number;
     trend: number;

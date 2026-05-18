@@ -61,16 +61,19 @@ const MemoizedChart = memo(
     symbol,
     interval,
     activeTrade,
+    activeAnalysis,
   }: {
     symbol: string;
     interval: string;
     activeTrade?: Trade;
+    activeAnalysis?: AnalysisResult | null;
   }) => {
     return (
       <LightweightChart
         symbol={symbol}
         interval={interval}
         activeTrade={activeTrade}
+        activeAnalysis={activeAnalysis}
       />
     );
   },
@@ -79,7 +82,9 @@ const MemoizedChart = memo(
       prevProps.symbol === nextProps.symbol &&
       prevProps.interval === nextProps.interval &&
       prevProps.activeTrade?.id === nextProps.activeTrade?.id &&
-      prevProps.activeTrade?.status === nextProps.activeTrade?.status
+      prevProps.activeTrade?.status === nextProps.activeTrade?.status &&
+      prevProps.activeAnalysis?.tp === nextProps.activeAnalysis?.tp &&
+      prevProps.activeAnalysis?.sl === nextProps.activeAnalysis?.sl
     );
   },
 );
@@ -478,6 +483,7 @@ export default function App() {
                   symbol={symbol}
                   interval={interval}
                   activeTrade={activeTrade}
+                  activeAnalysis={activeAnalysis}
                 />
               </div>
             ) : (
@@ -508,6 +514,7 @@ export default function App() {
                       symbol={symbol}
                       interval={tf}
                       activeTrade={activeTrade}
+                      activeAnalysis={multiAnalysis[tf] || analysis}
                     />
                   </div>
                 ))}
@@ -569,59 +576,49 @@ export default function App() {
               </div>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full lg:w-auto">
-                {activeTrade && activeTrade.tp && activeTrade.sl && (
-                  <div className="flex items-center justify-between sm:justify-start gap-3 sm:gap-4 border-b sm:border-b-0 sm:border-r border-white/10 pb-3 sm:pb-0 sm:pr-4">
-                    <div className="flex flex-col items-start sm:items-end">
-                      <span className="text-[9px] font-mono text-emerald-400/50 uppercase tracking-widest">
-                        Target
-                      </span>
-                      <span className="text-sm font-mono font-bold text-emerald-400">
-                        {(activeTrade.tp || 0).toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-end">
-                      <span className="text-[9px] font-mono text-rose-400/50 uppercase tracking-widest">
-                        Stop
-                      </span>
-                      <span className="text-sm font-mono font-bold text-rose-400">
-                        {(activeTrade.sl || 0).toFixed(2)}
-                      </span>
-                    </div>
+                <div className="flex items-center justify-between sm:justify-start gap-3 sm:gap-4 border-b sm:border-b-0 sm:border-r border-white/10 pb-3 sm:pb-0 sm:pr-4">
+                  <div className="flex flex-col items-start sm:items-end">
+                    <span className="text-[9px] font-mono text-emerald-400/50 uppercase tracking-widest flex items-center gap-1">
+                      <Target className="w-3 h-3" /> Target (Dynamic)
+                    </span>
+                    <span className="text-sm font-mono font-bold text-emerald-400">
+                      {((activeTrade ? activeTrade.tp : activeAnalysis?.tp) || 0).toFixed(6)}
+                    </span>
                   </div>
-                )}
+                  <div className="flex flex-col items-end">
+                    <span className="text-[9px] font-mono text-rose-400/50 uppercase tracking-widest flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" /> Stop (Dynamic)
+                    </span>
+                    <span className="text-sm font-mono font-bold text-rose-400">
+                      {((activeTrade ? activeTrade.sl : activeAnalysis?.sl) || 0).toFixed(6)}
+                    </span>
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-2 sm:flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
                   <div className="flex flex-col items-start sm:items-end">
                     <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                      Patience
+                      Confidence
                     </span>
                     <div
                       className={cn(
                         "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
                         activeAnalysis?.confidence &&
-                          activeAnalysis.confidence >= 13
+                          activeAnalysis.confidence >= 85
                           ? "text-emerald-400"
                           : activeAnalysis?.confidence &&
-                              activeAnalysis.confidence < 10
+                              activeAnalysis.confidence < 60
                             ? "text-rose-400"
                             : "text-white",
                       )}
                     >
                       {typeof activeAnalysis?.confidence === "number" &&
                       !isNaN(activeAnalysis.confidence) ? (
-                        <div className="flex items-baseline"><AnimatedNumber value={activeAnalysis.confidence} /><span className="text-xs text-white/40 ml-0.5">/16</span></div>
+                        <AnimatedNumber value={activeAnalysis.confidence} />
                       ) : (
-                        "0/16"
+                        "0"
                       )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-start sm:items-end">
-                    <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                      Position Size
-                    </span>
-                    <div className="text-sm sm:text-base font-bold font-mono text-emerald-400">
-                      {activeAnalysis?.positionSize || "N/A"}
+                      %
                     </div>
                   </div>
 

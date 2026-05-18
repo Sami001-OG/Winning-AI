@@ -1,22 +1,22 @@
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries } from 'lightweight-charts';
-import { Trade } from './types';
+import { Trade, AnalysisResult } from './types';
 import { useBinanceData } from './hooks/useBinanceData';
 
 interface LightweightChartProps {
   symbol: string;
   interval: string;
   activeTrade?: Trade;
+  activeAnalysis?: AnalysisResult | null;
 }
 
-export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, interval, activeTrade }) => {
+export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, interval, activeTrade, activeAnalysis }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const { data, error } = useBinanceData(symbol, interval);
 
   const tpLineRef = useRef<any>(null);
-  const tp1LineRef = useRef<any>(null);
   const slLineRef = useRef<any>(null);
   const entryLineRef = useRef<any>(null);
 
@@ -86,7 +86,6 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
   }, []);
 
   const lastDataLength = useRef(0);
-  const lastDataFirstTime = useRef(0);
   const lastSymbol = useRef(symbol);
   const lastInterval = useRef(interval);
 
@@ -94,27 +93,20 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
     if (!seriesRef.current || !chartRef.current || data.length === 0) return;
     
     const isNewSymbolOrInterval = lastSymbol.current !== symbol || lastInterval.current !== interval;
-    const isNewDataChunk = data.length > 0 && lastDataLength.current > 0 && data[0].time !== lastDataFirstTime.current;
     
-    // If data length is significantly different, or it's the first load, or symbol/interval changed, or the starting data time changed (new chunk fetched)
-    if (data.length !== lastDataLength.current || isNewSymbolOrInterval || isNewDataChunk) {
-      try {
-        seriesRef.current.setData(data);
-        chartRef.current.timeScale().setVisibleLogicalRange({
-          from: Math.max(0, data.length - 100),
-          to: Math.max(0, data.length - 1),
-        });
-      } catch(e) {}
+    // If data length is significantly different, or it's the first load, or symbol/interval changed, use setData
+    if (data.length !== lastDataLength.current || isNewSymbolOrInterval) {
+      seriesRef.current.setData(data);
+      chartRef.current.timeScale().setVisibleLogicalRange({
+        from: Math.max(0, data.length - 100),
+        to: data.length - 1,
+      });
       lastDataLength.current = data.length;
-      lastDataFirstTime.current = data[0].time;
       lastSymbol.current = symbol;
       lastInterval.current = interval;
     } else {
       // Otherwise, just update the last candle
-      try {
-          seriesRef.current.update(data[data.length - 1]);
-      } catch (e) {}
-      lastDataLength.current = data.length;
+      seriesRef.current.update(data[data.length - 1]);
     }
   }, [data, symbol, interval]);
 
@@ -127,10 +119,6 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
     } catch (e) { console.warn(e); }
     
     try {
-      if (tp1LineRef.current) seriesRef.current.removePriceLine(tp1LineRef.current);
-    } catch (e) { console.warn(e); }
-    
-    try {
       if (slLineRef.current) seriesRef.current.removePriceLine(slLineRef.current);
     } catch (e) { console.warn(e); }
     
@@ -139,7 +127,6 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
     } catch (e) { console.warn(e); }
 
     tpLineRef.current = null;
-    tp1LineRef.current = null;
     slLineRef.current = null;
     entryLineRef.current = null;
 
@@ -151,19 +138,8 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
           lineWidth: 2,
           lineStyle: 2, // Dashed
           axisLabelVisible: true,
-          title: 'TP2 (Main)',
+          title: 'TP',
         });
-
-        if (activeTrade.tp1) {
-          tp1LineRef.current = seriesRef.current.createPriceLine({
-            price: activeTrade.tp1,
-            color: '#10b981',
-            lineWidth: 1,
-            lineStyle: 3, // Dotted
-            axisLabelVisible: true,
-            title: 'TP1 (1:1)',
-          });
-        }
 
         slLineRef.current = seriesRef.current.createPriceLine({
           price: activeTrade.sl,
@@ -185,8 +161,34 @@ export const LightweightChart: React.FC<LightweightChartProps> = ({ symbol, inte
       } catch (e) {
         console.error("Failed to create price lines:", e);
       }
+    } else if (activeAnalysis && activeAnalysis.signal !== 'NO TRADE') {
+      try {
+        if (activeAnalysis.tp) {
+          tpLineRef.current = seriesRef.current.createPriceLine({
+            price: activeAnalysis.tp,
+            color: 'rgba(16, 185, 129, 0.5)',
+            lineWidth: 1,
+            lineStyle: 3, // Dotted
+            axisLabelVisible: true,
+            title: 'Dyn TP',
+          });
+        }
+
+        if (activeAnalysis.sl) {
+          slLineRef.current = seriesRef.current.createPriceLine({
+            price: activeAnalysis.sl,
+            color: 'rgba(244, 63, 94, 0.5)',
+            lineWidth: 1,
+            lineStyle: 3, // Dotted
+            axisLabelVisible: true,
+            title: 'Dyn SL',
+          });
+        }
+      } catch (e) {
+        console.error("Failed to create dynamic price lines:", e);
+      }
     }
-  }, [activeTrade]);
+  }, [activeTrade, activeAnalysis]);
 
   return (
     <div className="w-full h-full relative">
