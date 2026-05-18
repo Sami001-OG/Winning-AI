@@ -623,11 +623,38 @@ function processWsQueue() {
 const inflightKlines = new Map<string, Promise<any>>();
 let isRateLimitedUntil = 0;
 
+function getTfSeconds(tf: string) {
+  const value = parseInt(tf);
+  if (isNaN(value)) return 60;
+  const unit = tf.slice(-1);
+  switch (unit) {
+    case 'm': return value * 60;
+    case 'h': return value * 3600;
+    case 'd': return value * 86400;
+    default: return 60;
+  }
+}
+
 async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
   if (!binanceWs) initBinanceWs();
 
   if (!klineCache[symbol]) klineCache[symbol] = {};
   
+  if (klineCache[symbol][tf]) {
+    const arr = klineCache[symbol][tf];
+    if (arr.length > 0) {
+      const last = arr[arr.length - 1];
+      const tfSecs = getTfSeconds(tf);
+      // A new candle should start at (last.time + tfSecs).
+      // If we are more than 5 minutes past when the next candle should have opened, it is stale.
+      const isStale = (Date.now() / 1000) - last.time > (tfSecs + 300);
+      if (isStale) {
+        console.log(`[REST API] Cache for ${symbol} ${tf} is stale by over 5 mins, clearing...`);
+        delete klineCache[symbol][tf];
+      }
+    }
+  }
+
   if (!klineCache[symbol][tf]) {
     const cacheKey = `${symbol}_${tf}`;
     if (inflightKlines.has(cacheKey)) {

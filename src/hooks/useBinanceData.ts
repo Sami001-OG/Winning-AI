@@ -5,16 +5,40 @@ const dataCache: Record<string, Candle[]> = {};
 let sharedWs: WebSocket | null = null;
 export const wsSubscribers = new Set<(msg: any) => void>();
 
+function initWs() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${protocol}//${window.location.host}`);
+  
+  ws.onopen = () => {
+    // Tell all components to re-subscribe if needed
+    wsSubscribers.forEach(sub => sub({ type: 'ws-reconnected' }));
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      wsSubscribers.forEach(sub => sub(msg));
+    } catch(e) {}
+  };
+  
+  ws.onclose = () => {
+    console.log("WebSocket closed. Reconnecting...");
+    setTimeout(() => {
+      sharedWs = null;
+      getSharedWs();
+    }, 2000);
+  };
+  
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  return ws;
+}
+
 export function getSharedWs() {
-  if (!sharedWs || sharedWs.readyState === WebSocket.CLOSED) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    sharedWs = new WebSocket(`${protocol}//${window.location.host}`);
-    sharedWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        wsSubscribers.forEach(sub => sub(msg));
-      } catch(e) {}
-    };
+  if (!sharedWs || sharedWs.readyState === WebSocket.CLOSED || sharedWs.readyState === WebSocket.CLOSING) {
+    sharedWs = initWs();
   }
   return sharedWs;
 }
@@ -52,7 +76,12 @@ export const useBinanceData = (symbol: string, interval: string) => {
 
     const handleMessage = (msg: any) => {
       if (!isMounted) return;
-      if (msg.type === 'market-data' && msg.symbol === symbol && msg.interval === interval) {
+      if (msg.type === 'ws-reconnected') {
+         const currentWs = getSharedWs();
+         if (currentWs.readyState === WebSocket.OPEN) {
+            currentWs.send(JSON.stringify({ type: 'subscribe', symbol, interval }));
+         }
+      } else if (msg.type === 'market-data' && msg.symbol === symbol && msg.interval === interval) {
         const candles = msg.data;
         dataCache[key] = candles;
         setData(candles);
