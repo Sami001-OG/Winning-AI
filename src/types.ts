@@ -21,9 +21,11 @@ export interface Trade {
   type: 'LONG' | 'SHORT';
   entry: number;
   tp: number;
+  tp1?: number;
   sl: number;
   status: 'PENDING' | 'SUCCESS' | 'FAILED';
   timestamp: number;
+  riskFree?: boolean; // Trailing SL to breakeven after TP1
 }
 
 export interface AnalysisResult {
