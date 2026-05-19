@@ -34,62 +34,14 @@ const DEFAULT_RELIABILITY = {
   exception: 2.0,
 };
 
-function getBinanceSignature(queryString: string, secret: string) {
-  return crypto.createHmac("sha256", secret).update(queryString).digest("hex");
-}
-
-function getTradingKey() {
-  return { key: process.env.BINANCE_API_KEY, secret: process.env.BINANCE_SECRET_KEY };
-}
-
 function getIndicatorKey() {
   const key = process.env.BINANCE_API_KEY_2 || process.env.BINANCE_API_KEY;
-  const secret = process.env.BINANCE_SECRET_KEY_2 || process.env.BINANCE_SECRET_KEY;
-  return { key, secret };
+  return { key };
 }
 
 function getWsKey() {
   const key = process.env.BINANCE_API_KEY_3 || process.env.BINANCE_API_KEY;
-  const secret = process.env.BINANCE_SECRET_KEY_3 || process.env.BINANCE_SECRET_KEY;
-  return { key, secret };
-}
-
-async function binanceFuturesRequest(
-  method: string,
-  endpoint: string,
-  params: Record<string, any> = {},
-) {
-  const credentials = getTradingKey();
-  if (!credentials.key || !credentials.secret) {
-    throw new Error("Binance trading API keys not configured. Set BINANCE_API_KEY and BINANCE_SECRET_KEY.");
-  }
-  
-  const { key: apiKey, secret: apiSecret } = credentials;
-
-  params.timestamp = Date.now();
-  params.recvWindow = 10000;
-
-  const queryString = Object.entries(params)
-    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-    .join("&");
-
-  const signature = getBinanceSignature(queryString, apiSecret);
-  const url = `https://fapi.binance.com${endpoint}?${queryString}&signature=${signature}`;
-
-  const response = await fetch(url, {
-    method,
-    headers: {
-      "X-MBX-APIKEY": apiKey,
-      "Content-Type": "application/json",
-    },
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(`Binance API Error: ${JSON.stringify(data)}`);
-  }
-
-  return data;
+  return { key };
 }
 
 async function sendTelegramSignal(
@@ -236,7 +188,6 @@ async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICAT
     if (url.includes('binance.com')) {
       let creds;
       if (intent === 'WEBSOCKET') creds = getWsKey();
-      else if (intent === 'TRADING') creds = getTradingKey();
       else creds = getIndicatorKey();
 
       if (creds && creds.key) {
@@ -255,13 +206,13 @@ async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICAT
     const contentType = response.headers.get("content-type");
     const isHtml = contentType && contentType.includes("text/html");
 
-    // Handle Binance Geoblocks on US environments (Render, etc.) or HTML responses from Cloudflare
-    if ((!response.ok && (response.status === 451 || response.status === 403)) || (response.ok && isHtml)) {
+    // Handle Binance Geoblocks on US environments (Render, etc.), IP Bans (429), or HTML responses from Cloudflare
+    if ((!response.ok && (response.status === 451 || response.status === 403 || response.status === 429 || response.status === 418)) || (response.ok && isHtml)) {
       if (url.includes('binance.com')) {
-        console.log(`[Binance] Blocked by geo-restriction or HTML captcha. Status: ${response.status}. URL: ${url}`);
+        console.log(`[Binance] Blocked by proxy/limit. Status: ${response.status}. URL: ${url}`);
         
         // If it's a klines request, fallback to Bybit to bypass IP ban instantly
-        if (url.includes('/v1/klines') || url.includes('/v1/premiumIndex')) {
+        if (url.includes('/v1/klines') || url.includes('/v1/premiumIndex') || url.includes('openInterestHist')) {
           return handleBybitFallback(url, options);
         }
       } else if (response.ok && isHtml) {
@@ -338,6 +289,24 @@ async function handleBybitFallback(binanceUrl: string, options: any) {
           json: async () => ({
             lastFundingRate: data.result.list[0].fundingRate
           })
+        } as Response;
+      }
+    }
+    else if (binanceUrl.includes('openInterestHist')) {
+      const bybitUrl = `https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=15min&limit=2`;
+      const res = await fetch(bybitUrl, options);
+      if (!res.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Bybit HTML error");
+      }
+      const data = await res.json();
+      if (data.retCode === 0 && data.result?.list?.length > 0) {
+        const mapped = data.result.list.reverse().map((item: any) => ({
+             sumOpenInterestValue: item.openInterest
+        }));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => mapped
         } as Response;
       }
     }
@@ -914,121 +883,6 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
     }
   });
 
-  let exchangeInfoCache: any = null;
-
-  app.post("/api/trade/execute", async (req, res) => {
-    try {
-      const {
-        symbol,
-        side,
-        orderType,
-        price,
-        stopLoss,
-        takeProfit,
-        riskFraction = 1.0,
-      } = req.body;
-
-      if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY) {
-        return res
-          .status(400)
-          .json({ error: "Binance API keys not configured in .env" });
-      }
-
-      // 1. Fetch Exchange Info (Cached)
-      if (!exchangeInfoCache) {
-        exchangeInfoCache = await binanceFuturesRequest(
-          "GET",
-          "/fapi/v1/exchangeInfo",
-        );
-      }
-      const symbolInfo = exchangeInfoCache.symbols.find(
-        (s: any) => s.symbol === symbol,
-      );
-      if (!symbolInfo) throw new Error(`Symbol ${symbol} not found`);
-
-      const qtyPrecision = symbolInfo.quantityPrecision;
-      const pricePrecision = symbolInfo.pricePrecision;
-
-      // 2. Risk Calculation Engine
-      const accountInfo = await binanceFuturesRequest(
-        "GET",
-        "/fapi/v2/account",
-      );
-      const usdtBalance =
-        accountInfo.assets.find((a: any) => a.asset === "USDT")
-          ?.availableBalance || 0;
-
-      const riskPercentage = 0.01 * riskFraction; // 1% risk per trade * fraction
-      const riskAmount = parseFloat(usdtBalance) * riskPercentage;
-
-      if (riskAmount <= 0)
-        throw new Error("Insufficient balance for risk calculation");
-
-      let rawQty = riskAmount / Math.abs(price - stopLoss);
-
-      // Apply leverage (e.g., 10x)
-      const leverage = 10;
-      await binanceFuturesRequest("POST", "/fapi/v1/leverage", {
-        symbol,
-        leverage,
-      });
-
-      // Format quantity and prices
-      const quantity = parseFloat(rawQty.toFixed(qtyPrecision));
-      const formattedPrice = parseFloat(price).toFixed(pricePrecision);
-      const formattedSL = parseFloat(stopLoss).toFixed(pricePrecision);
-      const formattedTP = parseFloat(takeProfit).toFixed(pricePrecision);
-
-      if (quantity <= 0) throw new Error("Calculated quantity is too small");
-
-      // 3. Place Main Order
-      const orderParams: any = {
-        symbol,
-        side,
-        type: orderType,
-        quantity,
-      };
-
-      if (orderType === "LIMIT") {
-        orderParams.price = formattedPrice;
-        orderParams.timeInForce = "GTC";
-      }
-
-      const orderRes = await binanceFuturesRequest(
-        "POST",
-        "/fapi/v1/order",
-        orderParams,
-      );
-
-      // 4. Place Stop Loss
-      if (stopLoss) {
-        await binanceFuturesRequest("POST", "/fapi/v1/order", {
-          symbol,
-          side: side === "BUY" ? "SELL" : "BUY",
-          type: "STOP_MARKET",
-          stopPrice: formattedSL,
-          closePosition: true,
-        });
-      }
-
-      // 5. Place Take Profit
-      if (takeProfit) {
-        await binanceFuturesRequest("POST", "/fapi/v1/order", {
-          symbol,
-          side: side === "BUY" ? "SELL" : "BUY",
-          type: "TAKE_PROFIT_MARKET",
-          stopPrice: formattedTP,
-          closePosition: true,
-        });
-      }
-
-      res.json({ success: true, order: orderRes, riskAmount, quantity });
-    } catch (error: any) {
-      console.error("Trade Execution Error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   // Background loop
   const sentSessionNotifications = new Set<string>();
 
@@ -1155,7 +1009,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 55;
+      const requiredConfidence = 70;
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1508,6 +1362,9 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             );
           }
         })); // End of chunk Promise.all mappings
+        
+        // Add a 1-second delay between chunks to avoid Binance burst rate limting (429 Too Many Requests)
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       } // End of chunk loop
 
       // --- SIGNAL FILTERING & SENDING ---

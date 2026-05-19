@@ -237,7 +237,7 @@ export default function App() {
     (t) => t.symbol === symbol && t.status === "PENDING",
   );
 
-  const executeTrade = () => {
+  const trackTradeSignal = () => {
     if (
       !activeAnalysis ||
       activeAnalysis.signal === "NO TRADE" ||
@@ -668,7 +668,7 @@ export default function App() {
                         )}
                       >
                         <Target size={14} />
-                        <span>Execute</span>
+                        <span>Track Signal</span>
                       </button>
                     )}
                 </div>
@@ -824,7 +824,7 @@ export default function App() {
               {trades.length === 0 ? (
                 <div className="p-12 text-center text-white/40 font-mono text-xs flex flex-col items-center gap-2">
                   <ActivitySquare size={24} className="opacity-20" />
-                  <span>No trades executed yet.</span>
+                  <span>No signals tracked yet.</span>
                 </div>
               ) : (
                 <div className="min-w-[800px]">
@@ -936,7 +936,7 @@ export default function App() {
           <div className="bg-[#0A0A0A] border border-white/10 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/[0.02]">
               <h3 className="text-sm font-mono font-bold text-white uppercase tracking-widest">
-                Confirm Trade
+                Confirm Tracking
               </h3>
               <button
                 onClick={() => setShowConfirmDialog(false)}
@@ -1022,7 +1022,7 @@ export default function App() {
                 Cancel
               </button>
               <button
-                onClick={executeTrade}
+                onClick={trackTradeSignal}
                 className={cn(
                   "flex-1 px-4 py-2 rounded text-xs font-mono font-bold uppercase transition-colors border",
                   activeAnalysis.signal === "LONG"
