@@ -114,7 +114,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = () => {
                 
                 const getConfidenceColor = (confidence: number) => {
                   if (confidence >= 85) return 'text-emerald-400 group-hover:text-emerald-600';
-                  if (confidence >= 70) return 'text-yellow-400 group-hover:text-yellow-600';
+                  if (confidence >= 60) return 'text-yellow-400 group-hover:text-yellow-600';
                   return 'text-zinc-400 group-hover:text-black';
                 };
 
@@ -159,7 +159,7 @@ export const TopTradesTable: React.FC<TopTradesTableProps> = () => {
                         </span>
                         <div className="w-24 h-1.5 bg-zinc-800 group-hover:bg-black/10 rounded-full mt-1.5 overflow-hidden">
                           <div 
-                            className={`h-full rounded-full ${s.analysis?.confidence >= 85 ? 'bg-emerald-500' : s.analysis?.confidence >= 70 ? 'bg-yellow-500' : 'bg-white/20 group-hover:bg-black/20'}`}
+                            className={`h-full rounded-full ${s.analysis?.confidence >= 85 ? 'bg-emerald-500' : s.analysis?.confidence >= 60 ? 'bg-yellow-500' : 'bg-white/20 group-hover:bg-black/20'}`}
                             style={{ width: `${s.analysis?.confidence || 0}%` }}
                           />
                         </div>

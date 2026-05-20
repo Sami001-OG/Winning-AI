@@ -89,8 +89,8 @@ export const getHTFDirection = (data: Candle[]): 'LONG' | 'SHORT' | 'NEUTRAL' =>
   if (bos === 'bullish') longScore += 10;
   if (bos === 'bearish') shortScore += 10;
 
-  if (longScore >= 60) return 'LONG';
-  if (shortScore >= 60) return 'SHORT';
+  if (longScore >= 50) return 'LONG';
+  if (shortScore >= 50) return 'SHORT';
   
   return 'NEUTRAL';
 };
@@ -204,7 +204,7 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
 
   if (direction === 'LONG') {
     const isEmaAligned = lastCandle.close > lastEma10 && lastEma10 > lastEma30;
-    const isMomentumUp = lastAdx && lastAdx.adx > 20 && lastAdx.pdi > lastAdx.mdi;
+    const isMomentumUp = lastAdx && lastAdx.adx > 15 && lastAdx.pdi > lastAdx.mdi;
 
     const isMicroBOS = bos === 'bullish';
     const isLiquiditySweep = liquidityGrab === 'bullish';

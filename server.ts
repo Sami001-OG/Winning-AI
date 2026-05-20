@@ -771,13 +771,30 @@ async function startServer() {
     try {
       const trade = req.body;
       if (trade && trade.symbol) {
+        const entryPrice = parseFloat(trade.entry);
+        const slPrice = parseFloat(trade.sl);
+        const tpPrice = parseFloat(trade.tp);
+        
+        // Compute progressive TP1, TP2, TP3 if not provided
+        const tp1 = parseFloat(trade.tp1) || (trade.type === "LONG" ? entryPrice + (entryPrice - slPrice) : entryPrice - (slPrice - entryPrice));
+        const tp2 = parseFloat(trade.tp2) || (trade.type === "LONG" ? entryPrice + (entryPrice - slPrice) * 2 : entryPrice - (slPrice - entryPrice) * 2);
+        const tp3 = parseFloat(trade.tp3) || tpPrice;
+
         activeTrades[trade.symbol] = {
            symbol: trade.symbol,
            direction: trade.type || trade.direction,
-           entry: trade.entry,
-           tp: trade.tp,
-           sl: trade.sl,
-           achieved: 0
+           entry: entryPrice,
+           tp: tpPrice,
+           tp1,
+           tp2,
+           tp3,
+           sl: slPrice,
+           currentSl: slPrice,
+           achieved: 1, // Set to 1 (Filled / Active instantly for manual registrations)
+           isLimitEntry: false,
+           hasHitTp1: false,
+           hasHitTp2: false,
+           hasHitTp3: false
         };
         console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
 
@@ -785,14 +802,17 @@ async function startServer() {
         const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
         if (botToken && chatId) {
           const typeIcon = trade.type === "LONG" ? "📈" : "📉";
-          const msg = `🚀 <b>TRADE OPENED</b> 🚀
+          const msg = `🚀 <b>TRADE OPENED (Market Entry)</b> 🚀
       
 🪙 <b>Pair:</b> #${trade.symbol}
 ${typeIcon} <b>Direction:</b> ${trade.type}
   
-🎯 <b>Entry:</b> <code>${trade.entry}</code>
-✅ <b>Take Profit:</b> <code>${trade.tp}</code>
-❌ <b>Stop Loss:</b> <code>${trade.sl}</code>`;
+🎯 <b>Entry Price:</b> <code>${formatPrice(entryPrice)}</code>
+🎯 <b>TP1 (50% Booking):</b> <code>${formatPrice(tp1)}</code>
+🎯 <b>TP2 (30% Booking):</b> <code>${formatPrice(tp2)}</code>
+🎯 <b>TP3 (20% Runner):</b> <code>${formatPrice(tp3)}</code>
+❌ <b>Stop Loss:</b> <code>${formatPrice(slPrice)}</code>
+🛡 <b>Trail Mode:</b> Move SL to Break-Even at TP1`;
           sendTelegramSignal(botToken as string, chatId as string, msg).catch(console.error);
         }
 
@@ -891,8 +911,16 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
     direction: "LONG" | "SHORT";
     entry: number;
     tp: number;
+    tp1: number;
+    tp2: number;
+    tp3: number;
     sl: number;
+    currentSl: number;
     achieved: number;
+    isLimitEntry: boolean;
+    hasHitTp1: boolean;
+    hasHitTp2: boolean;
+    hasHitTp3: boolean;
   }
   const activeTrades: Record<string, ActiveTrade> = {};
 
@@ -1009,7 +1037,7 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 70;
+      const requiredConfidence = 50; // Rank #1 Optimized threshold (from backtest: 50)
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1052,149 +1080,246 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
         await Promise.all(chunk.map(async (symbol) => {
           try {
           // 1. Fetch 3M for active trade monitoring and sniper entry
-          const klines3m = await fetchKlines(symbol, "3m");
-
-          // --- ACTIVE TRADE MONITORING (24/7) ---
+                // --- ACTIVE TRADE MONITORING (24/7) ---
           const activeTrade = activeTrades[symbol];
+          const klines3m = await fetchKlines(symbol, "3m");
           let tradeClosed = false;
           if (activeTrade && klines3m.length > 0) {
-              // Check the last 3 candles to ensure we don't miss a quick wick
-              const recentCandles = klines3m.slice(-3);
+              // Check if the trade is pending entry (achieved === 0)
+              if (activeTrade.achieved === 0) {
+                const recentCandles = klines3m.slice(-3);
+                let entryFilled = false;
+                for (const candle of recentCandles) {
+                  const currentHigh = candle.high;
+                  const currentLow = candle.low;
 
-              for (const candle of recentCandles) {
-                if (tradeClosed) break;
+                  if (activeTrade.direction === "LONG") {
+                    if (currentLow <= activeTrade.entry) {
+                      entryFilled = true;
+                      break;
+                    }
+                  } else { // SHORT
+                    if (currentHigh >= activeTrade.entry) {
+                      entryFilled = true;
+                      break;
+                    }
+                  }
+                }
 
-                const currentHigh = candle.high;
-                const currentLow = candle.low;
-                const currentClose = candle.close;
+                if (entryFilled) {
+                  activeTrade.achieved = 1; // Mark as active and filled!
+                  const dirIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
+                  const entryAlertMsg = `🚀 <b>ENTRY FILLED (Limit Hit)</b> 🚀
 
-                // Soft Exit Logic (Momentum Reversal)
-                let softExit = false;
-                let softExitReason = "";
-                try {
-                  const klines15mForExit = await fetchKlines(symbol, "15m");
-                  if (klines15mForExit.length >= 30) {
-                    const closes15m = klines15mForExit.map((k) => k.close);
-                    const macd15m = MACD.calculate({
-                      values: closes15m,
-                      fastPeriod: 12,
-                      slowPeriod: 26,
-                      signalPeriod: 9,
-                      SimpleMAOscillator: false,
-                      SimpleMASignal: false,
-                    });
-                    const rsi15m = RSI.calculate({
-                      values: closes15m,
-                      period: 14,
-                    });
+🪙 <b>Pair:</b> #${symbol}
+${dirIcon} <b>Direction:</b> ${activeTrade.direction}
+  
+🎯 <b>Filled Entry Price:</b> <code>${formatPrice(activeTrade.entry)}</code>
+🎯 <b>TP1 (50% booking):</b> <code>${formatPrice(activeTrade.tp1)}</code>
+🎯 <b>TP2 (30% booking):</b> <code>${formatPrice(activeTrade.tp2)}</code>
+🎯 <b>TP3 (20% runner):</b> <code>${formatPrice(activeTrade.tp3)}</code>
+❌ <b>Stop Loss:</b> <code>${formatPrice(activeTrade.sl)}</code>
+🛡 <b>Trail Mode:</b> Move SL to Break-Even at TP1`;
+                  
+                  sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
+                }
+              }
 
-                    if (macd15m.length >= 2 && rsi15m.length >= 1) {
-                      const lastMacd = macd15m[macd15m.length - 1];
-                      const prevMacd = macd15m[macd15m.length - 2];
-                      const lastRsi = rsi15m[rsi15m.length - 1];
+              // Evaluate active trade targets if filled
+              if (activeTrade.achieved >= 1) {
+                const recentCandles = klines3m.slice(-3);
 
-                      const avgVol =
-                        klines15mForExit
-                          .slice(-10)
-                          .reduce((sum, c) => sum + c.volume, 0) / 10;
-                      const lastVol =
-                        klines15mForExit[klines15mForExit.length - 1].volume;
-                      const lossOfVolume = lastVol < avgVol * 0.8;
+                for (const candle of recentCandles) {
+                  if (tradeClosed) break;
 
-                      if (activeTrade.direction === "LONG") {
-                        const macdFading =
-                          (lastMacd.histogram || 0) <
-                            (prevMacd.histogram || 0) &&
-                          (lastMacd.histogram || 0) < 0;
-                        const rsiLeavingTrend = lastRsi < 45;
-                        if (macdFading && rsiLeavingTrend && lossOfVolume) {
-                          softExit = true;
-                          softExitReason =
-                            "Momentum Reversed (MACD Fading, RSI under 45, Volume Dropping)";
-                        }
-                      } else if (activeTrade.direction === "SHORT") {
-                        const macdFading =
-                          (lastMacd.histogram || 0) >
-                            (prevMacd.histogram || 0) &&
-                          (lastMacd.histogram || 0) > 0;
-                        const rsiLeavingTrend = lastRsi > 55;
-                        if (macdFading && rsiLeavingTrend && lossOfVolume) {
-                          softExit = true;
-                          softExitReason =
-                            "Momentum Reversed (MACD Fading, RSI over 55, Volume Dropping)";
+                  const currentHigh = candle.high;
+                  const currentLow = candle.low;
+                  const currentClose = candle.close;
+
+                  // Soft Exit Logic (Momentum Reversal)
+                  let softExit = false;
+                  let softExitReason = "";
+                  try {
+                    const klines15mForExit = await fetchKlines(symbol, "15m");
+                    if (klines15mForExit.length >= 30) {
+                      const closes15m = klines15mForExit.map((k) => k.close);
+                      const macd15m = MACD.calculate({
+                        values: closes15m,
+                        fastPeriod: 12,
+                        slowPeriod: 26,
+                        signalPeriod: 9,
+                        SimpleMAOscillator: false,
+                        SimpleMASignal: false,
+                      });
+                      const rsi15m = RSI.calculate({
+                        values: closes15m,
+                        period: 14,
+                      });
+
+                      if (macd15m.length >= 2 && rsi15m.length >= 1) {
+                        const lastMacd = macd15m[macd15m.length - 1];
+                        const prevMacd = macd15m[macd15m.length - 2];
+                        const lastRsi = rsi15m[rsi15m.length - 1];
+
+                        const avgVol =
+                          klines15mForExit
+                            .slice(-10)
+                            .reduce((sum, c) => sum + c.volume, 0) / 10;
+                        const lastVol =
+                          klines15mForExit[klines15mForExit.length - 1].volume;
+                        const lossOfVolume = lastVol < avgVol * 0.8;
+
+                        if (activeTrade.direction === "LONG") {
+                          const macdFading =
+                            (lastMacd.histogram || 0) <
+                              (prevMacd.histogram || 0) &&
+                            (lastMacd.histogram || 0) < 0;
+                          const rsiLeavingTrend = lastRsi < 45;
+                          if (macdFading && rsiLeavingTrend && lossOfVolume) {
+                            softExit = true;
+                            softExitReason =
+                              "Momentum Reversed (MACD Fading, RSI under 45, Volume Dropping)";
+                          }
+                        } else if (activeTrade.direction === "SHORT") {
+                          const macdFading =
+                            (lastMacd.histogram || 0) >
+                              (prevMacd.histogram || 0) &&
+                            (lastMacd.histogram || 0) > 0;
+                          const rsiLeavingTrend = lastRsi > 55;
+                          if (macdFading && rsiLeavingTrend && lossOfVolume) {
+                            softExit = true;
+                            softExitReason =
+                              "Momentum Reversed (MACD Fading, RSI over 55, Volume Dropping)";
+                          }
                         }
                       }
                     }
+                  } catch (e) {
+                    console.error(`Failed to check soft exit for ${symbol}:`, e);
                   }
-                } catch (e) {
-                  console.error(`Failed to check soft exit for ${symbol}:`, e);
-                }
 
-                if (softExit) {
-                  console.log(
-                    `[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`,
-                  );
-                  sendTelegramSignal(
-                    botToken,
-                    chatId,
-                    `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
-                  ).catch(console.error);
-                  delete activeTrades[symbol];
-                  tradeClosed = true;
-                  break;
-                }
-
-                if (activeTrade.direction === "LONG") {
-                  if (currentLow <= activeTrade.sl) {
+                  if (softExit) {
                     console.log(
-                      `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`,
+                      `[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`,
                     );
                     sendTelegramSignal(
                       botToken,
                       chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentLow)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "LONG")})`,
+                      `🚨 <b>TRADE UPDATE: SOFT EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
                     ).catch(console.error);
                     delete activeTrades[symbol];
                     tradeClosed = true;
-                  } else if (
-                    currentHigh >= activeTrade.tp
-                  ) {
-                    sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "LONG")})`,
-                    ).catch(console.error);
-                    delete activeTrades[symbol];
-                    tradeClosed = true;
+                    break;
                   }
-                } else if (activeTrade.direction === "SHORT") {
-                  if (currentHigh >= activeTrade.sl) {
-                    console.log(
-                      `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${activeTrade.sl}, Achieved: ${activeTrade.achieved}`,
-                    );
-                    sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n❌ <b>Status:</b> Stop Loss Hit at <code>${formatPrice(currentHigh)}</code> (PnL: ${calculatePnL(activeTrade.entry, activeTrade.sl, "SHORT")})`,
-                    ).catch(console.error);
-                    delete activeTrades[symbol];
-                    tradeClosed = true;
-                  } else if (
-                    currentLow <= activeTrade.tp
-                  ) {
-                    sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Status:</b> Take Profit Achieved (🎯 ${formatPrice(activeTrade.tp)}) (PnL: ${calculatePnL(activeTrade.entry, activeTrade.tp, "SHORT")})`,
-                    ).catch(console.error);
-                    delete activeTrades[symbol];
-                    tradeClosed = true;
+
+                  if (activeTrade.direction === "LONG") {
+                    if (currentLow <= activeTrade.currentSl) {
+                      console.log(
+                        `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${activeTrade.currentSl}`,
+                      );
+                      const isBE = activeTrade.currentSl === activeTrade.entry;
+                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, activeTrade.currentSl, "LONG");
+                      const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
+                      const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
+
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(activeTrade.currentSl)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                      ).catch(console.error);
+                      delete activeTrades[symbol];
+                      tradeClosed = true;
+                    } else if (!activeTrade.hasHitTp1 && currentHigh >= activeTrade.tp1) {
+                      activeTrade.hasHitTp1 = true;
+                      activeTrade.achieved = 2;
+                      activeTrade.currentSl = activeTrade.entry; // Move SL to Break-Even!
+
+                      const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG");
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
+                      ).catch(console.error);
+                    } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentHigh >= activeTrade.tp2) {
+                      activeTrade.hasHitTp2 = true;
+                      activeTrade.achieved = 3;
+
+                      const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp2, "LONG");
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
+                      ).catch(console.error);
+                    } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentHigh >= activeTrade.tp3) {
+                      activeTrade.hasHitTp3 = true;
+                      activeTrade.achieved = 4;
+
+                      const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp3, "LONG");
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
+                      ).catch(console.error);
+                      delete activeTrades[symbol];
+                      tradeClosed = true;
+                    }
+                  } else if (activeTrade.direction === "SHORT") {
+                    if (currentHigh >= activeTrade.currentSl) {
+                      console.log(
+                        `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${activeTrade.currentSl}`,
+                      );
+                      const isBE = activeTrade.currentSl === activeTrade.entry;
+                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, activeTrade.currentSl, "SHORT");
+                      const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
+                      const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
+
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(activeTrade.currentSl)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                      ).catch(console.error);
+                      delete activeTrades[symbol];
+                      tradeClosed = true;
+                    } else if (!activeTrade.hasHitTp1 && currentLow <= activeTrade.tp1) {
+                      activeTrade.hasHitTp1 = true;
+                      activeTrade.achieved = 2;
+                      activeTrade.currentSl = activeTrade.entry; // Move SL to Break-Even!
+
+                      const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT");
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
+                      ).catch(console.error);
+                    } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentLow <= activeTrade.tp2) {
+                      activeTrade.hasHitTp2 = true;
+                      activeTrade.achieved = 3;
+
+                      const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp2, "SHORT");
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
+                      ).catch(console.error);
+                    } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentLow <= activeTrade.tp3) {
+                      activeTrade.hasHitTp3 = true;
+                      activeTrade.achieved = 4;
+
+                      const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp3, "SHORT");
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
+                      ).catch(console.error);
+                      delete activeTrades[symbol];
+                      tradeClosed = true;
+                    }
                   }
                 }
               }
-            }
-            if (activeTrade || tradeClosed) return; // Skip generating new signals if a trade is already active or just closed
-            // --- END ACTIVE TRADE MONITORING ---
+          }
+          if (activeTrade || tradeClosed) return; // Skip generating new signals if a trade is already active or just closed
+          // --- END ACTIVE TRADE MONITORING ---
 
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
@@ -1218,15 +1343,16 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
             if (htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; return; }
 
             // Upgrade 1: King Filter Application
-            if (symbol !== "BTCUSDT") {
+            const useBtcFilter = false; // Rank #1 Optimized Setting: disabled for altcoins
+            if (useBtcFilter && symbol !== "BTCUSDT") {
               // Altcoin LONG allowed only if BTC not bearish (LONG or NEUTRAL)
               if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { 
                 diagnosticCounts.btcConflict++; 
                 console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
                 return; 
               }
-              // Altcoin SHORT allowed only if BTC weak (SHORT)
-              if (mtfAnalysis.signal === "SHORT" && btcTrend !== "SHORT") { 
+              // Altcoin SHORT allowed only if BTC is not strongly bullish (SHORT or NEUTRAL)
+              if (mtfAnalysis.signal === "SHORT" && btcTrend === "LONG") { 
                 diagnosticCounts.btcConflict++; 
                 console.log(`[Reject] ${symbol}: BTC Conflict (Direction: ${mtfAnalysis.signal}, BTC: ${btcTrend})`);
                 return; 
@@ -1264,11 +1390,14 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
                 ? cumulativeTypicalVolume / cumulativeVolume
                 : closes3m[closes3m.length - 1];
 
-            if (mtfAnalysis.signal === "LONG") {
-              mtfAnalysis.limitEntry = Math.min(lastEma20_3m, vwap3m);
-            } else {
-              mtfAnalysis.limitEntry = Math.max(lastEma20_3m, vwap3m);
-            }
+            // Calculate dynamic limit entry with pullback factor of 0.50 (Rank #1 Optimized Setting)
+            const originalClose = closes3m[closes3m.length - 1];
+            const sl = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
+            const gap = Math.abs(originalClose - sl);
+            const pullbackFactor = 0.50; // 50% Extreme Pullback
+            const shift = gap * pullbackFactor;
+            
+            mtfAnalysis.limitEntry = mtfAnalysis.signal === "LONG" ? originalClose - shift : originalClose + shift;
             mtfAnalysis.entryStrategy = "Limit (Pullback)";
 
             // Premium Upgrades: OI and Funding Rate
@@ -1370,20 +1499,36 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
         for (const sig of allSignals) {
+          const isLimit = !!sig.analysis.limitEntry;
+          const entryPrice = sig.analysis.limitEntry || sig.entryPrice;
+          
+          // Compute correct progressive targets relative to the target entry
+          const tp1 = sig.analysis.tp1 || (sig.analysis.signal === "LONG" ? entryPrice + (entryPrice - sig.sl) : entryPrice - (sig.sl - entryPrice));
+          const tp2 = sig.analysis.tp2 || (sig.analysis.signal === "LONG" ? entryPrice + (entryPrice - sig.sl) * 2 : entryPrice - (sig.sl - entryPrice) * 2);
+          const tp3 = sig.analysis.tp3 || sig.tp;
+
+          // Determine if limit is distinctly set
+          const isLimitTrue = isLimit && sig.analysis.limitEntry !== sig.entryPrice;
+
           activeTrades[sig.symbol] = {
             symbol: sig.symbol,
             direction: sig.analysis.signal as "LONG" | "SHORT",
-            entry: sig.entryPrice,
+            entry: entryPrice,
             tp: sig.tp,
+            tp1,
+            tp2,
+            tp3,
             sl: sig.sl,
-            achieved: 0,
+            currentSl: sig.sl,
+            achieved: isLimitTrue ? 0 : 1, // 0: Pending Fill, 1: Filled
+            isLimitEntry: isLimitTrue,
+            hasHitTp1: false,
+            hasHitTp2: false,
+            hasHitTp3: false,
           };
 
           const directionEmoji =
             sig.analysis.signal === "LONG" ? "🟢 LONG" : "🔴 SHORT";
-          const limitEntryStr = sig.analysis.limitEntry
-            ? `\n⏳ Limit (Pullback): ${formatPrice(sig.analysis.limitEntry)}`
-            : "";
           const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           const strategyStr = sig.analysis.entryStrategy
             ? `\n\n📝 Strategy: ${escapeHtml(sig.analysis.entryStrategy)}`
@@ -1401,23 +1546,69 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
               
           const logicStr = escapeHtml(logicStrRaw);
 
-          const message = `⚡️ <b>ENDELLION TRADE</b> ⚡️
+          let message = "";
+          if (isLimitTrue) {
+            message = `⚡️ <b>ENDELLION AUTONOMOUS SIGNAL (Limit Setup Triggered)</b> ⚡️
 
-🪙 <b>Pair:</b> #${sig.symbol}
-${directionEmoji} <b>Direction:</b> ${sig.analysis.signal}
-⏱ <b>Timeframe:</b> Multi-TF (4h, 1h, 15m, 3m)${strategyStr}
-🛡 <b>1H State:</b> ${escapeHtml(sig.control1H.state)} (${escapeHtml(sig.control1H.reason)})
-👑 <b>BTC Trend:</b> ${escapeHtml(btcTrend)}
+🪙 <b>Pair:</b> #${sig.symbol} (${sig.analysis.signal === "LONG" ? "🟢 Bullish Setup" : "🔴 Bearish Setup"})
+⏱ <b>Timeframe:</b> Multi-TF (4H bias, 1H state, 15M execution, 3M pullback)
 🕒 <b>Session:</b> ${escapeHtml(sig.sessionName)}
+👑 <b>King Filter (BTC):</b> ${escapeHtml(btcTrend)}
 
-🎯 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>${limitEntryStr}
-✅ <b>Target:</b> <code>${formatPrice(sig.tp)}</code>
-❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>
+📥 <b>ENTRY TARGETS:</b>
+• <b>Current Market Price (CMP):</b> <code>${formatPrice(sig.entryPrice)}</code>
+• <b>Pullback Limit Entry:</b> <code>${formatPrice(entryPrice)}</code> (50% Pullback Setup)
+• <b>Execution:</b> Pullback Limit Order Setup${strategyStr}
 
-🧠 <b>Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
+🎯 <b>TAKE PROFIT TARGETS:</b>
+• 💰 <b>Take Profit 1 (50% Booking):</b> <code>${formatPrice(tp1)}</code>
+• 💰 <b>Take Profit 2 (30% Booking):</b> <code>${formatPrice(tp2)}</code>
+• 💰 <b>Take Profit 3 (20% Runner / Ultimate TP):</b> <code>${formatPrice(tp3)}</code>
+• ❌ <b>Stop Loss (Protective):</b> <code>${formatPrice(sig.sl)}</code>
 
-💡 <b>Logic:</b>
-${logicStr}`;
+🛡 <b>RISK MANAGEMENT PLAN:</b>
+• Move Stop-Loss to <b>Break-Even</b> (<code>${formatPrice(entryPrice)}</code>) immediately upon <b>TP1 fill</b>.
+• Split close structure: 50% at TP1, 30% at TP2, 20% runner for core trend maximization.
+
+📊 <b>TECHNICAL LOGIC & CONFLUENCES:</b>
+• <b>Overall Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
+• <b>1H State Control:</b> ${escapeHtml(sig.control1H.state)} (${escapeHtml(sig.control1H.reason)})
+• <b>Supporting Technical Indicators:</b>
+${logicStr}
+${sig.analysis.patterns && sig.analysis.patterns.length > 0 ? `• <b>Chart Patterns:</b> ${escapeHtml(sig.analysis.patterns.join(", "))}` : ""}
+
+<i>Waiting for entry price fill before trade activation...</i>`;
+          } else {
+            message = `🚀 <b>ENDELLION AUTONOMOUS SIGNAL (Market Entry Filled)</b> 🚀
+
+🪙 <b>Pair:</b> #${sig.symbol} (${sig.analysis.signal === "LONG" ? "🟢 Bullish Setup" : "🔴 Bearish Setup"})
+⏱ <b>Timeframe:</b> Multi-TF (4H bias, 1H state, 15M execution, 3M pullback)
+🕒 <b>Session:</b> ${escapeHtml(sig.sessionName)}
+👑 <b>King Filter (BTC):</b> ${escapeHtml(btcTrend)}
+
+📥 <b>ENTRY TARGETS:</b>
+• <b>Filled Entry Price (CMP):</b> <code>${formatPrice(entryPrice)}</code>
+• <b>Execution:</b> Instant Market Order Execution${strategyStr}
+
+🎯 <b>TAKE PROFIT TARGETS:</b>
+• 💰 <b>Take Profit 1 (50% Booking):</b> <code>${formatPrice(tp1)}</code>
+• 💰 <b>Take Profit 2 (30% Booking):</b> <code>${formatPrice(tp2)}</code>
+• 💰 <b>Take Profit 3 (20% Runner / Ultimate TP):</b> <code>${formatPrice(tp3)}</code>
+• ❌ <b>Stop Loss (Protective):</b> <code>${formatPrice(sig.sl)}</code>
+
+🛡 <b>RISK MANAGEMENT PLAN:</b>
+• Move Stop-Loss to <b>Break-Even</b> (<code>${formatPrice(entryPrice)}</code>) immediately upon <b>TP1 fill</b>.
+• Split close structure: 50% at TP1, 30% at TP2, 20% runner for core trend maximization.
+
+📊 <b>TECHNICAL LOGIC & CONFLUENCES:</b>
+• <b>Overall Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
+• <b>1H State Control:</b> ${escapeHtml(sig.control1H.state)} (${escapeHtml(sig.control1H.reason)})
+• <b>Supporting Technical Indicators:</b>
+${logicStr}
+${sig.analysis.patterns && sig.analysis.patterns.length > 0 ? `• <b>Chart Patterns:</b> ${escapeHtml(sig.analysis.patterns.join(", "))}` : ""}
+
+🛡 <b>Trail Mode:</b> Move SL to Break-Even at TP1`;
+          }
 
           const bullishImageUrl =
             "https://quickchart.io/chart?c=" + encodeURIComponent("{type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}");

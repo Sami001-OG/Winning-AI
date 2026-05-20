@@ -293,7 +293,7 @@ export default function App() {
     if (autoTradeEnabled && activeAnalysis && activeAnalysis.signal !== "NO TRADE" && activeAnalysis.tp && activeAnalysis.sl) {
       const hasActiveTrade = trades.some(t => t.symbol === symbol && t.status === 'PENDING');
       if (!hasActiveTrade) {
-        executeTrade();
+        trackTradeSignal();
       }
     }
   }, [activeAnalysis, autoTradeEnabled, trades, symbol]);

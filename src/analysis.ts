@@ -498,7 +498,7 @@ export const analyzeChart = (
 
   // 4. Volatility Penalty
   if (isHighVolatility) {
-    confidence *= 0.80; // 20% penalty
+    confidence *= 0.90; // 10% penalty
   }
 
   // 5. Historical Performance Penalty
@@ -565,7 +565,7 @@ export const analyzeChart = (
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     confidence = Math.min(100, confidence + 10); // Boost confidence for perfect setup
     reason = `PERFECT ${signal} setup. High confluence & divergence.`;
-  } else if (confidence >= 70) { 
+  } else if (confidence >= 60) { 
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     reason = `Strong ${signal} setup. High confluence.`;
   } else {
@@ -727,6 +727,7 @@ export const analyzeChart = (
     
     // TP2: 2:1 R:R target based on the next significant liquidity pool
     let tp2Base = signal === 'LONG' ? entryPrice + (risk * 2) : entryPrice - (risk * 2);
+    let calcTp2: number;
     // Adjust TP2 towards nearest swing high/low if it makes sense (liquidity pool)
     if (signal === 'LONG' && swingHigh > entryPrice) {
       // If the recent swing high is further than TP2, aim for the swing high (liquidity)
