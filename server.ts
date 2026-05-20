@@ -801,18 +801,17 @@ async function startServer() {
         const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
         const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
         if (botToken && chatId) {
-          const typeIcon = trade.type === "LONG" ? "📈" : "📉";
-          const dirEmoji = trade.type === "LONG" ? "🟢 LONG" : "🔴 SHORT";
-          const msg = `${dirEmoji} <b>Signal Tracker Activated</b>
-      
-🪙 <b>Pair:</b> #${trade.symbol}
-📈 <b>Signal:</b> ${trade.type}
-  
-📥 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>
-🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>
-🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>
-🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>
-❌ <b>SL:</b> <code>${formatPrice(slPrice)}</code>`;
+          const directionIcon = trade.type === "LONG" ? "📈" : "📉";
+          const confValue = (trade.confidence || (trade.analysis && trade.analysis.confidence) || 100).toFixed(1);
+          const msg = `🪙 Pair: #${trade.symbol}
+${directionIcon} Direction: ${trade.type}
+  Confidence: ${confValue}%
+🎯 Entry Price: ${formatPrice(entryPrice)}
+🎯 TP1 (50% Booking): ${formatPrice(tp1)}
+🎯 TP2 (30% Booking): ${formatPrice(tp2)}
+🎯 TP3 (20% Runner): ${formatPrice(tp3)}
+❌ Stop Loss: ${formatPrice(slPrice)}
+🛡 Trail Mode: Move SL to Break-Even at TP1`;
           sendTelegramSignal(botToken as string, chatId as string, msg).catch(console.error);
         }
 
@@ -1108,17 +1107,16 @@ async function startServer() {
 
                 if (entryFilled) {
                   activeTrade.achieved = 1; // Mark as active and filled!
-                  const dirEmoji = activeTrade.direction === "LONG" ? "🟢 LONG" : "🔴 SHORT";
-                  const entryAlertMsg = `${dirEmoji} <b>Entry Filled</b>
-
-🪙 <b>Pair:</b> #${symbol}
-📈 <b>Signal:</b> ${activeTrade.direction}
-  
-📥 <b>Entry Price:</b> <code>${formatPrice(activeTrade.entry)}</code>
-🎯 <b>TP1:</b> <code>${formatPrice(activeTrade.tp1)}</code>
-🎯 <b>TP2:</b> <code>${formatPrice(activeTrade.tp2)}</code>
-🎯 <b>TP3:</b> <code>${formatPrice(activeTrade.tp3)}</code>
-❌ <b>SL:</b> <code>${formatPrice(activeTrade.sl)}</code>`;
+                  const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
+                  const entryAlertMsg = `🪙 Pair: #${symbol}
+${directionIcon} Direction: ${activeTrade.direction}
+  Confidence: 100%
+🎯 Entry Price: ${formatPrice(activeTrade.entry)}
+🎯 TP1 (50% Booking): ${formatPrice(activeTrade.tp1)}
+🎯 TP2 (30% Booking): ${formatPrice(activeTrade.tp2)}
+🎯 TP3 (20% Runner): ${formatPrice(activeTrade.tp3)}
+❌ Stop Loss: ${formatPrice(activeTrade.sl)}
+🛡 Trail Mode: Move SL to Break-Even at TP1`;
                   
                   sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
                 }
@@ -1546,29 +1544,29 @@ async function startServer() {
           const logicStr = escapeHtml(logicStrRaw);
 
           let message = "";
+          const directionIcon = sig.analysis.signal === "LONG" ? "📈" : "📉";
+          const confValue = (sig.analysis.confidence || 0).toFixed(1);
           if (isLimitTrue) {
-            message = `${directionEmoji} <b>Signal Triggered</b>
-
-🪙 <b>Pair:</b> #${sig.symbol}
-📈 <b>Signal:</b> ${sig.analysis.signal}
-
-📥 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>
-📥 <b>Limit Entry:</b> <code>${formatPrice(entryPrice)}</code>
-🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>
-🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>
-🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>
-❌ <b>SL:</b> <code>${formatPrice(sig.sl)}</code>`;
+            message = `🪙 Pair: #${sig.symbol}
+${directionIcon} Direction: ${sig.analysis.signal}
+  Confidence: ${confValue}%
+🎯 Entry Price: ${formatPrice(sig.entryPrice)}
+🎯 Limit Entry Price: ${formatPrice(entryPrice)}
+🎯 TP1 (50% Booking): ${formatPrice(tp1)}
+🎯 TP2 (30% Booking): ${formatPrice(tp2)}
+🎯 TP3 (20% Runner): ${formatPrice(tp3)}
+❌ Stop Loss: ${formatPrice(sig.sl)}
+🛡 Trail Mode: Move SL to Break-Even at TP1`;
           } else {
-            message = `${directionEmoji} <b>Signal Triggered</b>
-
-🪙 <b>Pair:</b> #${sig.symbol}
-📈 <b>Signal:</b> ${sig.analysis.signal}
-
-📥 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>
-🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>
-🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>
-🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>
-❌ <b>SL:</b> <code>${formatPrice(sig.sl)}</code>`;
+            message = `🪙 Pair: #${sig.symbol}
+${directionIcon} Direction: ${sig.analysis.signal}
+  Confidence: ${confValue}%
+🎯 Entry Price: ${formatPrice(entryPrice)}
+🎯 TP1 (50% Booking): ${formatPrice(tp1)}
+🎯 TP2 (30% Booking): ${formatPrice(tp2)}
+🎯 TP3 (20% Runner): ${formatPrice(tp3)}
+❌ Stop Loss: ${formatPrice(sig.sl)}
+🛡 Trail Mode: Move SL to Break-Even at TP1`;
           }
 
           const bullishImageUrl =
