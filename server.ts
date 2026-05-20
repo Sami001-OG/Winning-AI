@@ -802,17 +802,17 @@ async function startServer() {
         const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
         if (botToken && chatId) {
           const typeIcon = trade.type === "LONG" ? "📈" : "📉";
-          const msg = `🚀 <b>TRADE OPENED (Market Entry)</b> 🚀
+          const dirEmoji = trade.type === "LONG" ? "🟢 LONG" : "🔴 SHORT";
+          const msg = `${dirEmoji} <b>Signal Tracker Activated</b>
       
 🪙 <b>Pair:</b> #${trade.symbol}
-${typeIcon} <b>Direction:</b> ${trade.type}
+📈 <b>Signal:</b> ${trade.type}
   
-🎯 <b>Entry Price:</b> <code>${formatPrice(entryPrice)}</code>
-🎯 <b>TP1 (50% Booking):</b> <code>${formatPrice(tp1)}</code>
-🎯 <b>TP2 (30% Booking):</b> <code>${formatPrice(tp2)}</code>
-🎯 <b>TP3 (20% Runner):</b> <code>${formatPrice(tp3)}</code>
-❌ <b>Stop Loss:</b> <code>${formatPrice(slPrice)}</code>
-🛡 <b>Trail Mode:</b> Move SL to Break-Even at TP1`;
+📥 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>
+🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>
+🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>
+🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>
+❌ <b>SL:</b> <code>${formatPrice(slPrice)}</code>`;
           sendTelegramSignal(botToken as string, chatId as string, msg).catch(console.error);
         }
 
@@ -1108,18 +1108,17 @@ ${typeIcon} <b>Direction:</b> ${trade.type}
 
                 if (entryFilled) {
                   activeTrade.achieved = 1; // Mark as active and filled!
-                  const dirIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
-                  const entryAlertMsg = `🚀 <b>ENTRY FILLED (Limit Hit)</b> 🚀
+                  const dirEmoji = activeTrade.direction === "LONG" ? "🟢 LONG" : "🔴 SHORT";
+                  const entryAlertMsg = `${dirEmoji} <b>Entry Filled</b>
 
 🪙 <b>Pair:</b> #${symbol}
-${dirIcon} <b>Direction:</b> ${activeTrade.direction}
+📈 <b>Signal:</b> ${activeTrade.direction}
   
-🎯 <b>Filled Entry Price:</b> <code>${formatPrice(activeTrade.entry)}</code>
-🎯 <b>TP1 (50% booking):</b> <code>${formatPrice(activeTrade.tp1)}</code>
-🎯 <b>TP2 (30% booking):</b> <code>${formatPrice(activeTrade.tp2)}</code>
-🎯 <b>TP3 (20% runner):</b> <code>${formatPrice(activeTrade.tp3)}</code>
-❌ <b>Stop Loss:</b> <code>${formatPrice(activeTrade.sl)}</code>
-🛡 <b>Trail Mode:</b> Move SL to Break-Even at TP1`;
+📥 <b>Entry Price:</b> <code>${formatPrice(activeTrade.entry)}</code>
+🎯 <b>TP1:</b> <code>${formatPrice(activeTrade.tp1)}</code>
+🎯 <b>TP2:</b> <code>${formatPrice(activeTrade.tp2)}</code>
+🎯 <b>TP3:</b> <code>${formatPrice(activeTrade.tp3)}</code>
+❌ <b>SL:</b> <code>${formatPrice(activeTrade.sl)}</code>`;
                   
                   sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
                 }
@@ -1548,66 +1547,28 @@ ${dirIcon} <b>Direction:</b> ${activeTrade.direction}
 
           let message = "";
           if (isLimitTrue) {
-            message = `⚡️ <b>ENDELLION AUTONOMOUS SIGNAL (Limit Setup Triggered)</b> ⚡️
+            message = `${directionEmoji} <b>Signal Triggered</b>
 
-🪙 <b>Pair:</b> #${sig.symbol} (${sig.analysis.signal === "LONG" ? "🟢 Bullish Setup" : "🔴 Bearish Setup"})
-⏱ <b>Timeframe:</b> Multi-TF (4H bias, 1H state, 15M execution, 3M pullback)
-🕒 <b>Session:</b> ${escapeHtml(sig.sessionName)}
-👑 <b>King Filter (BTC):</b> ${escapeHtml(btcTrend)}
+🪙 <b>Pair:</b> #${sig.symbol}
+📈 <b>Signal:</b> ${sig.analysis.signal}
 
-📥 <b>ENTRY TARGETS:</b>
-• <b>Current Market Price (CMP):</b> <code>${formatPrice(sig.entryPrice)}</code>
-• <b>Pullback Limit Entry:</b> <code>${formatPrice(entryPrice)}</code> (50% Pullback Setup)
-• <b>Execution:</b> Pullback Limit Order Setup${strategyStr}
-
-🎯 <b>TAKE PROFIT TARGETS:</b>
-• 💰 <b>Take Profit 1 (50% Booking):</b> <code>${formatPrice(tp1)}</code>
-• 💰 <b>Take Profit 2 (30% Booking):</b> <code>${formatPrice(tp2)}</code>
-• 💰 <b>Take Profit 3 (20% Runner / Ultimate TP):</b> <code>${formatPrice(tp3)}</code>
-• ❌ <b>Stop Loss (Protective):</b> <code>${formatPrice(sig.sl)}</code>
-
-🛡 <b>RISK MANAGEMENT PLAN:</b>
-• Move Stop-Loss to <b>Break-Even</b> (<code>${formatPrice(entryPrice)}</code>) immediately upon <b>TP1 fill</b>.
-• Split close structure: 50% at TP1, 30% at TP2, 20% runner for core trend maximization.
-
-📊 <b>TECHNICAL LOGIC & CONFLUENCES:</b>
-• <b>Overall Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
-• <b>1H State Control:</b> ${escapeHtml(sig.control1H.state)} (${escapeHtml(sig.control1H.reason)})
-• <b>Supporting Technical Indicators:</b>
-${logicStr}
-${sig.analysis.patterns && sig.analysis.patterns.length > 0 ? `• <b>Chart Patterns:</b> ${escapeHtml(sig.analysis.patterns.join(", "))}` : ""}
-
-<i>Waiting for entry price fill before trade activation...</i>`;
+📥 <b>Entry:</b> <code>${formatPrice(sig.entryPrice)}</code>
+📥 <b>Limit Entry:</b> <code>${formatPrice(entryPrice)}</code>
+🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>
+🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>
+🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>
+❌ <b>SL:</b> <code>${formatPrice(sig.sl)}</code>`;
           } else {
-            message = `🚀 <b>ENDELLION AUTONOMOUS SIGNAL (Market Entry Filled)</b> 🚀
+            message = `${directionEmoji} <b>Signal Triggered</b>
 
-🪙 <b>Pair:</b> #${sig.symbol} (${sig.analysis.signal === "LONG" ? "🟢 Bullish Setup" : "🔴 Bearish Setup"})
-⏱ <b>Timeframe:</b> Multi-TF (4H bias, 1H state, 15M execution, 3M pullback)
-🕒 <b>Session:</b> ${escapeHtml(sig.sessionName)}
-👑 <b>King Filter (BTC):</b> ${escapeHtml(btcTrend)}
+🪙 <b>Pair:</b> #${sig.symbol}
+📈 <b>Signal:</b> ${sig.analysis.signal}
 
-📥 <b>ENTRY TARGETS:</b>
-• <b>Filled Entry Price (CMP):</b> <code>${formatPrice(entryPrice)}</code>
-• <b>Execution:</b> Instant Market Order Execution${strategyStr}
-
-🎯 <b>TAKE PROFIT TARGETS:</b>
-• 💰 <b>Take Profit 1 (50% Booking):</b> <code>${formatPrice(tp1)}</code>
-• 💰 <b>Take Profit 2 (30% Booking):</b> <code>${formatPrice(tp2)}</code>
-• 💰 <b>Take Profit 3 (20% Runner / Ultimate TP):</b> <code>${formatPrice(tp3)}</code>
-• ❌ <b>Stop Loss (Protective):</b> <code>${formatPrice(sig.sl)}</code>
-
-🛡 <b>RISK MANAGEMENT PLAN:</b>
-• Move Stop-Loss to <b>Break-Even</b> (<code>${formatPrice(entryPrice)}</code>) immediately upon <b>TP1 fill</b>.
-• Split close structure: 50% at TP1, 30% at TP2, 20% runner for core trend maximization.
-
-📊 <b>TECHNICAL LOGIC & CONFLUENCES:</b>
-• <b>Overall Confidence:</b> <code>${(sig.analysis.confidence || 0).toFixed(1)}%</code>
-• <b>1H State Control:</b> ${escapeHtml(sig.control1H.state)} (${escapeHtml(sig.control1H.reason)})
-• <b>Supporting Technical Indicators:</b>
-${logicStr}
-${sig.analysis.patterns && sig.analysis.patterns.length > 0 ? `• <b>Chart Patterns:</b> ${escapeHtml(sig.analysis.patterns.join(", "))}` : ""}
-
-🛡 <b>Trail Mode:</b> Move SL to Break-Even at TP1`;
+📥 <b>Entry:</b> <code>${formatPrice(entryPrice)}</code>
+🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>
+🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>
+🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>
+❌ <b>SL:</b> <code>${formatPrice(sig.sl)}</code>`;
           }
 
           const bullishImageUrl =
