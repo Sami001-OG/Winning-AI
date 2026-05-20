@@ -301,24 +301,39 @@ export default function App() {
   return (
     <div className="h-screen w-screen bg-[#050505] text-white/90 font-sans overflow-hidden flex flex-col selection:bg-emerald-500/30">
       {/* Top Navigation Bar */}
-      <header className="h-14 border-b border-white/10 bg-[#0A0A0A] flex items-center justify-between px-2 sm:px-4 shrink-0 overflow-x-auto no-scrollbar">
-        <div className="flex items-center gap-3 sm:gap-6 shrink-0">
+      <header className="min-h-14 sm:h-14 border-b border-white/10 bg-[#0A0A0A] flex flex-col sm:flex-row items-center justify-between px-3 sm:px-5 py-2.5 sm:py-0 gap-3 shrink-0">
+        <div className="flex items-center justify-between w-full sm:w-auto gap-3 shrink-0">
           <h1 className="flex items-center gap-2 text-emerald-500 m-0 shrink-0">
-            <ActivitySquare size={20} />
-            <span className="font-bold tracking-widest uppercase text-sm text-white hidden sm:inline">
+            <ActivitySquare size={18} />
+            <span className="font-bold tracking-widest uppercase text-xs sm:text-sm text-white">
               ENDELLION<span className="text-emerald-500">-TRADE</span>
             </span>
           </h1>
 
-          <div className="hidden sm:block h-4 w-px bg-white/10" />
+          {/* Connected Indicator for Small Screens */}
+          <div className="flex items-center gap-2 sm:hidden bg-white/5 border border-white/5 px-2.5 py-1 rounded-md">
+            <div
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                isConnected
+                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                  : "bg-rose-500",
+              )}
+            />
+            <span className="text-[9px] font-mono font-bold text-white/50 uppercase tracking-widest">
+              {isConnected ? "LIVE" : "OFFLINE"}
+            </span>
+          </div>
+        </div>
 
+        {/* Search & Actions block */}
+        <div className="flex items-center justify-between sm:justify-end gap-3.5 w-full sm:w-auto shrink-0">
           {/* Symbol Search */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               let newSymbol = searchInput.toUpperCase().trim();
               if (newSymbol) {
-                // Auto-append USDT if the user just typed the base asset
                 if (
                   !newSymbol.endsWith("USDT") &&
                   !newSymbol.endsWith("BTC") &&
@@ -333,16 +348,16 @@ export default function App() {
                 setSearchInput(newSymbol);
               }
             }}
-            className="flex items-center gap-2 relative shrink-0"
+            className="flex items-center gap-1.5 relative shrink-0"
           >
             <div className="relative flex items-center">
-              <Search size={14} className="absolute left-3 text-white/40" />
+              <Search size={13} className="absolute left-2.5 text-white/40" />
               <input
                 type="text"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className={cn(
-                  "bg-white/5 border rounded-md pl-8 sm:pl-9 pr-2 sm:pr-4 py-1.5 text-xs font-mono text-white placeholder:text-white/30 focus:outline-none focus:bg-white/10 transition-all w-24 sm:w-32 uppercase",
+                  "bg-white/5 border rounded-lg pl-8 pr-2 py-1.5 text-xs font-mono text-white placeholder:text-white/30 focus:outline-none focus:bg-white/10 transition-all w-[100px] sm:w-[120px] uppercase",
                   error
                     ? "border-rose-500/50 focus:border-rose-500"
                     : "border-white/10 focus:border-emerald-500/50",
@@ -352,98 +367,77 @@ export default function App() {
             </div>
             <button
               type="submit"
-              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 rounded-md px-2 sm:px-3 py-1.5 text-xs font-mono font-bold uppercase transition-colors"
+              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 rounded-lg px-3 py-1.5 text-xs font-mono font-bold uppercase transition-colors shrink-0 cursor-pointer"
             >
-              Search
+              Scan
             </button>
             {error && (
-              <div className="absolute top-full left-0 mt-1 text-[10px] text-rose-400 font-mono whitespace-nowrap bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 z-50">
+              <div className="absolute top-[110%] left-0 text-[9px] text-rose-400 font-mono whitespace-nowrap bg-rose-500/10 px-2 py-1 rounded border border-rose-500/20 z-50">
                 {error}
               </div>
             )}
           </form>
 
-          {/* Action Row */}
-          <div className="flex items-center gap-3 shrink-0 ml-auto">
+          <div className="flex items-center gap-2 shrink-0">
             {/* Auto Trade Toggle */}
             <div
               onClick={() => setAutoTradeEnabled(!autoTradeEnabled)}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md border text-[10px] sm:text-xs font-mono transition-colors cursor-pointer select-none",
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[10px] sm:text-xs font-mono transition-colors cursor-pointer select-none",
                 autoTradeEnabled 
-                  ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" 
+                  ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 font-bold" 
                   : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white/80"
               )}
             >
               <div className={cn(
-                "w-2 h-2 rounded-full",
+                "w-1.5 h-1.5 rounded-full",
                 autoTradeEnabled ? "bg-emerald-400 animate-pulse" : "bg-white/20"
               )} />
-              Auto Trade
+              <span>Auto</span>
             </div>
 
             {/* Layout Toggle */}
-            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-md border border-white/10 shrink-0 hidden sm:flex">
+            <div className="hidden sm:flex items-center gap-1 bg-white/5 p-1 rounded-lg border border-white/10 shrink-0">
               <button
                 onClick={() => setLayout("single")}
-              className={cn(
-                "p-1.5 rounded transition-all",
-                layout === "single"
-                  ? "bg-white/10 text-emerald-400"
-                  : "text-white/40 hover:text-white/80 hover:bg-white/5",
-              )}
-              title="Single Timeframe"
-            >
-              <Square size={14} />
-            </button>
-            <button
-              onClick={() => setLayout("multi")}
-              className={cn(
-                "p-1.5 rounded transition-all",
-                layout === "multi"
-                  ? "bg-white/10 text-emerald-400"
-                  : "text-white/40 hover:text-white/80 hover:bg-white/5",
-              )}
-              title="Multiple Timeframes"
-            >
-              <LayoutGrid size={14} />
-            </button>
-          </div>
-        </div>
-        </div>
-
-        <div className="flex items-center gap-3 sm:gap-6 shrink-0 ml-4">
-          {/* Current Price Ticker */}
-          {data.length > 0 && (
-            <div className="hidden sm:flex items-center gap-3 font-mono">
-              <span className="text-xs text-white/40">LAST</span>
-              <span
                 className={cn(
-                  "text-sm font-bold",
-                  data[data.length - 1].close >= data[data.length - 1].open
-                    ? "text-emerald-400"
-                    : "text-rose-400",
+                  "p-1 rounded transition-all cursor-pointer",
+                  layout === "single"
+                    ? "bg-white/10 text-emerald-400"
+                    : "text-white/40 hover:text-white/80",
                 )}
+                title="Single Chart"
               >
-                {(data[data.length - 1].close || 0).toFixed(2)}
+                <Square size={13} />
+              </button>
+              <button
+                onClick={() => setLayout("multi")}
+                className={cn(
+                  "p-1 rounded transition-all cursor-pointer",
+                  layout === "multi"
+                    ? "bg-white/10 text-emerald-400"
+                    : "text-white/40 hover:text-white/80",
+                )}
+                title="Multi Chart"
+              >
+                <LayoutGrid size={13} />
+              </button>
+            </div>
+            
+            {/* Connection Indicator (Desktop) */}
+            <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-white/10">
+              <div
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  isConnected
+                    ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                    : "bg-rose-500",
+                )}
+              />
+              <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">
+                {isConnected ? "online" : "offline"}
               </span>
             </div>
-          )}
-
-          <div className="hidden sm:block h-4 w-px bg-white/10" />
-
-          <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                "w-2 h-2 rounded-full",
-                isConnected
-                  ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
-                  : "bg-rose-500",
-              )}
-            />
-            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest hidden sm:inline">
-              {isConnected ? "Connected" : "Offline"}
-            </span>
           </div>
         </div>
       </header>
@@ -457,7 +451,7 @@ export default function App() {
               "w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden relative shadow-2xl transition-all duration-300",
               layout === "multi"
                 ? "h-[800px] sm:h-[600px] lg:h-[70vh]"
-                : "h-[50vh] sm:h-[60vh] min-h-[400px] sm:min-h-[500px]",
+                : "h-[45vh] sm:h-[60vh] min-h-[320px] sm:min-h-[550px]",
             )}
           >
             {layout === "single" ? (
@@ -524,16 +518,19 @@ export default function App() {
 
           {/* Middle Panel: ENDELLION-TRADE */}
           <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl">
-            <div className="p-3 sm:p-4 border-b border-white/10 bg-white/[0.02] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 w-full lg:w-auto">
-                <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest flex items-center gap-2 shrink-0">
-                  ENDELLION-TRADE{" "}
-                  <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                    [{analysisTf}]
-                  </span>
-                </h2>
-                <div className="hidden sm:block h-4 w-px bg-white/10 shrink-0" />
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
+            <div className="p-4 border-b border-white/10 bg-white/[0.01] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 w-full lg:w-auto">
+                <div className="flex items-center justify-between w-full sm:w-auto">
+                  <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest m-0 shrink-0">
+                    ENDELLION-TRADE CONFIG{" "}
+                    <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded ml-1">
+                      [{analysisTf}]
+                    </span>
+                  </h2>
+                </div>
+                
+                {/* Timeframe Taps */}
+                <div className="grid grid-cols-4 sm:flex items-center gap-1.5 w-full sm:w-auto">
                   {["5m", "15m", "1h", "4h"].map((tf) => {
                     const res = multiAnalysis[tf];
                     if (!res) return null;
@@ -542,23 +539,14 @@ export default function App() {
                         key={tf}
                         onClick={() => setAnalysisTf(tf)}
                         className={cn(
-                          "flex justify-center flex-1 sm:flex-none items-center gap-1.5 border rounded px-2 py-1 transition-colors cursor-pointer",
+                          "flex justify-center items-center gap-1.5 border rounded-lg py-2 sm:py-1 px-3.5 transition-all cursor-pointer text-xs font-mono font-bold",
                           analysisTf === tf
-                            ? "border-white/30 bg-white/10 shadow-sm"
-                            : "border-white/5 bg-white/[0.02] hover:bg-white/5",
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shadow-sm"
+                            : "border-white/5 bg-white/[0.02] text-white/55 hover:bg-white/5 hover:text-white",
                         )}
                         title={`${tf} Signal: ${res.signal}`}
                       >
-                        <span
-                          className={cn(
-                            "text-[9px] font-mono",
-                            analysisTf === tf
-                              ? "text-white font-bold"
-                              : "text-white/40",
-                          )}
-                        >
-                          {tf}
-                        </span>
+                        <span>{tf}</span>
                         <div
                           className={cn(
                             "w-1.5 h-1.5 rounded-full shrink-0",
@@ -575,102 +563,82 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full lg:w-auto">
-                <div className="flex items-center justify-between sm:justify-start gap-3 sm:gap-4 border-b sm:border-b-0 sm:border-r border-white/10 pb-3 sm:pb-0 sm:pr-4">
-                  <div className="flex flex-col items-start sm:items-end">
-                    <span className="text-[9px] font-mono text-emerald-400/50 uppercase tracking-widest flex items-center gap-1">
-                      <Target className="w-3 h-3" /> Target (Dynamic)
-                    </span>
-                    <span className="text-sm font-mono font-bold text-emerald-400">
-                      {((activeTrade ? activeTrade.tp : activeAnalysis?.tp) || 0).toFixed(6)}
-                    </span>
-                  </div>
-                  <div className="flex flex-col items-end">
-                    <span className="text-[9px] font-mono text-rose-400/50 uppercase tracking-widest flex items-center gap-1">
-                      <ShieldCheck className="w-3 h-3" /> Stop (Dynamic)
-                    </span>
-                    <span className="text-sm font-mono font-bold text-rose-400">
-                      {((activeTrade ? activeTrade.sl : activeAnalysis?.sl) || 0).toFixed(6)}
-                    </span>
+              {/* Dynamic Target, SL, Score, Signal Action */}
+              <div className="grid grid-cols-2 sm:flex sm:items-center gap-x-4 gap-y-3 w-full lg:w-auto pt-3 lg:pt-0 border-t lg:border-t-0 border-white/5">
+                {/* TP Column */}
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-mono text-emerald-400/50 uppercase tracking-widest flex items-center gap-1">
+                    <Target className="w-3 h-3 text-emerald-400" /> Target (TP)
+                  </span>
+                  <span className="text-sm font-mono font-bold text-emerald-400 mt-1">
+                    {((activeTrade ? activeTrade.tp : activeAnalysis?.tp) || 0).toFixed(6)}
+                  </span>
+                </div>
+
+                {/* SL Column */}
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-mono text-rose-400/50 uppercase tracking-widest flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-rose-400" /> Stop (SL)
+                  </span>
+                  <span className="text-sm font-mono font-bold text-rose-400 mt-1">
+                    {((activeTrade ? activeTrade.sl : activeAnalysis?.sl) || 0).toFixed(6)}
+                  </span>
+                </div>
+
+                {/* Score Column */}
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                    Confidence
+                  </span>
+                  <div
+                    className={cn(
+                      "text-sm sm:text-base font-bold font-mono transition-colors duration-500 mt-1",
+                      activeAnalysis?.confidence && activeAnalysis.confidence >= 85
+                        ? "text-emerald-400"
+                        : activeAnalysis?.confidence && activeAnalysis.confidence < 60
+                          ? "text-rose-400"
+                          : "text-white",
+                    )}
+                  >
+                    {typeof activeAnalysis?.confidence === "number" &&
+                    !isNaN(activeAnalysis.confidence) ? (
+                      <AnimatedNumber value={activeAnalysis.confidence} />
+                    ) : (
+                      "0"
+                    )}
+                    %
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-                  <div className="flex flex-col items-start sm:items-end">
-                    <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                      Confidence
-                    </span>
-                    <div
-                      className={cn(
-                        "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
-                        activeAnalysis?.confidence &&
-                          activeAnalysis.confidence >= 85
-                          ? "text-emerald-400"
-                          : activeAnalysis?.confidence &&
-                              activeAnalysis.confidence < 60
-                            ? "text-rose-400"
-                            : "text-white",
-                      )}
-                    >
-                      {typeof activeAnalysis?.confidence === "number" &&
-                      !isNaN(activeAnalysis.confidence) ? (
-                        <AnimatedNumber value={activeAnalysis.confidence} />
-                      ) : (
-                        "0"
-                      )}
-                      %
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-end sm:items-start justify-center">
-                    <div
-                      className={cn(
-                        "px-2 sm:px-3 py-1 sm:py-1.5 rounded text-[10px] sm:text-xs font-mono font-bold uppercase tracking-wider border flex items-center justify-center min-w-[60px]",
-                        activeAnalysis?.signal === "LONG"
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          : activeAnalysis?.signal === "SHORT"
-                            ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                            : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-                      )}
-                    >
-                      {activeAnalysis?.signal || "WAIT"}
-                    </div>
-                  </div>
-
-                  {data.length > 0 && (
-                    <div className="col-span-2 sm:col-span-1 flex flex-col items-center sm:items-end sm:border-l border-white/10 pt-2 sm:pt-0 sm:pl-3 border-t sm:border-t-0 mt-1 sm:mt-0">
-                      <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                        Price
-                      </span>
-                      <span
-                        className={cn(
-                          "text-sm sm:text-base font-bold font-mono transition-colors duration-500",
-                          data[data.length - 1].close >=
-                            data[data.length - 1].open
-                            ? "text-emerald-400"
-                            : "text-rose-400",
-                        )}
-                      >
-                        {(data[data.length - 1].close || 0).toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-
-                  {activeAnalysis?.signal &&
-                    activeAnalysis.signal !== "NO TRADE" && (
-                      <button
-                        onClick={() => setShowConfirmDialog(true)}
-                        className={cn(
-                          "col-span-2 sm:col-span-1 w-full sm:w-auto px-3 py-2 sm:py-1.5 rounded text-[10px] sm:text-xs font-mono font-bold uppercase transition-all border shadow-lg flex items-center justify-center gap-1.5 active:scale-95 mt-2 sm:mt-0",
-                          activeAnalysis.signal === "LONG"
-                            ? "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border-emerald-500/50 hover:shadow-[0_0_15px_rgba(16,185,129,0.2)]"
-                            : "bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border-rose-500/50 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)]",
-                        )}
-                      >
-                        <Target size={14} />
-                        <span>Track Signal</span>
-                      </button>
+                {/* Signal Badge & Track Button */}
+                <div className="col-span-2 sm:col-span-1 flex items-center justify-between sm:justify-start gap-4">
+                  <div
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-mono font-bold uppercase tracking-wider border flex items-center justify-center min-w-[70px]",
+                      activeAnalysis?.signal === "LONG"
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        : activeAnalysis?.signal === "SHORT"
+                          ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
                     )}
+                  >
+                    {activeAnalysis?.signal || "WAIT"}
+                  </div>
+
+                  {activeAnalysis?.signal && activeAnalysis.signal !== "NO TRADE" && (
+                    <button
+                      onClick={() => setShowConfirmDialog(true)}
+                      className={cn(
+                        "flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-mono font-bold uppercase transition-all border shadow-lg flex items-center justify-center gap-2 active:scale-95 cursor-pointer whitespace-nowrap",
+                        activeAnalysis.signal === "LONG"
+                          ? "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border-emerald-500/50 hover:shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                          : "bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border-rose-500/50 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)]",
+                      )}
+                    >
+                      <Target size={14} />
+                      <span>Track Signal</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
