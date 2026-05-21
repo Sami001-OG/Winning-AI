@@ -470,32 +470,6 @@ export const analyzeChart = (
   const theta_offset = 0.40;
   let confidence = 100 / (1 + Math.exp(-k_slope * (Math.abs(finalScore) - theta_offset)));
 
-  // 3. Candlestick Pattern Boost
-  if (patternNames.includes('Bullish Engulfing') && finalScore > 0) {
-    confidence += 10;
-  } else if (patternNames.includes('Bearish Engulfing') && finalScore < 0) {
-    confidence += 10;
-  } else if (patternNames.includes('Hammer') && finalScore > 0) {
-    confidence += 5;
-  }
-
-  // 4. Volatility Penalty
-  if (isHighVolatility) {
-    confidence *= 0.90; // 10% penalty
-  }
-
-  // 5. Historical Performance Penalty
-  const assetTrades = trades.filter(t => t.symbol === symbol).sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
-  if (assetTrades.length === 5) {
-    const wins = assetTrades.filter(t => t.status === 'SUCCESS').length;
-    const winRate = wins / 5;
-    if (winRate < 0.40) {
-      confidence *= 0.50; // Slashed by 50%
-    } else if (winRate < 0.60) {
-      confidence *= 0.80; // Slashed by 20%
-    }
-  }
-
   // Session Logic - Based on UTC Time
   const latestCandle = data[data.length - 1];
   const lastCandleDate = new Date(latestCandle.time * 1000);
@@ -516,6 +490,7 @@ export const analyzeChart = (
   // ANTI-NOISE FILTER & DECISION RULE
   // ==========================================
   let signal: 'LONG' | 'SHORT' | 'NO TRADE' = 'NO TRADE';
+  let tier: 'WATCH' | 'STRONG' | 'ELITE' | 'STANDBY' = 'STANDBY';
   let reason = 'Awaiting high-probability setup.';
 
   // Perfect Confirmation Logic
@@ -545,20 +520,29 @@ export const analyzeChart = (
   // const isConflict = Math.sign(layer2Score) !== Math.sign(structureScore) && Math.abs(layer2Score) > 0.5 && Math.abs(structureScore) > 0.5;
 
   if (perfect) {
-    signal = finalScore > 0 ? 'LONG' : 'SHORT';
     confidence = Math.min(100, confidence + 10); // Boost confidence for perfect setup
-    reason = `PERFECT ${signal} setup. High confluence & divergence.`;
-  } else if (confidence >= 60) { 
+  }
+
+  if (confidence >= 65) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
-    reason = `Strong ${signal} setup. High confluence.`;
+    if (confidence >= 88) {
+      tier = 'ELITE';
+    } else if (confidence >= 78) {
+      tier = 'STRONG';
+    } else {
+      tier = 'WATCH';
+    }
+    reason = `${tier} ${signal} setup. High confluence.`;
   } else {
     signal = 'NO TRADE';
+    tier = 'STANDBY';
     reason = 'Awaiting high-probability setup.';
   }
 
   // Reject trades in extreme low volatility
   if (lastAtr / lastClose < 0.0001) { // Extremely low
     signal = 'NO TRADE';
+    tier = 'STANDBY';
     confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
   }
@@ -683,53 +667,27 @@ export const analyzeChart = (
   
   // Dynamic Trade Condition Evaluator
   const computeDynamicStops = () => {
-    let calcSl = 0;
-    
-    // Determine SL based on market structure and ATR
-    const baseAtrMult = isHighVolatility ? 1.5 : 1.0;
-    const structureSlBonus = Math.abs(structureScore) > 0.5 ? 0.5 : 1.0;
-    
-    if (signal === 'LONG') {
-      calcSl = Math.min(swingLow - (lastAtr * 0.2), entryPrice - (lastAtr * (1.5 * baseAtrMult * structureSlBonus)));
-    } else {
-      calcSl = Math.max(swingHigh + (lastAtr * 0.2), entryPrice + (lastAtr * (1.5 * baseAtrMult * structureSlBonus)));
-    }
+    // Stop Loss uses dynamic ATR multiplier: mu = 1.5 in low/normal vol, mu = 2.0 in high vol
+    const mu = isHighVolatility ? 2.0 : 1.5;
+    let calcSl = signal === 'LONG' ? entryPrice - (mu * lastAtr) : entryPrice + (mu * lastAtr);
 
-    // Enforce Minimum Distance Constraints (Anti-chop)
-    const minDistance = lastAtr * 0.8;
-    const calcRiskRaw = Math.abs(entryPrice - calcSl);
-    if (calcRiskRaw < minDistance) {
-       calcSl = signal === 'LONG' ? entryPrice - minDistance : entryPrice + minDistance;
-    }
-    
     // Risk amount
     const risk = Math.abs(entryPrice - calcSl);
     
-    // TP1: 1:1 R:R target
+    // TP1: 50% Volume with 1:1 R:R target
     let calcTp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
     
-    // TP2: 2:1 R:R target based on the next significant liquidity pool
-    let tp2Base = signal === 'LONG' ? entryPrice + (risk * 2) : entryPrice - (risk * 2);
-    let calcTp2: number;
-    // Adjust TP2 towards nearest swing high/low if it makes sense (liquidity pool)
-    if (signal === 'LONG' && swingHigh > entryPrice) {
-      // If the recent swing high is further than TP2, aim for the swing high (liquidity)
-      calcTp2 = Math.max(tp2Base, swingHigh + (lastAtr * 0.5));
-    } else if (signal === 'SHORT' && swingLow < entryPrice) {
-      calcTp2 = Math.min(tp2Base, swingLow - (lastAtr * 0.5));
-    } else {
-      calcTp2 = tp2Base;
-    }
+    // TP2: 30% Volume with 2:1 R:R target
+    let calcTp2 = signal === 'LONG' ? entryPrice + (risk * 2.0) : entryPrice - (risk * 2.0);
     
-    // TP3: Higher timeframe target (Confidence + ATR scaling)
-    const htfMultiplier = confidence >= 80 ? 4 : (isTrending ? 3.5 : 3);
-    let calcTp3 = signal === 'LONG' ? entryPrice + (risk * htfMultiplier) : entryPrice - (risk * htfMultiplier);
+    // TP3: 20% Volume with 3.5:1 to 4:1 R:R target
+    const tp3Multiplier = confidence >= 88.0 ? 4.0 : 3.5;
+    let calcTp3 = signal === 'LONG' ? entryPrice + (risk * tp3Multiplier) : entryPrice - (risk * tp3Multiplier);
     
-    let calcTp = calcTp3; // Overall TP is the final target (runner)
-    
+    let calcTp = calcTp3; // Overall Take Profit matches the ultimate runner target
     let breakEvenTrigger = calcTp1;
     let trailingStopMode = isTrending ? 'ATR' : 'Structure' as 'ATR' | 'Percentage' | 'Structure';
-    let strategyDesc = `Multi-level Target (1:1 R:R, Liquidity 2:1, HTF Runner - Volatility/Structure Adjusted)`;
+    let strategyDesc = `ACE-v2 Multi-level Scale-Out (TP1 50% @ 1:1, TP2 30% @ 2:1, TP3 20% @ ${tp3Multiplier}:1)`;
 
     // Default cleanup
     calcTp = Math.max(0.00000001, calcTp);
@@ -908,21 +866,6 @@ export const analyzeChart = (
   confidence = Math.min(100, Math.max(0, confidence + confidenceAdjustment));
 
   // ==========================================
-  // HISTORICAL PERFORMANCE FILTER
-  // ==========================================
-  const symbolTrades = trades.filter(t => t.symbol === symbol && (t.status === 'SUCCESS' || t.status === 'FAILED'));
-  if (symbolTrades.length >= 5) {
-    const wins = symbolTrades.filter(t => t.status === 'SUCCESS').length;
-    const winRate = wins / symbolTrades.length;
-    
-    if (winRate < 0.4) {
-      confidence *= 0.5; // Heavy penalty for poor history
-    } else if (winRate < 0.6) {
-      confidence *= 0.8; // Minor penalty
-    }
-  }
-
-  // ==========================================
   // CONFLUENCE MAPPING FOR UI
   // ==========================================
   const dominantSignal = finalScore > 0 ? 'bullish' : 'bearish';
@@ -999,6 +942,7 @@ export const analyzeChart = (
   return {
     signal,
     confidence,
+    tier,
     indicators,
     patterns: patternNames,
     confluences: {
