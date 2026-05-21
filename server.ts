@@ -796,6 +796,7 @@ async function startServer() {
            hasHitTp2: false,
            hasHitTp3: false
         };
+        lastSignalTimestamp[trade.symbol] = Date.now();
         console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
 
         const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
@@ -922,6 +923,7 @@ ${directionIcon} Direction: ${trade.type}
     hasHitTp3: boolean;
   }
   const activeTrades: Record<string, ActiveTrade> = {};
+  const lastSignalTimestamp: Record<string, number> = {};
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
@@ -1318,6 +1320,12 @@ ${directionIcon} Direction: ${activeTrade.direction}
           if (activeTrade || tradeClosed) return; // Skip generating new signals if a trade is already active or just closed
           // --- END ACTIVE TRADE MONITORING ---
 
+          // Cooldown check: Signal of a symbol won't go twice in two hours
+          const lastSigTime = lastSignalTimestamp[symbol] || 0;
+          if (Date.now() - lastSigTime < 2 * 60 * 60 * 1000) {
+            return; // Skip generation if already generated < 2h ago
+          }
+
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
             const htfDirection = getHTFDirection(klines4h);
@@ -1525,6 +1533,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
             hasHitTp2: false,
             hasHitTp3: false,
           };
+          lastSignalTimestamp[sig.symbol] = Date.now();
 
           const directionEmoji =
             sig.analysis.signal === "LONG" ? "🟢 LONG" : "🔴 SHORT";
@@ -1594,12 +1603,22 @@ ${directionIcon} Direction: ${sig.analysis.signal}
       newGlobalTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
       globalFrontendTrades = newGlobalTrades.slice(0, 15);
       
+      const cooldowns: Record<string, number> = {};
+      const nowMs = Date.now();
+      for (const [sym, ts] of Object.entries(lastSignalTimestamp)) {
+        const remaining = 2 * 60 * 60 * 1000 - (nowMs - ts);
+        if (remaining > 0) {
+          cooldowns[sym] = Math.ceil(remaining / 1000); // remaining seconds
+        }
+      }
+
       lastScanMetrics = {
           timestamp: Date.now(),
           symbolsCount: symbols.length,
           btcTrend,
           diagnosticCounts,
-          signalCandidatesCount: allSignals.length
+          signalCandidatesCount: allSignals.length,
+          cooldowns
       };
 
       if ((global as any).broadcastToClients) {
