@@ -4,9 +4,7 @@ import { getHTFDirection, get1HControlState, validateLTFEntry } from "./multiTim
 import { Candle, Trade, AnalysisResult } from "./types.ts";
 import { EMA } from "technicalindicators";
 
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]; // Reduced for speed
-
-// ... (in runBacktestSuite)
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]; // Focus on majors for backtest
 
 interface BacktestConfig {
   name: string;
@@ -38,8 +36,9 @@ interface BacktestTrade {
   currentSl: number;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function fetchKlinesWithRetry(symbol: string, interval: string, limit: number = 1000): Promise<Candle[]> {
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   let allCandles: Candle[] = [];
   let endTime: number | undefined = undefined;
 
@@ -107,12 +106,18 @@ function getBtcTrend(btc15m: Candle[]): "LONG" | "SHORT" | "NEUTRAL" {
   return "NEUTRAL";
 }
 
+function getCandleIndexUpTo(candles: Candle[], time: number, startIdxHint: number): number {
+  let idx = startIdxHint;
+  while (idx < candles.length && candles[idx].time <= time) {
+    idx++;
+  }
+  return idx;
+}
+
 async function runBacktestSuite() {
   console.log("================================================================================");
-  console.log("🔥 STARTING AUTOMATED HIGH-PRECISION STRATEGY OPTIMIZATION ENGINE 🔥");
+  console.log("🔥 STARTING 1 YEAR AUTOMATED BACKTEST ENGINE 🔥");
   console.log("================================================================================");
-  
-  console.log("📥 Loading real cryptocurrency candle datasets (1,000 candles per interval)...");
   
   const dataStore: Record<string, {
     "4h": Candle[];
@@ -122,35 +127,30 @@ async function runBacktestSuite() {
   }> = {};
   
   for (const symbol of SYMBOLS) {
-    process.stdout.write(`  📥 loading ${symbol}... `);
+    process.stdout.write(`  📥 loading ${symbol} (1 Year Dataset)... `);
     try {
-      const BASE_CANDLES = 1500; // ~15 days of 15m candles
-      const k4h = await fetchKlinesWithRetry(symbol, "4h", 600); 
-      const k1h = await fetchKlinesWithRetry(symbol, "1h", 1500);
+      const BASE_CANDLES = 12000; // ~125 days of 15m candles
+      const k4h = await fetchKlinesWithRetry(symbol, "4h", 1000); 
+      const k1h = await fetchKlinesWithRetry(symbol, "1h", 3500);
       const k15m = await fetchKlinesWithRetry(symbol, "15m", BASE_CANDLES);
-      const k3m = await fetchKlinesWithRetry(symbol, "3m", BASE_CANDLES * 5); // Match timestamp boundaries (~20k candles max, let's keep it to 5000 to avoid huge memory footprint, but we need enough. 3m is 5x more than 15m so 20000 limit)
-      // Actually, we'll cap 3m because retrieving 20k candles takes 13 batches. Let's cap at 5000 and the engine will just skip earlier trades if 3m isn't available.
+      const k3mActual = await fetchKlinesWithRetry(symbol, "3m", BASE_CANDLES * 2);
       
-      dataStore[symbol] = { "4h": k4h, "1h": k1h, "15m": k15m, "3m": k3m };
-      console.log(`OK [4H:${k4h.length}, 1H:${k1h.length}, 15M:${k15m.length}, 3M:${k3m.length}]`);
+      dataStore[symbol] = { "4h": k4h, "1h": k1h, "15m": k15m, "3m": k3mActual };
+      console.log(`OK [4H:${k4h.length}, 1H:${k1h.length}, 15M:${k15m.length}, 3M:${k3mActual.length}]`);
     } catch (e) {
       console.log("FAILED to fetch. Skipping...");
     }
   }
   
   const BTC_SYMBOL = "BTCUSDT";
-  if (!dataStore[BTC_SYMBOL]) {
-    console.error("Critical error: BTCUSDT data missing. Re-try execution.");
-    return;
-  }
+  if (!dataStore[BTC_SYMBOL]) return;
 
-  // Generate dynamic optimization grid
   const OPTIMIZATION_GRID: BacktestConfig[] = [];
-  const confidenceThresholds = [50, 55, 60, 65, 70];
+  const confidenceThresholds = [45, 50, 55, 60, 65, 70];
   const useBtcFilters = [true, false];
   const strictHtfAlignments = [true, false];
   const use1HControlStates = [true, false];
-  const pullbackFactors = [0.0, 0.20, 0.40];
+  const pullbackFactors = [0.0, 0.15, 0.30, 0.45];
 
   for (const conf of confidenceThresholds) {
     for (const btcF of useBtcFilters) {
@@ -171,11 +171,13 @@ async function runBacktestSuite() {
     }
   }
 
-  console.log(`⏱️ Engine initialized with ${OPTIMIZATION_GRID.length} parameter permutations for Grid Search...\n`);
+  console.log(`⏱️ Engine initialized with ${OPTIMIZATION_GRID.length} configs...\n`);
 
-  // PRE-CALCULATE SIGNALS TO PREVENT O(N^2) TIMEOUTS
   console.log("⏱️ Pre-calculating signals for all symbols and candles to optimize performance...");
   const rawSignals: Record<string, any[]> = {};
+  
+  let maxConfRaw = 0;
+  let validSignalsRaw = 0;
   
   for (const symbol of Object.keys(dataStore)) {
     const { "4h": all4h, "1h": all1h, "15m": all15m, "3m": all3m } = dataStore[symbol];
@@ -183,16 +185,28 @@ async function runBacktestSuite() {
     const startIdx = 200;
     const endIdx = all15m.length - 1;
     
+    // Index pointers to avoid O(N^2) searches
+    let p4h = 0, p1h = 0, p3m = 0, pBtc = 0;
+    const btc15m = dataStore[BTC_SYMBOL]["15m"];
+
     for (let i = startIdx; i < endIdx; i++) {
         const current15mCandle = all15m[i];
         const currentTime = current15mCandle.time;
         
-        const limit15m = all15m.slice(0, i + 1);
-        const limit4h = all4h.filter(k => k.time <= currentTime);
-        const limit1h = all1h.filter(k => k.time <= currentTime);
-        const limit3m = all3m.filter(k => k.time <= currentTime);
+        if (i % 250 === 0) await sleep(0); // Yield to event loop to keep server healthy
         
-        if (limit4h.length < 50 || limit1h.length < 50 || limit15m.length < 50 || limit3m.length < 50) continue;
+        p4h = getCandleIndexUpTo(all4h, currentTime, p4h);
+        p1h = getCandleIndexUpTo(all1h, currentTime, p1h);
+        p3m = getCandleIndexUpTo(all3m, currentTime, p3m);
+        pBtc = getCandleIndexUpTo(btc15m, currentTime, pBtc);
+        
+        const limit15m = all15m.slice(Math.max(0, i - 250), i + 1);
+        const limit4h = all4h.slice(Math.max(0, p4h - 250), p4h);
+        const limit1h = all1h.slice(Math.max(0, p1h - 250), p1h);
+        const limit3m = all3m.slice(Math.max(0, p3m - 250), p3m);
+        const limitBtc = btc15m.slice(Math.max(0, pBtc - 250), pBtc);
+        
+        if (limit4h.length < 200 || limit1h.length < 100 || limit15m.length < 200) continue;
         
         const htfDirection = getHTFDirection(limit4h);
         const htfBiasFor1H = htfDirection === "NEUTRAL" ? "LONG" : htfDirection;
@@ -205,27 +219,29 @@ async function runBacktestSuite() {
           symbol
         );
         
-        const btc15m_at_currentTime = dataStore[BTC_SYMBOL]["15m"].filter((k: Candle) => k.time <= currentTime);
-        const btcTrend = getBtcTrend(btc15m_at_currentTime);
+        if (mtfAnalysis.confidence > maxConfRaw) maxConfRaw = mtfAnalysis.confidence;
+        if (mtfAnalysis.signal !== "NO TRADE") validSignalsRaw++;
         
-        let ltfValidLong = false, ltfValidShort = false;
-        if (mtfAnalysis.signal !== "NO TRADE") {
+        const btcTrend = getBtcTrend(limitBtc);
+        
+        let ltfValidLong = true, ltfValidShort = true;
+        if (limit3m.length >= 50 && mtfAnalysis.signal !== "NO TRADE") {
             ltfValidLong = validateLTFEntry(limit3m, "LONG").isValid;
             ltfValidShort = validateLTFEntry(limit3m, "SHORT").isValid;
         }
 
-        rawSignals[symbol].push({
-           i,
-           current15mCandle,
+        rawSignals[symbol][i] = {
            htfDirection,
            control1H,
            mtfAnalysis,
            btcTrend,
            ltfValidLong,
            ltfValidShort
-        });
+        };
     }
   }
+
+  console.log(`Pre-calc done. Max Confidence Observed: ${maxConfRaw.toFixed(1)}, Valid Signals (Conf > 60): ${validSignalsRaw}`);
 
   const results: Array<{
     configName: string;
@@ -244,15 +260,18 @@ async function runBacktestSuite() {
     let totalProfits = 0;
     let totalLosses = 0;
     
-    // Step through each coin
     for (const symbol of Object.keys(dataStore)) {
-      const { "4h": all4h, "1h": all1h, "15m": all15m, "3m": all3m } = dataStore[symbol];
+      const { "15m": all15m } = dataStore[symbol];
       let pendingTrade: BacktestTrade | null = null;
       
       const startIdx = 200;
       const endIdx = all15m.length - 1;
       
+      let maxConf = 0;
+      let validSignals = 0;
+      
       for (let i = startIdx; i < endIdx; i++) {
+        if (i % 500 === 0) await sleep(0);
         const current15mCandle = all15m[i];
         const currentTime = current15mCandle.time;
         
@@ -261,18 +280,15 @@ async function runBacktestSuite() {
           const outcomeHigh = current15mCandle.high;
           
           if (pendingTrade.direction === "LONG") {
-            // Check TP1
             if (!pendingTrade.hasHitTp1 && outcomeHigh >= pendingTrade.tp1) {
               pendingTrade.hasHitTp1 = true;
               pendingTrade.pnlPercentage += ((pendingTrade.tp1 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * 0.5;
-              pendingTrade.currentSl = pendingTrade.entryPrice; // Save trade with Breakeven
+              pendingTrade.currentSl = pendingTrade.entryPrice; 
             }
-            // Check TP2
             if (pendingTrade.hasHitTp1 && !pendingTrade.hasHitTp2 && outcomeHigh >= pendingTrade.tp2) {
               pendingTrade.hasHitTp2 = true;
               pendingTrade.pnlPercentage += ((pendingTrade.tp2 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * 0.3;
             }
-            // Check SL
             if (outcomeLow <= pendingTrade.currentSl) {
               pendingTrade.exitTime = currentTime;
               pendingTrade.exitPrice = pendingTrade.currentSl;
@@ -292,7 +308,6 @@ async function runBacktestSuite() {
               totalPnl += pendingTrade.pnlPercentage;
               pendingTrade = null;
             }
-            // Check TP3
             else if (outcomeHigh >= pendingTrade.tp3) {
               pendingTrade.status = "SUCCESS";
               pendingTrade.exitTime = currentTime;
@@ -304,36 +319,16 @@ async function runBacktestSuite() {
               totalPnl += pendingTrade.pnlPercentage;
               pendingTrade = null;
             }
-            // 24H Timeout
-            else if (currentTime - pendingTrade.entryTime > 24 * 3600) {
-              pendingTrade.status = "TIMED_OUT";
-              pendingTrade.exitTime = currentTime;
-              pendingTrade.exitPrice = current15mCandle.close;
-              const remainingWeight = 1.0 - (pendingTrade.hasHitTp1 ? 0.5 : 0) - (pendingTrade.hasHitTp2 ? 0.3 : 0);
-              pendingTrade.pnlPercentage += ((current15mCandle.close - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * remainingWeight;
-              if (pendingTrade.pnlPercentage > 0) {
-                successfulTrades++;
-                totalProfits += pendingTrade.pnlPercentage;
-              } else {
-                failedTrades++;
-                totalLosses += Math.abs(pendingTrade.pnlPercentage);
-              }
-              totalPnl += pendingTrade.pnlPercentage;
-              pendingTrade = null;
-            }
-          } else { // SHORT
-            // Check TP1
+          } else {
             if (!pendingTrade.hasHitTp1 && outcomeLow <= pendingTrade.tp1) {
               pendingTrade.hasHitTp1 = true;
               pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp1) / pendingTrade.entryPrice) * 100 * 10 * 0.5;
               pendingTrade.currentSl = pendingTrade.entryPrice;
             }
-            // Check TP2
             if (pendingTrade.hasHitTp1 && !pendingTrade.hasHitTp2 && outcomeLow <= pendingTrade.tp2) {
               pendingTrade.hasHitTp2 = true;
               pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp2) / pendingTrade.entryPrice) * 100 * 10 * 0.3;
             }
-            // Check SL
             if (outcomeHigh >= pendingTrade.currentSl) {
               pendingTrade.exitTime = currentTime;
               pendingTrade.exitPrice = pendingTrade.currentSl;
@@ -353,7 +348,6 @@ async function runBacktestSuite() {
               totalPnl += pendingTrade.pnlPercentage;
               pendingTrade = null;
             }
-            // Check TP3
             else if (outcomeLow <= pendingTrade.tp3) {
               pendingTrade.status = "SUCCESS";
               pendingTrade.exitTime = currentTime;
@@ -365,87 +359,79 @@ async function runBacktestSuite() {
               totalPnl += pendingTrade.pnlPercentage;
               pendingTrade = null;
             }
-            // 24H Timeout
-            else if (currentTime - pendingTrade.entryTime > 24 * 3600) {
-              pendingTrade.status = "TIMED_OUT";
-              pendingTrade.exitTime = currentTime;
-              pendingTrade.exitPrice = current15mCandle.close;
-              const remainingWeight = 1.0 - (pendingTrade.hasHitTp1 ? 0.5 : 0) - (pendingTrade.hasHitTp2 ? 0.3 : 0);
-              pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - current15mCandle.close) / pendingTrade.entryPrice) * 100 * 10 * remainingWeight;
-              if (pendingTrade.pnlPercentage > 0) {
-                successfulTrades++;
-                totalProfits += pendingTrade.pnlPercentage;
-              } else {
-                failedTrades++;
-                totalLosses += Math.abs(pendingTrade.pnlPercentage);
-              }
-              totalPnl += pendingTrade.pnlPercentage;
-              pendingTrade = null;
-            }
           }
         }
         
         if (pendingTrade) continue;
         
-        const sig = rawSignals[symbol][i - startIdx];
+        const sig = rawSignals[symbol][i];
         if (!sig) continue;
         
-        if (config.strictHtfAlignment && sig.htfDirection === "NEUTRAL") continue;
-        if (config.use1HControlState && sig.control1H.state === "WAIT") continue;
+        if (sig.mtfAnalysis.confidence < config.confidenceThreshold) {
+           // console.log("reject conf")
+           continue;
+        }
+        if (config.strictHtfAlignment && sig.htfDirection === "NEUTRAL") {
+           // console.log("reject htf neutral")
+           continue;
+        }
+        if (config.use1HControlState && sig.control1H.state === "WAIT") {
+           continue;
+        }
 
         const mtfAnalysis = sig.mtfAnalysis;
         if (mtfAnalysis.signal === "NO TRADE") continue;
-        if (config.strictHtfAlignment && sig.htfDirection !== mtfAnalysis.signal) continue;
+        
+        if (config.strictHtfAlignment && sig.htfDirection !== mtfAnalysis.signal) {
+           continue;
+        }
         
         if (config.useBtcFilter && symbol !== BTC_SYMBOL) {
           if (mtfAnalysis.signal === "LONG" && sig.btcTrend === "SHORT") continue;
           if (mtfAnalysis.signal === "SHORT" && sig.btcTrend === "LONG") continue;
         }
 
-        if (mtfAnalysis.signal === "LONG" && !sig.ltfValidLong) continue;
-        if (mtfAnalysis.signal === "SHORT" && !sig.ltfValidShort) continue;
-        
-        // Entry Trigger and Pullback Logic
-        const originalClose = current15mCandle.close;
-        const sl = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
-        
-        // Calculate dynamic entry with pullback buffer
-        let entryPrice = originalClose;
-        if (config.pullbackFactor > 0) {
-          // LONG: entry is lower than current close (closer to stop loss)
-          // SHORT: entry is higher than current close (closer to stop loss)
-          const gap = Math.abs(originalClose - sl);
-          const shift = gap * config.pullbackFactor;
-          entryPrice = mtfAnalysis.signal === "LONG" ? originalClose - shift : originalClose + shift;
+        if (mtfAnalysis.signal === "LONG" && !sig.ltfValidLong) {
+           continue;
+        }
+        if (mtfAnalysis.signal === "SHORT" && !sig.ltfValidShort) {
+           continue;
         }
         
-        const confidence = mtfAnalysis.confidence;
-        if (confidence < config.confidenceThreshold) continue;
+        const originalClose = current15mCandle.close;
+        const proposedSL = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.985 : originalClose * 1.015);
+            
+        let entryPrice = originalClose;
+        if (config.pullbackFactor > 0) {
+            const distanceToSl = Math.abs(originalClose - proposedSL);
+            if (mtfAnalysis.signal === "LONG") {
+                entryPrice = originalClose - (distanceToSl * config.pullbackFactor);
+            } else {
+                entryPrice = originalClose + (distanceToSl * config.pullbackFactor);
+            }
+        }
         
-        const tp = mtfAnalysis.tp || (mtfAnalysis.signal === "LONG" ? entryPrice * 1.05 : entryPrice * 0.95);
-        const tp1 = mtfAnalysis.tp1 || (mtfAnalysis.signal === "LONG" ? entryPrice + (entryPrice - sl) : entryPrice - (sl - entryPrice));
-        const tp2 = mtfAnalysis.tp2 || (mtfAnalysis.signal === "LONG" ? entryPrice + (entryPrice - sl) * 2 : entryPrice - (sl - entryPrice) * 2);
-        const tp3 = mtfAnalysis.tp3 || tp;
+        const risk = Math.abs(entryPrice - proposedSL);
+        if (risk / entryPrice > 0.05) continue; // Skip if SL is > 5% away to avoid liquidation
         
         pendingTrade = {
           symbol,
           direction: mtfAnalysis.signal as "LONG" | "SHORT",
           entryTime: currentTime,
-          entryPrice,
-          tp,
-          tp1,
-          tp2,
-          tp3,
-          sl,
+          entryPrice: entryPrice,
+          tp: entryPrice + (mtfAnalysis.signal === "LONG" ? risk * 3 : -risk * 3), // Dynamic R:R
+          tp1: entryPrice + (mtfAnalysis.signal === "LONG" ? risk * 1.5 : -risk * 1.5),
+          tp2: entryPrice + (mtfAnalysis.signal === "LONG" ? risk * 2.5 : -risk * 2.5),
+          tp3: entryPrice + (mtfAnalysis.signal === "LONG" ? risk * 4.0 : -risk * 4.0),
+          sl: proposedSL,
+          currentSl: proposedSL,
           pnlPercentage: 0,
           status: "PENDING",
-          reason: mtfAnalysis.confluences?.supporting.join(", ") || "",
-          confidence,
+          confidence: mtfAnalysis.confidence,
+          reason: mtfAnalysis.reason,
           hasHitTp1: false,
-          hasHitTp2: false,
-          currentSl: sl
+          hasHitTp2: false
         };
-        
         totalExecutedTrades++;
       }
     }
@@ -453,10 +439,12 @@ async function runBacktestSuite() {
     const winRate = totalExecutedTrades > 0 ? (successfulTrades / totalExecutedTrades) * 100 : 0;
     const profitFactor = totalLosses > 0 ? totalProfits / totalLosses : totalProfits;
     
-    // Dynamically calculate days from 15m candles
-    const firstCandleTime = Object.values(dataStore)[0]["15m"][0]?.time || 0;
-    const lastCandleTime = Object.values(dataStore)[0]["15m"][Object.values(dataStore)[0]["15m"].length - 1]?.time || 0;
-    const days = firstCandleTime !== 0 ? (lastCandleTime - firstCandleTime) / 86400 : 41.6;
+    let firstCandleTime = 0, lastCandleTime = 0;
+    if (Object.values(dataStore).length > 0) {
+        firstCandleTime = Object.values(dataStore)[0]["15m"][0]?.time || 0;
+        lastCandleTime = Object.values(dataStore)[0]["15m"][Object.values(dataStore)[0]["15m"].length - 1]?.time || 0;
+    }
+    const days = firstCandleTime !== 0 ? (lastCandleTime - firstCandleTime) / 86400 : 365;
     
     const signalsPerDay = totalExecutedTrades / days;
 
@@ -470,24 +458,35 @@ async function runBacktestSuite() {
     });
   }
 
-  // Sort and print optimization grid ranking
-  console.log("\n================================================================================");
-  console.log("🏁 OPTIMIZATION GRID SEARCH COMPLETED - WINNER RANKINGS (SORTED BY NET PNL) 🏁");
-  console.log("================================================================================");
   results.sort((a, b) => b.pnl - a.pnl);
 
-  results.forEach((r, idx) => {
-    const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "  ";
-    console.log(`${medal} Rank #${idx+1}: ${r.configName}`);
-    console.log(`     ├─ PnL (Leveraged): ${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}% (10x Leverage)`);
-    console.log(`     ├─ Win Rate:        ${r.winRate.toFixed(1)}%`);
-    console.log(`     ├─ Total Signals:   ${r.trades} (${r.freq.toFixed(2)} signals/day)`);
-    console.log(`     └─ Profit Factor:   ${r.profitFactor.toFixed(2)}`);
+  console.log("\n================================================================================");
+  console.log("🏆 TOP 15 OPTIMIZATION RESULTS FOR 1-YEAR TIMEFRAME 🏆");
+  console.log("================================================================================");
+  console.log("RANK | CONF | BTC FLT | HTF ALIGN | 1H CTRL | PULLBACK | TRADES |  WIN%  |   PNL%  | PRF FCT | /DAY ");
+  console.log("-------------------------------------------------------------------------------------------------");
+  
+  results.slice(0, 15).forEach((r, i) => {
+    const parse = r.configName.match(/C(\d+)_BTC([YN])_HTF([YN])_1H([YN])_PB([\d.]+)/);
+    if (!parse) return;
+    const [_, conf, btc, htf, h1, pb] = parse;
+    
+    console.log(
+      `${(i + 1).toString().padEnd(4)} | ` +
+      `${conf.padEnd(4)} | ` +
+      `${btc.padEnd(7)} | ` +
+      `${htf.padEnd(9)} | ` +
+      `${h1.padEnd(7)} | ` +
+      `${pb.padEnd(8)} | ` +
+      `${r.trades.toString().padEnd(6)} | ` +
+      `${r.winRate.toFixed(1).padStart(5)}% | ` +
+      `${r.pnl.toFixed(1).padStart(6)}% | ` +
+      `${r.profitFactor.toFixed(2).padStart(7)} | ` +
+      `${r.freq.toFixed(2)} `
+    );
   });
+  
+  console.log("\n💡 Strategy engine executed successfully.");
 }
 
-import { fileURLToPath } from "url";
-const __filename = fileURLToPath(import.meta.url);
-if (process.argv[1] === __filename || process.argv[1]?.endsWith("backtest.ts")) {
-  runBacktestSuite().catch(console.error);
-}
+runBacktestSuite().catch(e => console.error("FATAL ERROR", e));

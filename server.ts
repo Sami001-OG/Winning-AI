@@ -1036,7 +1036,7 @@ ${directionIcon} Direction: ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 50; // Rank #1 Optimized threshold (from backtest: 50)
+      const requiredConfidence = 45; // Rank #1 Optimized threshold (from backtest: 45)
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1321,11 +1321,13 @@ ${directionIcon} Direction: ${activeTrade.direction}
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
             const htfDirection = getHTFDirection(klines4h);
-            if (htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; return; }
+            const strictHtfAlignment = false; // Rank #1 Optimized Setting: disabled for higher-timeframe alignment
+            if (strictHtfAlignment && htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; return; }
 
             // 2.5 1H Control Layer
             const klines1h = await fetchKlines(symbol, "1h");
-            const control1H = get1HControlState(klines1h, htfDirection);
+            const htfBiasFor1H = htfDirection === "NEUTRAL" ? "LONG" : htfDirection;
+            const control1H = get1HControlState(klines1h, htfBiasFor1H);
 
 
             // 3. 15M Confirmation (Confidence/Setup)
@@ -1337,7 +1339,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
               symbol,
             );
             if (mtfAnalysis.signal === "NO TRADE") { diagnosticCounts.mtfNoTrade++; return; }
-            if (htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; return; }
+            if (strictHtfAlignment && htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; return; }
 
             // Upgrade 1: King Filter Application
             const useBtcFilter = false; // Rank #1 Optimized Setting: disabled for altcoins
@@ -1387,11 +1389,11 @@ ${directionIcon} Direction: ${activeTrade.direction}
                 ? cumulativeTypicalVolume / cumulativeVolume
                 : closes3m[closes3m.length - 1];
 
-            // Calculate dynamic limit entry with pullback factor of 0.50 (Rank #1 Optimized Setting)
+            // Calculate dynamic limit entry with pullback factor of 0.45 (Rank #1 Optimized Setting)
             const originalClose = closes3m[closes3m.length - 1];
             const sl = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
             const gap = Math.abs(originalClose - sl);
-            const pullbackFactor = 0.50; // 50% Extreme Pullback
+            const pullbackFactor = 0.45; // 45% Pullback from backtest Rank #1
             const shift = gap * pullbackFactor;
             
             mtfAnalysis.limitEntry = mtfAnalysis.signal === "LONG" ? originalClose - shift : originalClose + shift;

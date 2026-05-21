@@ -420,30 +420,26 @@ export const analyzeChart = (
   // Layer 5: Market Structure (35%)
   // Layer 6: Volume/Volatility (30%)
 
-  let w1 = customWeights ? customWeights[0] : 0.05; // Market Condition
-  let w2 = customWeights ? customWeights[1] : 0.05; // Trend Direction
-  let w3 = customWeights ? customWeights[2] : 0.20; // Entry Timing
-  let w4 = customWeights ? customWeights[3] : 0.05; // Confirmation
-  let w5 = customWeights ? customWeights[4] : 0.35; // Structure
-  let w6 = customWeights ? customWeights[5] : 0.30; // Volume/Volatility
+  // ==========================================
+  // ADAPTIVE WEIGHTS & FINAL SCORE (ACE-v2 Convex combinations)
+  // ==========================================
+  const rTrend = Math.max(0, Math.min(1.0, ((lastAdx?.adx || 20) - 20) / 15.0));
 
-  // Dynamic adjustment based on market state
-  if (isTrending) { // ADX > 25
-    w2 += 0.20; // Trend weight increases by up to +20%
-    w5 += 0.10; // Structure weight increases by up to +10%
-    w3 -= 0.10; // Entry Timing weight decreases by -10%
-  } else if (isSideways) { // ADX <= 25
-    w3 += 0.20; // Entry Timing weight increases by up to +20%
-    w6 += 0.10; // Volume/Volatility weight increases by up to +10%
-    w2 -= 0.20; // Trend weight decreases by -20%
-  }
+  let w1 = 0.10; // Market Condition (Regime)
+  let w2 = 0.15 * (1.0 + 0.20 * rTrend); // Trend Direction
+  let w3 = 0.15 * (1.0 - 0.15 * rTrend); // Entry Timing (Momentum)
+  let w4 = 0.10; // Confirmation
+  let w5 = 0.25 * (1.0 + 0.10 * rTrend); // Structure
+  let w6 = 0.25; // Volume/Volatility
 
-  // Volatility Modifier (Bollinger Band Width > 1.5x)
-  if (isHighVolatility) {
-    w1 += 0.10; // Market Condition weight increases by up to +10%
-    w6 += 0.10; // Volume/Volatility weight increases by up to +10%
-    w3 -= 0.10; // Entry Timing weight decreases by -10%
-  }
+  // Normalize weights to sum exactly to 1.0 (Convex combination)
+  const totalW = w1 + w2 + w3 + w4 + w5 + w6;
+  w1 /= totalW;
+  w2 /= totalW;
+  w3 /= totalW;
+  w4 /= totalW;
+  w5 /= totalW;
+  w6 /= totalW;
   
   const trendStrength = Math.abs(layer1Score); // 0 to 1
 
@@ -467,25 +463,12 @@ export const analyzeChart = (
   if (volumeSpike > 1.5) volVolScore += (lastClose > closes[closes.length - 2] ? 0.40 : -0.40);
   if (atrExpansion > 1.5) volVolScore += (isTrendingUp ? 0.30 : isTrendingDown ? -0.30 : 0);
 
-  // Normalize weights to sum to 1
-  w1 = Math.max(0, w1);
-  w2 = Math.max(0, w2);
-  w3 = Math.max(0, w3);
-  w4 = Math.max(0, w4);
-  w5 = Math.max(0, w5);
-  w6 = Math.max(0, w6);
-  const total = w1 + w2 + w3 + w4 + w5 + w6;
-  w1 /= total;
-  w2 /= total;
-  w3 /= total;
-  w4 /= total;
-  w5 /= total;
-  w6 /= total;
-
   let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
-  // Base confidence absolute value converted to percentage
-  let confidence = Math.abs(finalScore) * 100;
+  // ACE-v2 Sigmoid Confidence Squashing
+  const k_slope = 8.0;
+  const theta_offset = 0.40;
+  let confidence = 100 / (1 + Math.exp(-k_slope * (Math.abs(finalScore) - theta_offset)));
 
   // 3. Candlestick Pattern Boost
   if (patternNames.includes('Bullish Engulfing') && finalScore > 0) {

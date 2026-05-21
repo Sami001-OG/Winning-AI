@@ -29,6 +29,7 @@ export interface Trade {
 export interface AnalysisResult {
   signal: 'LONG' | 'SHORT' | 'NO TRADE';
   confidence: number;
+  tier?: 'WATCH' | 'STRONG' | 'ELITE' | 'STANDBY';
   indicators: IndicatorResult[];
   patterns: string[];
   confluences: {
