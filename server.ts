@@ -794,7 +794,8 @@ async function startServer() {
            isLimitEntry: false,
            hasHitTp1: false,
            hasHitTp2: false,
-           hasHitTp3: false
+           hasHitTp3: false,
+           registeredAt: Date.now()
         };
         lastSignalTimestamp[trade.symbol] = Date.now();
         console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
@@ -921,6 +922,7 @@ ${directionIcon} Direction: ${trade.type}
     hasHitTp1: boolean;
     hasHitTp2: boolean;
     hasHitTp3: boolean;
+    registeredAt: number;
   }
   const activeTrades: Record<string, ActiveTrade> = {};
   const lastSignalTimestamp: Record<string, number> = {};
@@ -1088,7 +1090,8 @@ ${directionIcon} Direction: ${trade.type}
           if (activeTrade && klines3m.length > 0) {
               // Check if the trade is pending entry (achieved === 0)
               if (activeTrade.achieved === 0) {
-                const recentCandles = klines3m.slice(-3);
+                const registeredAtVal = activeTrade.registeredAt || Date.now();
+                const recentCandles = klines3m.filter((c) => (c.time + 180) * 1000 >= registeredAtVal);
                 let entryFilled = false;
                 for (const candle of recentCandles) {
                   const currentHigh = candle.high;
@@ -1126,7 +1129,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
 
               // Evaluate active trade targets if filled
               if (activeTrade.achieved >= 1) {
-                const recentCandles = klines3m.slice(-3);
+                const registeredAtVal = activeTrade.registeredAt || Date.now();
+                const recentCandles = klines3m.filter((c) => (c.time + 180) * 1000 >= registeredAtVal);
 
                 for (const candle of recentCandles) {
                   if (tradeClosed) break;
@@ -1532,6 +1536,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
             hasHitTp1: false,
             hasHitTp2: false,
             hasHitTp3: false,
+            registeredAt: Date.now(),
           };
           lastSignalTimestamp[sig.symbol] = Date.now();
 
