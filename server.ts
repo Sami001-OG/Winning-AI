@@ -863,29 +863,36 @@ async function startServer() {
         const tp2 = parseFloat(trade.tp2) || (trade.type === "LONG" ? entryPrice + (entryPrice - slPrice) * 2 : entryPrice - (slPrice - entryPrice) * 2);
         const tp3 = parseFloat(trade.tp3) || tpPrice;
 
-        activeTrades[trade.symbol] = {
-           symbol: trade.symbol,
-           direction: trade.type || trade.direction,
-           entry: entryPrice,
-           tp: tpPrice,
-           tp1,
-           tp2,
-           tp3,
-           sl: slPrice,
-           currentSl: slPrice,
-           achieved: 1, // Set to 1 (Filled / Active instantly for manual registrations)
-           isLimitEntry: false,
-           hasHitTp1: false,
-           hasHitTp2: false,
-           hasHitTp3: false,
-           registeredAt: Date.now()
-        };
-        lastSignalTimestamp[trade.symbol] = Date.now();
-        console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
+        const alreadyActive = !!activeTrades[trade.symbol];
+        const recentlySignaled = Date.now() - (lastSignalTimestamp[trade.symbol] || 0) < 15 * 60 * 1000;
+
+        if (!alreadyActive) {
+          activeTrades[trade.symbol] = {
+             symbol: trade.symbol,
+             direction: trade.type || trade.direction,
+             entry: entryPrice,
+             tp: tpPrice,
+             tp1,
+             tp2,
+             tp3,
+             sl: slPrice,
+             currentSl: slPrice,
+             achieved: 1, // Set to 1 (Filled / Active instantly for manual registrations)
+             isLimitEntry: false,
+             hasHitTp1: false,
+             hasHitTp2: false,
+             hasHitTp3: false,
+             registeredAt: Date.now()
+          };
+          lastSignalTimestamp[trade.symbol] = Date.now();
+          console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
+        } else {
+          console.log(`[Backend] Trade for ${trade.symbol} is already active/monitored. Skipping duplicate registration state override.`);
+        }
 
         const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
         const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
-        if (botToken && chatId) {
+        if (botToken && chatId && !alreadyActive && !recentlySignaled) {
           const directionIcon = trade.type === "LONG" ? "📈" : "📉";
           const confValue = (trade.confidence || (trade.analysis && trade.analysis.confidence) || 100).toFixed(1);
           const msg = `🪙 Pair: #${trade.symbol}
@@ -1006,6 +1013,7 @@ ${directionIcon} Direction: ${trade.type}
     hasHitTp2: boolean;
     hasHitTp3: boolean;
     registeredAt: number;
+    slUpdatedTime?: number;
   }
   const activeTrades: Record<string, ActiveTrade> = {};
   const lastSignalTimestamp: Record<string, number> = {};
@@ -1308,20 +1316,25 @@ ${directionIcon} Direction: ${activeTrade.direction}
                     break;
                   }
 
+                  // Lookback protection: Avoid Same-Bar / Historical Wick violation
+                  const slCheckVal = (activeTrade.slUpdatedTime && (candle.time * 1000 < activeTrade.slUpdatedTime))
+                    ? activeTrade.sl // Retain original protective stop loss for retro-historical wicks
+                    : activeTrade.currentSl; // Apply the tightened trailing/break-even stop loss
+
                   if (activeTrade.direction === "LONG") {
-                    if (currentLow <= activeTrade.currentSl) {
+                    if (currentLow <= slCheckVal) {
                       console.log(
-                        `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${activeTrade.currentSl}`,
+                        `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${slCheckVal}`,
                       );
-                      const isBE = activeTrade.currentSl === activeTrade.entry;
-                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, activeTrade.currentSl, "LONG");
+                      const isBE = slCheckVal === activeTrade.entry;
+                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, slCheckVal, "LONG");
                       const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
                       const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
 
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(activeTrade.currentSl)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
                       ).catch(console.error);
                       
                       recordTradeResult(isBE ? "WIN" : "LOSS");
@@ -1332,6 +1345,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       activeTrade.hasHitTp1 = true;
                       activeTrade.achieved = 2;
                       activeTrade.currentSl = activeTrade.entry; // Move SL to Break-Even!
+                      activeTrade.slUpdatedTime = Date.now();
 
                       const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG");
                       sendTelegramSignal(
@@ -1366,19 +1380,19 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       tradeClosed = true;
                     }
                   } else if (activeTrade.direction === "SHORT") {
-                    if (currentHigh >= activeTrade.currentSl) {
+                    if (currentHigh >= slCheckVal) {
                       console.log(
-                        `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${activeTrade.currentSl}`,
+                        `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${slCheckVal}`,
                       );
-                      const isBE = activeTrade.currentSl === activeTrade.entry;
-                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, activeTrade.currentSl, "SHORT");
+                      const isBE = slCheckVal === activeTrade.entry;
+                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, slCheckVal, "SHORT");
                       const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
                       const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
 
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(activeTrade.currentSl)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
                       ).catch(console.error);
                       
                       recordTradeResult(isBE ? "WIN" : "LOSS");
@@ -1389,6 +1403,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       activeTrade.hasHitTp1 = true;
                       activeTrade.achieved = 2;
                       activeTrade.currentSl = activeTrade.entry; // Move SL to Break-Even!
+                      activeTrade.slUpdatedTime = Date.now();
 
                       const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT");
                       sendTelegramSignal(
