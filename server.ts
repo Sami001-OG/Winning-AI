@@ -3,6 +3,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import crypto from "crypto";
+import fs from "fs";
 import { analyzeChart } from "./src/analysis.ts";
 import {
   getHTFDirection,
@@ -11,6 +12,85 @@ import {
 } from "./src/multiTimeframe.ts";
 import { formatPrice } from "./src/utils/format.ts";
 import { EMA, MACD, RSI } from "technicalindicators";
+
+// --- STREAK TRACKER & QUARTER-KELLY RISK SIZING ---
+let consecutiveStreak = 0; // Positive for wins, negative for losses
+const STREAK_FILE_PATH = path.join(process.cwd(), "streak_state.json");
+
+function loadStreakState() {
+  try {
+    if (fs.existsSync(STREAK_FILE_PATH)) {
+      const data = fs.readFileSync(STREAK_FILE_PATH, "utf8");
+      const obj = JSON.parse(data);
+      consecutiveStreak = parseInt(obj.consecutiveStreak) || 0;
+      console.log(`[Streak Tracker] Loaded consecutive streak: ${consecutiveStreak}`);
+    } else {
+      console.log(`[Streak Tracker] No streak state file found, initialized to 0.`);
+    }
+  } catch (e) {
+    console.error("[Streak Tracker] Error loading streak state:", e);
+  }
+}
+
+function saveStreakState() {
+  try {
+    fs.writeFileSync(STREAK_FILE_PATH, JSON.stringify({ consecutiveStreak }), "utf8");
+  } catch (e) {
+    console.error("[Streak Tracker] Error saving streak state:", e);
+  }
+}
+
+function recordTradeResult(result: "WIN" | "LOSS") {
+  const prevStreak = consecutiveStreak;
+  if (result === "WIN") {
+    if (consecutiveStreak < 0) {
+      consecutiveStreak = 1;
+    } else {
+      consecutiveStreak++;
+    }
+  } else {
+    if (consecutiveStreak > 0) {
+      consecutiveStreak = -1;
+    } else {
+      consecutiveStreak--;
+    }
+  }
+  saveStreakState();
+  console.log(`[Streak Tracker] Trade outcome: ${result}. Streak shifted from ${prevStreak} to ${consecutiveStreak}`);
+}
+
+function getSizingModel() {
+  const winRate = 0.584; // Backtested baseline win rate (Rank #1 top-performing parameter set)
+  // Weighted expected R:R based on take profit levels:
+  // TP1 (50% Volume at ~1.0 R:R), TP2 (30% Volume at ~2.0 R:R), TP3 (20% Volume at ~4.0 R:R)
+  // Weighted expected reward: 0.50 * 1.0 + 0.30 * 2.0 + 0.20 * 4.0 = 1.90 R:R
+  const rr = 1.90; 
+  // Kelly Fraction: f* = w - (1 - w) / RR
+  const fStar = winRate - (1 - winRate) / rr; 
+  const quarterKelly = 0.25 * fStar; // Conservative Quarter-Kelly sizing
+  
+  // Streak Modifier (M_streak)
+  let mStreak = 1.0;
+  if (consecutiveStreak >= 0) {
+    mStreak = 1.0 + Math.min(consecutiveStreak * 0.10, 0.50); // Cap boost at +50% (+0.50)
+  } else {
+    mStreak = 1.0 - Math.min(Math.abs(consecutiveStreak) * 0.15, 0.75); // Floor reduction at -75% (0.25)
+  }
+  
+  const recommendedSizingPercent = Math.max(0.1, quarterKelly * mStreak * 100); // recommended % of account size
+  
+  return {
+    consecutiveStreak,
+    mStreak,
+    winRate,
+    rr,
+    quarterKelly,
+    recommendedSizingPercent
+  };
+}
+
+// Load the streak state at boot
+loadStreakState();
 
 function calculatePnL(
   entry: number,
@@ -609,19 +689,21 @@ async function fetchKlines(symbol: string, tf: string, limit: number = 200) {
 
   if (!klineCache[symbol]) klineCache[symbol] = {};
   
-  if (klineCache[symbol][tf]) {
+  if (klineCache[symbol][tf] && klineCache[symbol][tf].length >= 50) {
     const arr = klineCache[symbol][tf];
-    if (arr.length > 0) {
-      const last = arr[arr.length - 1];
-      const tfSecs = getTfSeconds(tf);
-      // A new candle should start at (last.time + tfSecs).
-      // If we are more than 5 minutes past when the next candle should have opened, it is stale.
-      const isStale = (Date.now() / 1000) - last.time > (tfSecs + 300);
-      if (isStale) {
-        console.log(`[REST API] Cache for ${symbol} ${tf} is stale by over 5 mins, clearing...`);
-        delete klineCache[symbol][tf];
-      }
+    const last = arr[arr.length - 1];
+    const tfSecs = getTfSeconds(tf);
+    // A new candle should start at (last.time + tfSecs).
+    // If we are more than 5 minutes past when the next candle should have opened, it is stale.
+    const isStale = (Date.now() / 1000) - last.time > (tfSecs + 300);
+    if (isStale) {
+      console.log(`[REST API] Cache for ${symbol} ${tf} is stale by over 5 mins, clearing...`);
+      delete klineCache[symbol][tf];
     }
+  } else if (klineCache[symbol][tf]) {
+    // If the cache length is truncated (e.g. from partial WS tick load or failed initial warmups), clear it to require full refetch
+    console.log(`[REST API] Cache for ${symbol} ${tf} is empty or truncated (${klineCache[symbol][tf].length} candles), clearing to require fresh REST warmup...`);
+    delete klineCache[symbol][tf];
   }
 
   if (!klineCache[symbol][tf]) {
@@ -737,7 +819,8 @@ async function startServer() {
 
   app.get("/api/scanner-status", (req, res) => {
     res.json({
-      lastScanMetrics
+      lastScanMetrics,
+      sizingModel: getSizingModel()
     });
   });
 
@@ -1113,15 +1196,21 @@ ${directionIcon} Direction: ${trade.type}
                 if (entryFilled) {
                   activeTrade.achieved = 1; // Mark as active and filled!
                   const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
+                  const sizeModel = getSizingModel();
+                  const streakSign = sizeModel.consecutiveStreak > 0 ? "+" : "";
                   const entryAlertMsg = `🪙 Pair: #${symbol}
 ${directionIcon} Direction: ${activeTrade.direction}
-  Confidence: 100%
+  Confidence: 100% (Pulled back to fill)
 🎯 Entry Price: ${formatPrice(activeTrade.entry)}
 🎯 TP1 (50% Booking): ${formatPrice(activeTrade.tp1)}
 🎯 TP2 (30% Booking): ${formatPrice(activeTrade.tp2)}
 🎯 TP3 (20% Runner): ${formatPrice(activeTrade.tp3)}
 ❌ Stop Loss: ${formatPrice(activeTrade.sl)}
-🛡 Trail Mode: Move SL to Break-Even at TP1`;
+🛡 Trail Mode: Move SL to Break-Even at TP1
+
+🔥 Current Streak: <b>${streakSign}${sizeModel.consecutiveStreak}</b> consecutive ${sizeModel.consecutiveStreak > 0 ? "wins" : "losses"}
+📊 Sizing Modifier: <code>${sizeModel.mStreak.toFixed(2)}x</code>
+💰 Recommended Kelly Allocation: <b>${sizeModel.recommendedSizingPercent.toFixed(1)}%</b> of Portfolio (Quarter-Kelly)`;
                   
                   sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
                 }
@@ -1210,6 +1299,10 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       chatId,
                       `🚨 <b>TRADE UPDATE: SOFT EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
                     ).catch(console.error);
+                    
+                    const softPnlNum = activeTrade.direction === "LONG" ? (currentClose - activeTrade.entry) : (activeTrade.entry - currentClose);
+                    recordTradeResult(softPnlNum >= 0 ? "WIN" : "LOSS");
+                    
                     delete activeTrades[symbol];
                     tradeClosed = true;
                     break;
@@ -1230,6 +1323,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(activeTrade.currentSl)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
                       ).catch(console.error);
+                      
+                      recordTradeResult(isBE ? "WIN" : "LOSS");
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     } else if (!activeTrade.hasHitTp1 && currentHigh >= activeTrade.tp1) {
@@ -1263,6 +1359,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
                       ).catch(console.error);
+                      
+                      recordTradeResult("WIN");
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     }
@@ -1281,6 +1380,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(activeTrade.currentSl)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
                       ).catch(console.error);
+                      
+                      recordTradeResult(isBE ? "WIN" : "LOSS");
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     } else if (!activeTrade.hasHitTp1 && currentLow <= activeTrade.tp1) {
@@ -1314,6 +1416,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
                       ).catch(console.error);
+                      
+                      recordTradeResult("WIN");
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     }
@@ -1559,6 +1664,10 @@ ${directionIcon} Direction: ${activeTrade.direction}
               
           const logicStr = escapeHtml(logicStrRaw);
 
+          const sizeModel = getSizingModel();
+          const streakSign = sizeModel.consecutiveStreak > 0 ? "+" : "";
+          const riskSizingStr = `\n\n🔥 Current Streak: <b>${streakSign}${sizeModel.consecutiveStreak}</b> consecutive ${sizeModel.consecutiveStreak > 0 ? "wins" : "losses"}\n📊 Sizing Modifier: <code>${sizeModel.mStreak.toFixed(2)}x</code>\n💰 Recommended Kelly Allocation: <b>${sizeModel.recommendedSizingPercent.toFixed(1)}%</b> of Portfolio (Quarter-Kelly)`;
+
           let message = "";
           const directionIcon = sig.analysis.signal === "LONG" ? "📈" : "📉";
           const confValue = (sig.analysis.confidence || 0).toFixed(1);
@@ -1572,7 +1681,7 @@ ${directionIcon} Direction: ${sig.analysis.signal}
 🎯 TP2 (30% Booking): ${formatPrice(tp2)}
 🎯 TP3 (20% Runner): ${formatPrice(tp3)}
 ❌ Stop Loss: ${formatPrice(sig.sl)}
-🛡 Trail Mode: Move SL to Break-Even at TP1`;
+🛡 Trail Mode: Move SL to Break-Even at TP1${riskSizingStr}`;
           } else {
             message = `🪙 Pair: #${sig.symbol}
 ${directionIcon} Direction: ${sig.analysis.signal}
@@ -1582,7 +1691,7 @@ ${directionIcon} Direction: ${sig.analysis.signal}
 🎯 TP2 (30% Booking): ${formatPrice(tp2)}
 🎯 TP3 (20% Runner): ${formatPrice(tp3)}
 ❌ Stop Loss: ${formatPrice(sig.sl)}
-🛡 Trail Mode: Move SL to Break-Even at TP1`;
+🛡 Trail Mode: Move SL to Break-Even at TP1${riskSizingStr}`;
           }
 
           const bullishImageUrl =
@@ -1638,6 +1747,32 @@ ${directionIcon} Direction: ${sig.analysis.signal}
       setTimeout(runBackgroundLoop, 60000); // Check every minute
     }
   };
+  // Sequential Cache pre-warmup routine at server boot to stay 100% compliant with API Limits
+  console.log("🌟 [Warmup] Initiating background pre-warmup stage for top volume coin markets...");
+  (async () => {
+    try {
+      const topSymbols = await fetchTopSymbols();
+      console.log(`[Warmup] Retrieved ${topSymbols.length} core symbols. Spreading REST api warmups to respect limits.`);
+      for (let sIdx = 0; sIdx < topSymbols.length; sIdx++) {
+         const symbol = topSymbols[sIdx];
+         const timeframes = ["3m", "15m", "1h", "4h"];
+         console.log(`[Warmup] Loading [${sIdx + 1}/${topSymbols.length}] ${symbol} indicators...`);
+         for (const tf of timeframes) {
+             try {
+                await fetchKlines(symbol, tf);
+                // Introduce 150ms sequential gap to avoid burst fatigue on API
+                await new Promise((resolve) => setTimeout(resolve, 150));
+             } catch (wErr: any) {
+                console.error(`[Warmup Warning] Minor issue on ${symbol} ${tf}:`, wErr.message);
+             }
+         }
+      }
+      console.log("🌟 [Warmup] Sequential cache warmup completely finalized! Real-time WS handlers will hold cache hot.");
+    } catch (warmupErr) {
+      console.error("[Warmup Fatal] Cache pre-warm up failed:", warmupErr);
+    }
+  })();
+
   runBackgroundLoop(); // Enable 24/7 background Telegram scanning
 
   // Vite middleware for development

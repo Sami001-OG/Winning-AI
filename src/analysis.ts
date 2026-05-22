@@ -667,27 +667,96 @@ export const analyzeChart = (
   
   // Dynamic Trade Condition Evaluator
   const computeDynamicStops = () => {
-    // Stop Loss uses dynamic ATR multiplier: mu = 1.5 in low/normal vol, mu = 2.0 in high vol
-    const mu = isHighVolatility ? 2.0 : 1.5;
-    let calcSl = signal === 'LONG' ? entryPrice - (mu * lastAtr) : entryPrice + (mu * lastAtr);
+    let calcSl = entryPrice;
+    let strategyDesc = '';
+    let contextMode = 'Default';
+
+    if (isHighVolatility) {
+      // Case A: High Volatility Expansion - widen ATR to avoid wicks
+      contextMode = 'High Volatility';
+      const mu = 2.2;
+      calcSl = signal === 'LONG' ? entryPrice - (mu * lastAtr) : entryPrice + (mu * lastAtr);
+      strategyDesc = `Context: High Volatility Noise-Dampening (ATR ${mu}x)`;
+    } else if (isSqueeze) {
+      // Case B: Bollinger Squeeze Consolidation - tight compression, tight stop
+      contextMode = 'Squeeze Compression';
+      const mu = 1.25;
+      calcSl = signal === 'LONG' ? entryPrice - (mu * lastAtr) : entryPrice + (mu * lastAtr);
+      strategyDesc = `Context: Tight Squeeze Compression (ATR ${mu}x)`;
+    } else if (isTrendingUp || isTrendingDown) {
+      // Case C: Strong Trend - place past key structural swing points
+      contextMode = 'Trend Structure';
+      if (signal === 'LONG') {
+        const structuralStop = swingLow - 0.25 * lastAtr;
+        // Clamp stop loss between 1.5x and 3.0x ATR for security and breathing room
+        calcSl = Math.max(structuralStop, entryPrice - 3.0 * lastAtr);
+        calcSl = Math.min(calcSl, entryPrice - 1.5 * lastAtr);
+      } else { // SHORT
+        const structuralStop = swingHigh + 0.25 * lastAtr;
+        calcSl = Math.min(structuralStop, entryPrice + 3.0 * lastAtr);
+        calcSl = Math.max(calcSl, entryPrice + 1.5 * lastAtr);
+      }
+      strategyDesc = `Context: Trend Structural Alignment (Swing-based)`;
+    } else {
+      // Case D: Standard Sideways / Ranging - place past range boundaries
+      contextMode = 'Sideways Structure';
+      if (signal === 'LONG') {
+        const structuralStop = swingLow - 0.2 * lastAtr;
+        // Clamp stop loss between 1.5x and 2.0x ATR for tight range protection
+        calcSl = Math.max(structuralStop, entryPrice - 2.0 * lastAtr);
+        calcSl = Math.min(calcSl, entryPrice - 1.5 * lastAtr);
+      } else { // SHORT
+        const structuralStop = swingHigh + 0.2 * lastAtr;
+        calcSl = Math.min(structuralStop, entryPrice + 2.0 * lastAtr);
+        calcSl = Math.max(calcSl, entryPrice + 1.5 * lastAtr);
+      }
+      strategyDesc = `Context: Range Structural Boundary (Swing-based)`;
+    }
 
     // Risk amount
     const risk = Math.abs(entryPrice - calcSl);
     
-    // TP1: 50% Volume with 1:1 R:R target
-    let calcTp1 = signal === 'LONG' ? entryPrice + risk : entryPrice - risk;
+    // Dynamic context-based Take Profit multipliers to capture optimal reward levels
+    let tp1Mult = 1.0;
+    let tp2Mult = 2.0;
+    let tp3Mult = 3.5;
+    let targetContextDesc = '';
+
+    if (isHighVolatility) {
+      tp1Mult = 1.25;
+      tp2Mult = 2.50;
+      tp3Mult = confidence >= 88.0 ? 5.0 : 4.5;
+      targetContextDesc = 'Expanded Volatility Targets';
+    } else if (isSqueeze) {
+      tp1Mult = 0.90;
+      tp2Mult = 1.75;
+      tp3Mult = confidence >= 88.0 ? 3.5 : 3.0;
+      targetContextDesc = 'Compression Breakout Targets';
+    } else if (isTrendingUp || isTrendingDown) {
+      tp1Mult = 1.10;
+      tp2Mult = 2.20;
+      tp3Mult = confidence >= 88.0 ? 4.5 : 4.0;
+      targetContextDesc = 'Trend Continuation Standard Targets';
+    } else {
+      tp1Mult = 0.85;
+      tp2Mult = 1.60;
+      tp3Mult = confidence >= 88.0 ? 3.0 : 2.5;
+      targetContextDesc = 'Range Scalp Boundaries';
+    }
+
+    // TP1: 50% Volume with dynamic R:R target
+    let calcTp1 = signal === 'LONG' ? entryPrice + (risk * tp1Mult) : entryPrice - (risk * tp1Mult);
     
-    // TP2: 30% Volume with 2:1 R:R target
-    let calcTp2 = signal === 'LONG' ? entryPrice + (risk * 2.0) : entryPrice - (risk * 2.0);
+    // TP2: 30% Volume with dynamic R:R target
+    let calcTp2 = signal === 'LONG' ? entryPrice + (risk * tp2Mult) : entryPrice - (risk * tp2Mult);
     
-    // TP3: 20% Volume with 3.5:1 to 4:1 R:R target
-    const tp3Multiplier = confidence >= 88.0 ? 4.0 : 3.5;
-    let calcTp3 = signal === 'LONG' ? entryPrice + (risk * tp3Multiplier) : entryPrice - (risk * tp3Multiplier);
+    // TP3: 20% Volume with dynamic R:R runner target
+    let calcTp3 = signal === 'LONG' ? entryPrice + (risk * tp3Mult) : entryPrice - (risk * tp3Mult);
     
     let calcTp = calcTp3; // Overall Take Profit matches the ultimate runner target
     let breakEvenTrigger = calcTp1;
     let trailingStopMode = isTrending ? 'ATR' : 'Structure' as 'ATR' | 'Percentage' | 'Structure';
-    let strategyDesc = `ACE-v2 Multi-level Scale-Out (TP1 50% @ 1:1, TP2 30% @ 2:1, TP3 20% @ ${tp3Multiplier}:1)`;
+    strategyDesc += ` | Target Dynamic Model: ${targetContextDesc} (${tp1Mult.toFixed(2)}x / ${tp2Mult.toFixed(2)}x / ${tp3Mult.toFixed(2)}x R:R)`;
 
     // Default cleanup
     calcTp = Math.max(0.00000001, calcTp);
