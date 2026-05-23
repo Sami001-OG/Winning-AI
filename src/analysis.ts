@@ -454,20 +454,24 @@ export const analyzeChart = (
   else if (fakeout === 'bearish') structureScore -= 0.20;
 
   // Volume/Volatility Score (Layer 6)
-  // Volume Spike (40%), ATR Expansion (30%), Order Flow (30%)
+  // Volume spike (40%, threshold: Volume > 2x Vol SMA)
+  // ATR expansion (30%, 20-bar lookback)
+  // Order flow intensity (30%)
   let volVolScore = 0;
   
-  if (orderFlow.signal === 'bullish') volVolScore += 0.30;
-  else if (orderFlow.signal === 'bearish') volVolScore -= 0.30;
+  if (volumeSpike > 2.0) volVolScore += (lastClose > closes[closes.length - 2] ? 0.40 : -0.40);
   
-  if (volumeSpike > 1.5) volVolScore += (lastClose > closes[closes.length - 2] ? 0.40 : -0.40);
-  if (atrExpansion > 1.5) volVolScore += (isTrendingUp ? 0.30 : isTrendingDown ? -0.30 : 0);
+  if (atrExpansion > 1.3) volVolScore += (lastClose > closes[closes.length - 2] ? 0.30 : -0.30);
+  
+  const intensity = Math.min(1.0, (lastVol / (lastVolSma * 2.0)));
+  if (orderFlow.signal === 'bullish') volVolScore += 0.30 * intensity;
+  else if (orderFlow.signal === 'bearish') volVolScore -= 0.30 * intensity;
 
   let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
   
   // ACE-v2 Sigmoid Confidence Squashing
-  const k_slope = 8.0;
-  const theta_offset = 0.40;
+  const k_slope = 7.0;
+  const theta_offset = 0.55;
   let confidence = 100 / (1 + Math.exp(-k_slope * (Math.abs(finalScore) - theta_offset)));
 
   // Session Logic - Based on UTC Time
@@ -523,7 +527,7 @@ export const analyzeChart = (
     confidence = Math.min(100, confidence + 10); // Boost confidence for perfect setup
   }
 
-  if (confidence >= 65) {
+  if (confidence >= 70) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
     if (confidence >= 88) {
       tier = 'ELITE';
@@ -545,6 +549,14 @@ export const analyzeChart = (
     tier = 'STANDBY';
     confidence *= 0.5;
     reason = 'Volatility too low for safe entry.';
+  }
+
+  // Skip squeeze context - optimized strategy addition
+  if (isSqueeze) {
+    signal = 'NO TRADE';
+    tier = 'STANDBY';
+    confidence = 0;
+    reason = 'Squeeze Filter: Bollinger Band Width in bottom 20th percentile. New entries are suppressed.';
   }
 
   // Cap confidence at 100
@@ -668,6 +680,7 @@ export const analyzeChart = (
   // Dynamic Trade Condition Evaluator
   const computeDynamicStops = () => {
     let calcSl = entryPrice;
+    let riskUnscaled = lastAtr;
     let strategyDesc = '';
     let contextMode = 'Default';
 
@@ -675,46 +688,48 @@ export const analyzeChart = (
       // Case A: High Volatility Expansion - widen ATR to avoid wicks
       contextMode = 'High Volatility';
       const mu = 2.2;
-      calcSl = signal === 'LONG' ? entryPrice - (mu * lastAtr) : entryPrice + (mu * lastAtr);
-      strategyDesc = `Context: High Volatility Noise-Dampening (ATR ${mu}x)`;
+      riskUnscaled = mu * lastAtr;
+      calcSl = signal === 'LONG' ? entryPrice - (riskUnscaled * 1.6) : entryPrice + (riskUnscaled * 1.6);
+      strategyDesc = `Context: High Volatility Noise-Dampening (Raw ATR ${mu}x, Scaled 1.6x)`;
     } else if (isSqueeze) {
       // Case B: Bollinger Squeeze Consolidation - tight compression, tight stop
       contextMode = 'Squeeze Compression';
       const mu = 1.25;
-      calcSl = signal === 'LONG' ? entryPrice - (mu * lastAtr) : entryPrice + (mu * lastAtr);
-      strategyDesc = `Context: Tight Squeeze Compression (ATR ${mu}x)`;
+      riskUnscaled = mu * lastAtr;
+      calcSl = signal === 'LONG' ? entryPrice - (riskUnscaled * 1.6) : entryPrice + (riskUnscaled * 1.6);
+      strategyDesc = `Context: Tight Squeeze Compression (Raw ATR ${mu}x, Scaled 1.6x)`;
     } else if (isTrendingUp || isTrendingDown) {
       // Case C: Strong Trend - place past key structural swing points
       contextMode = 'Trend Structure';
       if (signal === 'LONG') {
         const structuralStop = swingLow - 0.25 * lastAtr;
-        // Clamp stop loss between 1.5x and 3.0x ATR for security and breathing room
-        calcSl = Math.max(structuralStop, entryPrice - 3.0 * lastAtr);
-        calcSl = Math.min(calcSl, entryPrice - 1.5 * lastAtr);
+        // Clamp stop loss between 1.5x and 3.0x ATR for security and breathing room before scale
+        riskUnscaled = Math.max(1.5 * lastAtr, Math.min(3.0 * lastAtr, entryPrice - structuralStop));
+        calcSl = entryPrice - (riskUnscaled * 1.6);
       } else { // SHORT
         const structuralStop = swingHigh + 0.25 * lastAtr;
-        calcSl = Math.min(structuralStop, entryPrice + 3.0 * lastAtr);
-        calcSl = Math.max(calcSl, entryPrice + 1.5 * lastAtr);
+        riskUnscaled = Math.max(1.5 * lastAtr, Math.min(3.0 * lastAtr, structuralStop - entryPrice));
+        calcSl = entryPrice + (riskUnscaled * 1.6);
       }
-      strategyDesc = `Context: Trend Structural Alignment (Swing-based)`;
+      strategyDesc = `Context: Trend Structural Alignment (Swing-based, Scaled 1.6x)`;
     } else {
       // Case D: Standard Sideways / Ranging - place past range boundaries
       contextMode = 'Sideways Structure';
       if (signal === 'LONG') {
         const structuralStop = swingLow - 0.2 * lastAtr;
-        // Clamp stop loss between 1.5x and 2.0x ATR for tight range protection
-        calcSl = Math.max(structuralStop, entryPrice - 2.0 * lastAtr);
-        calcSl = Math.min(calcSl, entryPrice - 1.5 * lastAtr);
+        // Clamp stop loss between 1.5x and 2.0x ATR for tight range protection before scale
+        riskUnscaled = Math.max(1.5 * lastAtr, Math.min(2.0 * lastAtr, entryPrice - structuralStop));
+        calcSl = entryPrice - (riskUnscaled * 1.6);
       } else { // SHORT
         const structuralStop = swingHigh + 0.2 * lastAtr;
-        calcSl = Math.min(structuralStop, entryPrice + 2.0 * lastAtr);
-        calcSl = Math.max(calcSl, entryPrice + 1.5 * lastAtr);
+        riskUnscaled = Math.max(1.5 * lastAtr, Math.min(2.0 * lastAtr, structuralStop - entryPrice));
+        calcSl = entryPrice + (riskUnscaled * 1.6);
       }
-      strategyDesc = `Context: Range Structural Boundary (Swing-based)`;
+      strategyDesc = `Context: Range Structural Boundary (Swing-based, Scaled 1.6x)`;
     }
 
-    // Risk amount
-    const risk = Math.abs(entryPrice - calcSl);
+    // Risk amount is unscaled risk for TP calculations
+    const risk = riskUnscaled;
     
     // Dynamic context-based Take Profit multipliers to capture optimal reward levels
     let tp1Mult = 1.0;
@@ -725,32 +740,32 @@ export const analyzeChart = (
     if (isHighVolatility) {
       tp1Mult = 1.25;
       tp2Mult = 2.50;
-      tp3Mult = confidence >= 88.0 ? 5.0 : 4.5;
+      tp3Mult = 4.75;
       targetContextDesc = 'Expanded Volatility Targets';
     } else if (isSqueeze) {
       tp1Mult = 0.90;
       tp2Mult = 1.75;
-      tp3Mult = confidence >= 88.0 ? 3.5 : 3.0;
+      tp3Mult = 3.0;
       targetContextDesc = 'Compression Breakout Targets';
     } else if (isTrendingUp || isTrendingDown) {
       tp1Mult = 1.10;
       tp2Mult = 2.20;
-      tp3Mult = confidence >= 88.0 ? 4.5 : 4.0;
+      tp3Mult = 4.25;
       targetContextDesc = 'Trend Continuation Standard Targets';
     } else {
       tp1Mult = 0.85;
       tp2Mult = 1.60;
-      tp3Mult = confidence >= 88.0 ? 3.0 : 2.5;
+      tp3Mult = 2.75;
       targetContextDesc = 'Range Scalp Boundaries';
     }
 
-    // TP1: 50% Volume with dynamic R:R target
+    // TP1: 33% Volume with dynamic R:R target
     let calcTp1 = signal === 'LONG' ? entryPrice + (risk * tp1Mult) : entryPrice - (risk * tp1Mult);
     
-    // TP2: 30% Volume with dynamic R:R target
+    // TP2: 33% Volume with dynamic R:R target
     let calcTp2 = signal === 'LONG' ? entryPrice + (risk * tp2Mult) : entryPrice - (risk * tp2Mult);
     
-    // TP3: 20% Volume with dynamic R:R runner target
+    // TP3: 34% Volume with dynamic R:R runner target
     let calcTp3 = signal === 'LONG' ? entryPrice + (risk * tp3Mult) : entryPrice - (risk * tp3Mult);
     
     let calcTp = calcTp3; // Overall Take Profit matches the ultimate runner target

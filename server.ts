@@ -62,8 +62,8 @@ function recordTradeResult(result: "WIN" | "LOSS") {
 function getSizingModel() {
   const winRate = 0.584; // Backtested baseline win rate (Rank #1 top-performing parameter set)
   // Weighted expected R:R based on take profit levels:
-  // TP1 (50% Volume at ~1.0 R:R), TP2 (30% Volume at ~2.0 R:R), TP3 (20% Volume at ~4.0 R:R)
-  // Weighted expected reward: 0.50 * 1.0 + 0.30 * 2.0 + 0.20 * 4.0 = 1.90 R:R
+  // TP1 (33% Volume at ~1.0 R:R), TP2 (33% Volume at ~2.0 R:R), TP3 (34% Volume at ~4.0 R:R)
+  // Weighted expected reward: 0.33 * 1.0 + 0.33 * 2.0 + 0.34 * 4.0 = 2.35 R:R
   const rr = 1.90; 
   // Kelly Fraction: f* = w - (1 - w) / RR
   const fStar = winRate - (1 - winRate) / rr; 
@@ -484,7 +484,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 30) // background scanner will parse the top 30 volume pairs
+      .slice(0, 50) // background scanner will parse the top 50 volume pairs
       .map((t: any) => t.symbol);
     lastTopSymbolsUpdate = Date.now();
     return cachedTopSymbols;
@@ -899,9 +899,9 @@ async function startServer() {
 ${directionIcon} Direction: ${trade.type}
   Confidence: ${confValue}%
 🎯 Entry Price: ${formatPrice(entryPrice)}
-🎯 TP1 (50% Booking): ${formatPrice(tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(tp3)}
+🎯 TP1 (33% Booking): ${formatPrice(tp1)}
+🎯 TP2 (33% Booking): ${formatPrice(tp2)}
+🎯 TP3 (34% Runner): ${formatPrice(tp3)}
 ❌ Stop Loss: ${formatPrice(slPrice)}
 🛡 Trail Mode: Move SL to Break-Even at TP1`;
           sendTelegramSignal(botToken as string, chatId as string, msg).catch(console.error);
@@ -1131,7 +1131,7 @@ ${directionIcon} Direction: ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 45; // Rank #1 Optimized threshold (from backtest: 45)
+      const requiredConfidence = 70; // Optimized Confidence Threshold (70%)
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
@@ -1210,9 +1210,9 @@ ${directionIcon} Direction: ${trade.type}
 ${directionIcon} Direction: ${activeTrade.direction}
   Confidence: 100% (Pulled back to fill)
 🎯 Entry Price: ${formatPrice(activeTrade.entry)}
-🎯 TP1 (50% Booking): ${formatPrice(activeTrade.tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(activeTrade.tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(activeTrade.tp3)}
+🎯 TP1 (33% Booking): ${formatPrice(activeTrade.tp1)}
+🎯 TP2 (33% Booking): ${formatPrice(activeTrade.tp2)}
+🎯 TP3 (34% Runner): ${formatPrice(activeTrade.tp3)}
 ❌ Stop Loss: ${formatPrice(activeTrade.sl)}
 🛡 Trail Mode: Move SL to Break-Even at TP1
 
@@ -1239,8 +1239,15 @@ ${directionIcon} Direction: ${activeTrade.direction}
                   // Soft Exit Logic (Momentum Reversal)
                   let softExit = false;
                   let softExitReason = "";
-                  try {
-                    const klines15mForExit = await fetchKlines(symbol, "15m");
+                  
+                  // Minimum hold time: 4 x 15m bars (1 hour)
+                  const holdTimeMs = Date.now() - activeTrade.registeredAt;
+                  const minimumHoldMs = 60 * 60 * 1000;
+                  const canSoftExit = holdTimeMs >= minimumHoldMs;
+
+                  if (canSoftExit) {
+                    try {
+                      const klines15mForExit = await fetchKlines(symbol, "15m");
                     if (klines15mForExit.length >= 30) {
                       const closes15m = klines15mForExit.map((k) => k.close);
                       const macd15m = MACD.calculate({
@@ -1297,6 +1304,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                   } catch (e) {
                     console.error(`Failed to check soft exit for ${symbol}:`, e);
                   }
+                  }
 
                   if (softExit) {
                     console.log(
@@ -1351,7 +1359,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
+                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (33% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 33% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentHigh >= activeTrade.tp2) {
                       activeTrade.hasHitTp2 = true;
@@ -1361,7 +1369,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
+                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (33% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 33% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 34% position running risk-free to TP3 target!`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentHigh >= activeTrade.tp3) {
                       activeTrade.hasHitTp3 = true;
@@ -1371,7 +1379,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
+                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 34% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
                       ).catch(console.error);
                       
                       recordTradeResult("WIN");
@@ -1409,7 +1417,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
+                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (33% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 33% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentLow <= activeTrade.tp2) {
                       activeTrade.hasHitTp2 = true;
@@ -1419,7 +1427,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
+                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (33% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 33% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 34% position running risk-free to TP3 target!`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentLow <= activeTrade.tp3) {
                       activeTrade.hasHitTp3 = true;
@@ -1429,7 +1437,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
+                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 34% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
                       ).catch(console.error);
                       
                       recordTradeResult("WIN");
@@ -1460,6 +1468,11 @@ ${directionIcon} Direction: ${activeTrade.direction}
             const klines1h = await fetchKlines(symbol, "1h");
             const htfBiasFor1H = htfDirection === "NEUTRAL" ? "LONG" : htfDirection;
             const control1H = get1HControlState(klines1h, htfBiasFor1H);
+            
+            if (control1H.state === "WAIT" || control1H.state === "VETO") {
+              diagnosticCounts.lowConfidence++; 
+              return;
+            }
 
 
             // 3. 15M Confirmation (Confidence/Setup)
@@ -1692,9 +1705,9 @@ ${directionIcon} Direction: ${sig.analysis.signal}
   Confidence: ${confValue}%
 🎯 Entry Price: ${formatPrice(sig.entryPrice)}
 🎯 Limit Entry Price: ${formatPrice(entryPrice)}
-🎯 TP1 (50% Booking): ${formatPrice(tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(tp3)}
+🎯 TP1 (33% Booking): ${formatPrice(tp1)}
+🎯 TP2 (33% Booking): ${formatPrice(tp2)}
+🎯 TP3 (34% Runner): ${formatPrice(tp3)}
 ❌ Stop Loss: ${formatPrice(sig.sl)}
 🛡 Trail Mode: Move SL to Break-Even at TP1${riskSizingStr}`;
           } else {
@@ -1702,9 +1715,9 @@ ${directionIcon} Direction: ${sig.analysis.signal}
 ${directionIcon} Direction: ${sig.analysis.signal}
   Confidence: ${confValue}%
 🎯 Entry Price: ${formatPrice(entryPrice)}
-🎯 TP1 (50% Booking): ${formatPrice(tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(tp3)}
+🎯 TP1 (33% Booking): ${formatPrice(tp1)}
+🎯 TP2 (33% Booking): ${formatPrice(tp2)}
+🎯 TP3 (34% Runner): ${formatPrice(tp3)}
 ❌ Stop Loss: ${formatPrice(sig.sl)}
 🛡 Trail Mode: Move SL to Break-Even at TP1${riskSizingStr}`;
           }

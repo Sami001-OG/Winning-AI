@@ -41,7 +41,7 @@ The bot isn't just mindlessly throwing alerts at you. We've evolved it from a ba
 ### 1. The Tiered Filtering Funnel 🌪️
 To analyze over 300 symbols efficiently without driving the Binance API crazy, the bot runs pairs through a progressive gauntlet. Trades are only fired when the macro trend, medium-term momentum, and micro execution triggers are perfectly mathematically aligned.
 
-1. **Liquidity Filter (300+ → 30):** First, we grab the top 300 USDT pairs and filter them down to the top 30 based on 24h volume. We only want to trade where the liquidity is.
+1. **Liquidity Filter (300+ → 50):** First, we grab the top 300 USDT pairs and filter them down to the top 50 based on 24h volume. We only want to trade where the liquidity is.
 2. **Strict Macro Filter (200 EMA):** Before any technical analysis begins, the asset's price MUST be aligned with the 200 EMA macro trend. If price is below the 200 EMA, longs are vetoed (-100 score). If price is above, shorts are vetoed.
 3. **4H Bias Alignment (50 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score to establish a firm LONG or SHORT bias based on EMA alignment and structure.
 4. **1H Control Layer (Veto Check):** The momentum gatekeeper. Once a 4H bias exists, the 1H chart determines if the market has healthy momentum. It looks at MACD expansion/contraction and RSI limits to classify the state as `CONTINUATION`, `EXHAUSTION`, or a full `VETO`.
@@ -77,21 +77,21 @@ When the scanner identifies an institutional setup, it immediately calculates th
 If a pullback Limit Setup was triggered, the active trade monitoring system tracks the 3-minute candle wicks.
 * **Telegram Trigger:** The exact moment price pulls back and fills your limit price, a `🚀 ENTRY FILLED` alert is fired, signifying the trade is now live and tracking.
 
-### Phase 3: Take Profit 1 Achieved (50% Booking) & Auto Break-Even! 🛡️
+### Phase 3: Take Profit 1 Achieved (33% Booking) & Auto Break-Even! 🛡️
 When the price reaches **TP1**:
-* **The Math:** **50%** of the trade size is closed to secure profits instantly.
+* **The Math:** **33%** of the trade size is closed to secure profits instantly.
 * **The Defense:** The system automatically moves your Stop Loss to the **Entry Price (Break-Even)**.
 * **Telegram Trigger:** Fires `🎯 TAKE PROFIT 1 ACHIEVED`, confirming profit is locked in and the remaining position is officially 100% risk-free. No matter what occurs next, you cannot lose capital on this trade.
 
-### Phase 4: Take Profit 2 Achieved (30% Booking)
+### Phase 4: Take Profit 2 Achieved (33% Booking)
 When price pushes further and hits **TP2**:
-* **The Math:** **30%** of the original trade size is closed.
-* **The Momentum:** Cumulative secured profit increases to **80%** of the overall trade.
+* **The Math:** **33%** of the original trade size is closed.
+* **The Momentum:** Cumulative secured profit increases to **66%** of the overall trade.
 * **Telegram Trigger:** Fires `🎯 TAKE PROFIT 2 ACHIEVED`, preparing you for the final runner phase.
 
-### Phase 5: Take Profit 3 Achieved (20% Runner Completion)
+### Phase 5: Take Profit 3 Achieved (34% Runner Completion)
 When price reaches the ultimate structural target, **TP3**:
-* **The Math:** The final **20%** runner is closed, clearing the trade from live tracking.
+* **The Math:** The final **34%** runner is closed, clearing the trade from live tracking.
 * **Telegram Trigger:** Fires `🎉 TAKE PROFIT 3 ACHIEVED (Trade Completed)` to celebrate the ultimate target realization.
 
 ### Risk Controls: Stop Loss / Soft Exits
@@ -116,9 +116,9 @@ Never dictate your trade size based on "gut feeling" or "leverage." Dictate it b
 
 ### 2. Trust the Progressive Scale-Out (Profit Booking Math) 📊
 Retail traders fail because they either close trades too early out of fear, or they hold trades too long hoping for "millions."
-* By closing **50% at TP1**, you capture immediate momentum.
-* Moving the Stop Loss to **Break-Even** removes all psychological pressure. Once a trade is risk-free, your brain stops producing cortisol (the stress hormone). You can let the remaining 50% run calmly.
-* Closing **30% at TP2** ensures that even if the market fails to hit the ultimate TP3 target and reverses, you have secured substantial profits from 80% of the position.
+* By closing **33% at TP1**, you capture immediate momentum.
+* Moving the Stop Loss to **Break-Even** removes all psychological pressure. Once a trade is risk-free, your brain stops producing cortisol (the stress hormone). You can let the remaining 67% run calmly.
+* Closing **33% at TP2** ensures that even if the market fails to hit the ultimate TP3 target and reverses, you have secured substantial profits from 66% of the position.
 
 ### 3. Emphasize Volatility and Session Alignment ⏰
 Not all trading sessions are created equal. Use Endellion signals strategically based on times:
