@@ -41,9 +41,9 @@ The bot isn't just mindlessly throwing alerts at you. We've evolved it from a ba
 ### 1. The Tiered Filtering Funnel 🌪️
 To analyze over 300 symbols efficiently without driving the Binance API crazy, the bot runs pairs through a progressive gauntlet. Trades are only fired when the macro trend, medium-term momentum, and micro execution triggers are perfectly mathematically aligned.
 
-1. **Liquidity Filter (300+ → 100):** First, we grab the top 300 USDT pairs and filter them down to the top 100 based on 24h volume. We only want to trade where the liquidity is.
+1. **Liquidity Filter (300+ → 150):** First, we grab the top 300 USDT pairs and filter them down to the top 150 based on 24h volume. We only want to trade where the liquidity is.
 2. **Strict Macro Filter (200 EMA):** Before any technical analysis begins, the asset's price MUST be aligned with the 200 EMA macro trend. If price is below the 200 EMA, longs are vetoed (-100 score). If price is above, shorts are vetoed.
-3. **4H Bias Alignment (100 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score to establish a firm LONG or SHORT bias based on EMA alignment and structure.
+3. **4H Bias Alignment (150 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score to establish a firm LONG or SHORT bias based on EMA alignment and structure.
 4. **1H Control Layer (Veto Check):** The momentum gatekeeper. Once a 4H bias exists, the 1H chart determines if the market has healthy momentum. It looks at MACD expansion/contraction and RSI limits to classify the state as `CONTINUATION`, `EXHAUSTION`, or a full `VETO`.
 5. **15M Confirmation (12 → 6):** This is where setup validation occurs. We check the 15m chart for volume profile alignment, order flow, MACD/RSI divergence, and indicator health to build our core confidence score. The base confidence must be **≥ 50%** (Rank #1 backtested optimal threshold) for the signal to proceed. We also run a strict **FOMO Filter**: if the price is within 1.5 ATR of the recent structural high/low, we reject the setup to avoid buying tops or selling bottoms.
 6. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers. The trade *aborts completely* unless there is:

@@ -484,7 +484,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 100) // background scanner will parse the top 100 volume pairs
+      .slice(0, 150) // background scanner will parse the top 150 volume pairs
       .map((t: any) => t.symbol);
     lastTopSymbolsUpdate = Date.now();
     return cachedTopSymbols;
