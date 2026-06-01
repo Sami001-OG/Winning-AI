@@ -282,12 +282,12 @@ async function runBacktestSuite() {
           if (pendingTrade.direction === "LONG") {
             if (!pendingTrade.hasHitTp1 && outcomeHigh >= pendingTrade.tp1) {
               pendingTrade.hasHitTp1 = true;
-              pendingTrade.pnlPercentage += ((pendingTrade.tp1 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * 0.33;
+              pendingTrade.pnlPercentage += ((pendingTrade.tp1 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * 0.5;
               pendingTrade.currentSl = pendingTrade.entryPrice; 
             }
             if (pendingTrade.hasHitTp1 && !pendingTrade.hasHitTp2 && outcomeHigh >= pendingTrade.tp2) {
               pendingTrade.hasHitTp2 = true;
-              pendingTrade.pnlPercentage += ((pendingTrade.tp2 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * 0.33;
+              pendingTrade.pnlPercentage += ((pendingTrade.tp2 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * 0.3;
             }
             if (outcomeLow <= pendingTrade.currentSl) {
               pendingTrade.exitTime = currentTime;
@@ -312,7 +312,7 @@ async function runBacktestSuite() {
               pendingTrade.status = "SUCCESS";
               pendingTrade.exitTime = currentTime;
               pendingTrade.exitPrice = pendingTrade.tp3;
-              const remainingWeight = 1.0 - (pendingTrade.hasHitTp1 ? 0.33 : 0) - (pendingTrade.hasHitTp2 ? 0.33 : 0);
+              const remainingWeight = 1.0 - (pendingTrade.hasHitTp1 ? 0.5 : 0) - (pendingTrade.hasHitTp2 ? 0.3 : 0);
               pendingTrade.pnlPercentage += ((pendingTrade.tp3 - pendingTrade.entryPrice) / pendingTrade.entryPrice) * 100 * 10 * remainingWeight;
               successfulTrades++;
               totalProfits += pendingTrade.pnlPercentage;
@@ -322,12 +322,12 @@ async function runBacktestSuite() {
           } else {
             if (!pendingTrade.hasHitTp1 && outcomeLow <= pendingTrade.tp1) {
               pendingTrade.hasHitTp1 = true;
-              pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp1) / pendingTrade.entryPrice) * 100 * 10 * 0.33;
+              pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp1) / pendingTrade.entryPrice) * 100 * 10 * 0.5;
               pendingTrade.currentSl = pendingTrade.entryPrice;
             }
             if (pendingTrade.hasHitTp1 && !pendingTrade.hasHitTp2 && outcomeLow <= pendingTrade.tp2) {
               pendingTrade.hasHitTp2 = true;
-              pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp2) / pendingTrade.entryPrice) * 100 * 10 * 0.33;
+              pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp2) / pendingTrade.entryPrice) * 100 * 10 * 0.3;
             }
             if (outcomeHigh >= pendingTrade.currentSl) {
               pendingTrade.exitTime = currentTime;
@@ -352,7 +352,7 @@ async function runBacktestSuite() {
               pendingTrade.status = "SUCCESS";
               pendingTrade.exitTime = currentTime;
               pendingTrade.exitPrice = pendingTrade.tp3;
-              const remainingWeight = 1.0 - (pendingTrade.hasHitTp1 ? 0.33 : 0) - (pendingTrade.hasHitTp2 ? 0.33 : 0);
+              const remainingWeight = 1.0 - (pendingTrade.hasHitTp1 ? 0.5 : 0) - (pendingTrade.hasHitTp2 ? 0.3 : 0);
               pendingTrade.pnlPercentage += ((pendingTrade.entryPrice - pendingTrade.tp3) / pendingTrade.entryPrice) * 100 * 10 * remainingWeight;
               successfulTrades++;
               totalProfits += pendingTrade.pnlPercentage;
@@ -375,7 +375,7 @@ async function runBacktestSuite() {
            // console.log("reject htf neutral")
            continue;
         }
-        if (config.use1HControlState && (sig.control1H.state === "WAIT" || sig.control1H.state === "VETO")) {
+        if (config.use1HControlState && sig.control1H.state === "WAIT") {
            continue;
         }
 

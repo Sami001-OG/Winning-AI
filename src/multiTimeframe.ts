@@ -123,8 +123,12 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Green MACD)' };
     }
     
-    // WAIT for all other conditions
-    return { state: 'WAIT', reason: 'Momentum Unclear (Base Flow state)' };
+    // EXHAUSTION TYPE A (Shallow) -> WAIT
+    if (hist <= 0 || hist <= prevHist) {
+      return { state: 'WAIT', reason: 'Bearish Exhaustion or Minor Pullback' };
+    }
+    
+    return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
   } else {
     // SHORT BIAS
     // EXHAUSTION TYPE B (Deep) / VETO
@@ -137,8 +141,12 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Red MACD)' };
     }
     
-    // WAIT for all other conditions
-    return { state: 'WAIT', reason: 'Momentum Unclear (Base Flow state)' };
+    // EXHAUSTION TYPE A (Shallow) -> WAIT
+    if (hist >= 0 || hist >= prevHist) {
+      return { state: 'WAIT', reason: 'Bullish Exhaustion or Minor Pullback' };
+    }
+    
+    return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
   }
 };
 
@@ -189,10 +197,10 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     cumulativeVolume += candle.volume;
   }
   const vwap = cumulativeVolume > 0 ? cumulativeTypicalVolume / cumulativeVolume : closes[closes.length - 1];
-  const priceAtVwap = Math.abs(lastCandle.close - vwap) / vwap <= 0.005;
+  const priceAtVwap = Math.abs(lastCandle.close - vwap) / vwap < 0.003;
 
-  const isEmaCrossImminentUp = lastEma10 < lastEma30 && (lastEma30 - lastEma10) / lastEma30 <= 0.001;
-  const isEmaCrossImminentDown = lastEma10 > lastEma30 && (lastEma10 - lastEma30) / lastEma30 <= 0.001;
+  const isEmaCrossImminentUp = lastEma10 < lastEma30 && (lastEma30 - lastEma10) / lastEma30 < 0.001;
+  const isEmaCrossImminentDown = lastEma10 > lastEma30 && (lastEma10 - lastEma30) / lastEma30 < 0.001;
 
   if (direction === 'LONG') {
     const isEmaAligned = lastCandle.close > lastEma10 && lastEma10 > lastEma30;

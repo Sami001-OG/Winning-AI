@@ -1,5 +1,8 @@
 {
   "name": "ENDELLION-TRADE",
-  "description": "Advanced 15m crypto chart analyzer with 10+ technical indicators and confluence mapping.",
-  "requestFramePermissions": []
+  "description": "Advanced crypto chart analyzer and backtesting suite powered by the ACE-v2 Adaptive Confluence Engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
