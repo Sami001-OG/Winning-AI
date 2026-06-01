@@ -1039,15 +1039,6 @@ ${directionIcon} Direction: ${trade.type}
       hasLoggedMissingTokens = false;
     }
 
-    if (telegramEnabled && !hasSentStartupNotification) {
-      sendTelegramSignal(
-        botToken,
-        chatId,
-        "🚀 <b>Endellion Trade Bot Started</b>\n\nScanner is now active and monitoring markets 24/7.",
-      ).catch(console.error);
-      hasSentStartupNotification = true;
-    }
-
     try {
       // --- Session Notifications ---
       const now = new Date();

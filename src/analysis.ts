@@ -481,17 +481,43 @@ export const analyzeChart = (
 
   // Bucket 5: Volume & Order Flow (Max Cap: 15)
   let volBucketRaw = 0;
-  if (orderFlow.signal === 'bullish') volBucketRaw += 5;
-  else if (orderFlow.signal === 'bearish') volBucketRaw -= 5;
-  if (volumeSpike > 1.5 && (lastClose > closes[closes.length - 2])) volBucketRaw += 5;
-  else if (volumeSpike > 1.5 && (lastClose < closes[closes.length - 2])) volBucketRaw -= 5;
-  if (lastClose > volProfile.vaHigh) volBucketRaw += 5;
-  else if (lastClose < volProfile.vaLow) volBucketRaw -= 5;
+  if (orderFlow.signal === 'bullish') volBucketRaw += 4;
+  else if (orderFlow.signal === 'bearish') volBucketRaw -= 4;
+  
+  if (volumeSpike > 1.5 && (lastClose > closes[closes.length - 2])) volBucketRaw += 4;
+  else if (volumeSpike > 1.5 && (lastClose < closes[closes.length - 2])) volBucketRaw -= 4;
+  
+  if (lastClose > volProfile.vaHigh) volBucketRaw += 3;
+  else if (lastClose < volProfile.vaLow) volBucketRaw -= 3;
+  
+  // Open Interest Proxy (Institutional Participation)
+  let oiScore = 0;
+  const isUpClose = lastClose > closes[closes.length - 2];
+  const isDownClose = lastClose < closes[closes.length - 2];
+  if (volumeSpike >= 1.3 && isUpClose) oiScore = 4; // Strongly supports Bullish move
+  else if (volumeSpike >= 1.1 && isUpClose) oiScore = 2; // Moderately supports Bullish move
+  else if (volumeSpike >= 1.3 && isDownClose) oiScore = -4; // Strongly supports Bearish move
+  else if (volumeSpike >= 1.1 && isDownClose) oiScore = -2; // Moderately supports Bearish move
+  else if (volumeSpike < 0.8) oiScore = isUpClose ? -2 : (isDownClose ? 2 : 0); // Opposes move
+  
+  volBucketRaw += oiScore;
   const volBucket = Math.max(-15, Math.min(15, volBucketRaw));
 
   // Combine evidence buckets (ranges from -100 to 100)
   let combinedScore = trendBucket + structBucket + momBucket + liqBucket + volBucket;
   let finalScore = combinedScore / 100;
+  
+  let rawConfidence = Math.abs(combinedScore);
+
+  // Volatility Multiplier
+  let volMultiplier = 1.0;
+  if (atrExpansion < 0.6) volMultiplier = 0.90;
+  else if (atrExpansion < 0.8) volMultiplier = 0.95;
+  else if (atrExpansion <= 1.8) volMultiplier = 1.00;
+  else if (atrExpansion <= 2.5) volMultiplier = 0.95;
+  else volMultiplier = 0.90;
+
+  let volAdjustedConfidence = rawConfidence * volMultiplier;
 
   // ==========================================
   // EARLY REVERSAL PENALTIES & HTF LAG REDUCTION (Part 5)
@@ -540,8 +566,7 @@ export const analyzeChart = (
     penalty += 20; // 20% confidence reduction during sweep cooldown
   }
 
-  let baseConfidence = Math.abs(combinedScore);
-  let confidence = Math.max(0, baseConfidence - penalty);
+  let confidence = Math.max(0, volAdjustedConfidence - penalty);
 
   // Session Logic - Based on UTC Time
   const latestCandle = data[data.length - 1];
