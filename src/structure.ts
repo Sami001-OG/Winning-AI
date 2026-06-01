@@ -1,34 +1,257 @@
 import { Candle } from './types';
 
 export const detectBOS = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
-  if (data.length < 20) return 'neutral';
-  const last = data[data.length - 1];
-  const prevHigh = Math.max(...data.slice(-20, -1).map(c => c.high));
-  const prevLow = Math.min(...data.slice(-20, -1).map(c => c.low));
+  if (data.length < 30) return 'neutral';
   
-  if (last.close > prevHigh) return 'bullish';
-  if (last.close < prevLow) return 'bearish';
+  // Find swing highs and swing lows dynamically using a very practical, responsive lookback (left=3, right=1)
+  const highs = data.map(c => c.high);
+  const lows = data.map(c => c.low);
+  const swingHighs: { price: number, index: number }[] = [];
+  const swingLows: { price: number, index: number }[] = [];
+  
+  const left = 3;
+  const right = 1; // Only 1 candle lag for ultra-responsiveness
+  
+  for (let i = left; i < data.length - right; i++) {
+    const h = highs[i];
+    const l = lows[i];
+    
+    let isSH = true;
+    let isSL = true;
+    
+    for (let j = 1; j <= left; j++) {
+      if (highs[i - j] >= h) isSH = false;
+      if (lows[i - j] <= l) isSL = false;
+    }
+    for (let j = 1; j <= right; j++) {
+      if (highs[i + j] > h) isSH = false;
+      if (lows[i + j] < l) isSL = false;
+    }
+    
+    if (isSH) swingHighs.push({ price: h, index: i });
+    if (isSL) swingLows.push({ price: l, index: i });
+  }
+
+  if (swingHighs.length >= 2 && swingLows.length >= 2) {
+    const sh1 = swingHighs[swingHighs.length - 1]; // latest SH
+    const sh2 = swingHighs[swingHighs.length - 2]; // previous SH
+    const sl1 = swingLows[swingLows.length - 1];   // latest SL
+    const sl2 = swingLows[swingLows.length - 2];   // previous SL
+    
+    // Check Higher High & Higher Low
+    if (sh1.price > sh2.price && sl1.price > sl2.price) {
+      return 'bullish';
+    }
+    // Check Lower Low & Lower High
+    if (sh1.price < sh2.price && sl1.price < sl2.price) {
+      return 'bearish';
+    }
+  }
+  
   return 'neutral';
 };
 
 export const detectLiquidityGrab = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
+  if (data.length < 25) return 'neutral';
+  
+  // Find a raw sweep first in the last 4 candles to make it practical and responsive
+  for (let s = 1; s <= 4; s++) {
+    const sweepCandleIdx = data.length - s;
+    const sweepCandle = data[sweepCandleIdx];
+    
+    const lookbackStart = Math.max(0, sweepCandleIdx - 15);
+    const prevLow = Math.min(...data.slice(lookbackStart, sweepCandleIdx).map(c => c.low));
+    const prevHigh = Math.max(...data.slice(lookbackStart, sweepCandleIdx).map(c => c.high));
+    
+    // Raw Bullish Sweep (low swept, closes back above)
+    if (sweepCandle.low < prevLow && sweepCandle.close > prevLow) {
+      let hasDisplacement = false;
+      let hasStructureConfirmation = false;
+      
+      const recentCandles = data.slice(-25);
+      const atrs = recentCandles.map((c, idx) => {
+        if (idx === 0) return c.high - c.low;
+        const prevClose = recentCandles[idx - 1].close;
+        return Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
+      });
+      const avgAtr = atrs.reduce((a, b) => a + b, 0) / atrs.length;
+      const avgVol = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
+      
+      for (let j = sweepCandleIdx; j < data.length; j++) {
+        const c = data[j];
+        const body = c.close - c.open;
+        
+        // Displacement: Solid positive body with volume matching or exceeding average
+        if (body > avgAtr * 0.5 && c.volume > avgVol * 0.8) {
+          hasDisplacement = true;
+        }
+        
+        // Structure confirmation: A close above the high of the sweeping candle or a higher high breakout
+        if (c.close > sweepCandle.high) {
+          hasStructureConfirmation = true;
+        }
+      }
+      
+      // Cover the sweeping candle itself if it contains immediate massive displacement/pressure
+      if (sweepCandle.close > sweepCandle.open && (sweepCandle.close - sweepCandle.open) > avgAtr * 0.6) {
+        hasDisplacement = true;
+      }
+      if (sweepCandleIdx > 0 && sweepCandle.close > data[sweepCandleIdx - 1].high) {
+        hasStructureConfirmation = true;
+      }
+      
+      if (hasDisplacement && hasStructureConfirmation) {
+        return 'bullish';
+      }
+    }
+    
+    // Raw Bearish Sweep
+    if (sweepCandle.high > prevHigh && sweepCandle.close < prevHigh) {
+      let hasDisplacement = false;
+      let hasStructureConfirmation = false;
+      
+      const recentCandles = data.slice(-25);
+      const atrs = recentCandles.map((c, idx) => {
+        if (idx === 0) return c.high - c.low;
+        const prevClose = recentCandles[idx - 1].close;
+        return Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
+      });
+      const avgAtr = atrs.reduce((a, b) => a + b, 0) / atrs.length;
+      const avgVol = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
+      
+      for (let j = sweepCandleIdx; j < data.length; j++) {
+        const c = data[j];
+        const body = c.open - c.close; // Bearish body
+        
+        // Displacement: Solid negative body with volume matching or exceeding average
+        if (body > avgAtr * 0.5 && c.volume > avgVol * 0.8) {
+          hasDisplacement = true;
+        }
+        
+        // Structure confirmation: A close below the low of the sweeping candle
+        if (c.close < sweepCandle.low) {
+          hasStructureConfirmation = true;
+        }
+      }
+      
+      if (sweepCandle.open > sweepCandle.close && (sweepCandle.open - sweepCandle.close) > avgAtr * 0.6) {
+        hasDisplacement = true;
+      }
+      if (sweepCandleIdx > 0 && sweepCandle.close < data[sweepCandleIdx - 1].low) {
+        hasStructureConfirmation = true;
+      }
+      
+      if (hasDisplacement && hasStructureConfirmation) {
+        return 'bearish';
+      }
+    }
+  }
+  
+  return 'neutral';
+};
+
+export const detectMSS = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
+  if (data.length < 30) return 'neutral';
+  
+  const highs = data.map(c => c.high);
+  const lows = data.map(c => c.low);
+  const closes = data.map(c => c.close);
+  
+  const swingHighs: number[] = [];
+  const swingLows: number[] = [];
+  
+  const left = 3;
+  const right = 2; // Stable swing pivot structure
+  
+  for (let i = left; i < data.length - right; i++) {
+    const h = highs[i];
+    const l = lows[i];
+    
+    let isSH = true;
+    let isSL = true;
+    
+    for (let j = 1; j <= left; j++) {
+      if (highs[i - j] >= h) isSH = false;
+      if (lows[i - j] <= l) isSL = false;
+    }
+    for (let j = 1; j <= right; j++) {
+      if (highs[i + j] >= h) isSH = false;
+      if (lows[i + j] <= l) isSL = false;
+    }
+    
+    if (isSH) swingHighs.push(h);
+    if (isSL) swingLows.push(l);
+  }
+  
+  if (swingHighs.length === 0 || swingLows.length === 0) return 'neutral';
+  
+  const lastClose = closes[closes.length - 1];
+  const lastSwingHigh = swingHighs[swingHighs.length - 1];
+  const lastSwingLow = swingLows[swingLows.length - 1];
+  
+  if (lastClose > lastSwingHigh) return 'bullish';
+  if (lastClose < lastSwingLow) return 'bearish';
+  
+  return 'neutral';
+};
+
+export const detectSFP = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
+  if (data.length < 20) return 'neutral';
+  
+  const last = data[data.length - 1];
+  const prev = data[data.length - 2];
+  
+  const prevHighs = data.slice(-17, -2).map(c => c.high);
+  const prevLows = data.slice(-17, -2).map(c => c.low);
+  
+  const keyHigh = Math.max(...prevHighs);
+  const keyLow = Math.min(...prevLows);
+  
+  // Bullish SFP: low went below keyLow, but closed back above keyLow
+  if ((last.low < keyLow && last.close > keyLow) || (prev.low < keyLow && prev.close > keyLow && last.close > keyLow)) {
+    return 'bullish';
+  }
+  
+  // Bearish SFP: high went above keyHigh, but closed back below keyHigh
+  if ((last.high > keyHigh && last.close < keyHigh) || (prev.high > keyHigh && prev.close < keyHigh && last.close < keyHigh)) {
+    return 'bearish';
+  }
+  
+  return 'neutral';
+};
+
+export const detectFailedLiquidityGrab = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
   if (data.length < 15) return 'neutral';
   
-  // Check the last 3 candles to see if any of them swept liquidity
-  for (let i = 1; i <= 3; i++) {
-    const candle = data[data.length - i];
-    const prevLow = Math.min(...data.slice(-15 - i, -i).map(c => c.low));
-    const prevHigh = Math.max(...data.slice(-15 - i, -i).map(c => c.high));
+  for (let s = 2; s <= 5; s++) {
+    const sCandle = data[data.length - s];
+    const lookbackStart = Math.max(0, data.length - s - 15);
+    const prevLow = Math.min(...data.slice(lookbackStart, data.length - s).map(c => c.low));
+    const prevHigh = Math.max(...data.slice(lookbackStart, data.length - s).map(c => c.high));
     
-    if (candle.low < prevLow && candle.close > prevLow) return 'bullish';
-    if (candle.high > prevHigh && candle.close < prevHigh) return 'bearish';
+    // Bullish raw sweep
+    if (sCandle.low < prevLow && sCandle.close > prevLow) {
+      for (let j = data.length - s + 1; j < data.length; j++) {
+        if (data[j].close < sCandle.low) {
+          return 'bearish'; // Sweeping candle's low was violated (failed grab, highly bearish)
+        }
+      }
+    }
+    
+    // Bearish raw sweep
+    if (sCandle.high > prevHigh && sCandle.close < prevHigh) {
+      for (let j = data.length - s + 1; j < data.length; j++) {
+        if (data[j].close > sCandle.high) {
+          return 'bullish'; // Sweeping candle's high was violated (failed grab, highly bullish)
+        }
+      }
+    }
   }
   
   return 'neutral';
 };
 
 export const detectFakeout = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => {
-  // Similar to liquidity grab but specifically on a wider range
   if (data.length < 20) return 'neutral';
   const last = data[data.length - 1];
   const rangeHigh = Math.max(...data.slice(-20, -1).map(c => c.high));
@@ -69,9 +292,7 @@ export const calculateOrderFlow = (data: Candle[], period: number = 14): { buyin
       continue;
     }
     
-    // Buying pressure is distance from low to close
     const buyPct = (c.close - c.low) / trueRange;
-    // Selling pressure is distance from close to high
     const sellPct = (c.high - c.close) / trueRange;
     
     buyingVolume += c.volume * buyPct;
@@ -99,10 +320,9 @@ export type DivergenceType = 'regular_bullish' | 'regular_bearish' | 'hidden_bul
 export const detectAllRsiDivergences = (data: Candle[], rsi: number[]): DivergenceType => {
   if (data.length < 50 || rsi.length < 50) return 'none';
 
-  // Find local pivots (highs/lows)
   const pivots: { price: number, rsi: number, index: number, type: 'high' | 'low' }[] = [];
   const prices = data.map(c => c.close);
-  const lookback = 5; // Increased lookback for more significant pivots
+  const lookback = 5;
   for (let i = lookback; i < prices.length - lookback; i++) {
       let isHigh = true;
       let isLow = true;
@@ -119,13 +339,9 @@ export const detectAllRsiDivergences = (data: Candle[], rsi: number[]): Divergen
   const lastPivot = pivots[pivots.length - 1];
   const prevPivot = pivots[pivots.length - 2];
 
-  // Regular Bullish: Price LL, RSI HL
   if (lastPivot.type === 'low' && prevPivot.type === 'low' && lastPivot.price < prevPivot.price && lastPivot.rsi > prevPivot.rsi) return 'regular_bullish';
-  // Regular Bearish: Price HH, RSI LH
   if (lastPivot.type === 'high' && prevPivot.type === 'high' && lastPivot.price > prevPivot.price && lastPivot.rsi < prevPivot.rsi) return 'regular_bearish';
-  // Hidden Bullish: Price HL, RSI LL
   if (lastPivot.type === 'low' && prevPivot.type === 'low' && lastPivot.price > prevPivot.price && lastPivot.rsi < prevPivot.rsi) return 'hidden_bullish';
-  // Hidden Bearish: Price LH, RSI HH
   if (lastPivot.type === 'high' && prevPivot.type === 'high' && lastPivot.price < prevPivot.price && lastPivot.rsi > prevPivot.rsi) return 'hidden_bearish';
 
   return 'none';
@@ -135,15 +351,9 @@ export const detectMacdDivergences = (data: Candle[], macdHist: number[]): Diver
   if (data.length < 50 || macdHist.length < 50) return 'none';
 
   const prices = data.map(c => c.close);
-  
-  // 1. Identify Histogram Color Shifts (Momentum Shifts)
   const lastIdx = macdHist.length - 1;
   const isColorShiftBullish = macdHist[lastIdx] > 0 && macdHist[lastIdx - 1] < 0;
   const isColorShiftBearish = macdHist[lastIdx] < 0 && macdHist[lastIdx - 1] > 0;
-
-  // 2. Identify Troughs/Peaks to check for divergence
-  // A trough is a local minimum in the MACD histogram (below 0)
-  // A peak is a local maximum (above 0)
   
   const getPivots = (arr: number[]): {val: number, idx: number}[] => {
       const pivots = [];
@@ -164,13 +374,11 @@ export const detectMacdDivergences = (data: Candle[], macdHist: number[]): Diver
   const lastPrice = prices[lastPivot.idx];
   const prevPrice = prices[prevPivot.idx];
   
-  // Bullish: Hist trough is higher than prev trough, but Price is lower (Regular) or Higher (Hidden)
   if (lastPivot.val < 0 && lastPivot.val > prevPivot.val) {
       if (lastPrice < prevPrice) return 'regular_bullish';
       if (lastPrice > prevPrice) return 'hidden_bullish';
   }
   
-  // Bearish: Hist peak is lower than prev peak, but Price is higher (Regular) or Lower (Hidden)
   if (lastPivot.val > 0 && lastPivot.val < prevPivot.val) {
       if (lastPrice > prevPrice) return 'regular_bearish';
       if (lastPrice < prevPrice) return 'hidden_bearish';

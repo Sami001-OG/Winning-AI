@@ -9,7 +9,10 @@ import {
   detectAtrExpansion, 
   calculateOrderFlow,
   detectAllRsiDivergences,
-  detectMacdDivergences
+  detectMacdDivergences,
+  detectMSS,
+  detectSFP,
+  detectFailedLiquidityGrab
 } from './structure';
 import { calculateVolumeProfile } from './volumeProfile';
 import { calculateSupertrend, calculateEMA, calculateSMA, calculateRSI, calculateATR, calculateOBV, calculateMACD, calculateADX, calculateBollingerBands } from './indicators';
@@ -184,6 +187,9 @@ export const analyzeChart = (
   const atrExpansion = detectAtrExpansion(data, atr);
   const orderFlow = calculateOrderFlow(data, config.orderFlow);
   const volProfile = calculateVolumeProfile(data);
+  const mss = detectMSS(data);
+  const sfp = detectSFP(data);
+  const failedGrab = detectFailedLiquidityGrab(data);
 
   let rsiDivergence = 'none';
   let macdDivergence = 'none';
@@ -420,31 +426,6 @@ export const analyzeChart = (
   // Layer 5: Market Structure (35%)
   // Layer 6: Volume/Volatility (30%)
 
-  // ==========================================
-  // ADAPTIVE WEIGHTS & FINAL SCORE (ACE-v2 Convex combinations)
-  // ==========================================
-  const rTrend = Math.max(0, Math.min(1.0, ((lastAdx?.adx || 20) - 20) / 15.0));
-
-  let w1 = 0.10; // Market Condition (Regime)
-  let w2 = 0.15 * (1.0 + 0.20 * rTrend); // Trend Direction
-  let w3 = 0.15 * (1.0 - 0.15 * rTrend); // Entry Timing (Momentum)
-  let w4 = 0.10; // Confirmation
-  let w5 = 0.25 * (1.0 + 0.10 * rTrend); // Structure
-  let w6 = 0.25; // Volume/Volatility
-
-  // Normalize weights to sum exactly to 1.0 (Convex combination)
-  const totalW = w1 + w2 + w3 + w4 + w5 + w6;
-  w1 /= totalW;
-  w2 /= totalW;
-  w3 /= totalW;
-  w4 /= totalW;
-  w5 /= totalW;
-  w6 /= totalW;
-  
-  const trendStrength = Math.abs(layer1Score); // 0 to 1
-
-  // Structure Score (Market Structure 35%)
-  // BOS (50%), Liquidity Grab (30%), Fakeout (20%)
   let structureScore = 0;
   if (bos === 'bullish') structureScore += 0.50;
   else if (bos === 'bearish') structureScore -= 0.50;
@@ -453,22 +434,114 @@ export const analyzeChart = (
   if (fakeout === 'bullish') structureScore += 0.20;
   else if (fakeout === 'bearish') structureScore -= 0.20;
 
-  // Volume/Volatility Score (Layer 6)
-  // Volume Spike (40%), ATR Expansion (30%), Order Flow (30%)
   let volVolScore = 0;
-  
   if (orderFlow.signal === 'bullish') volVolScore += 0.30;
   else if (orderFlow.signal === 'bearish') volVolScore -= 0.30;
-  
   if (volumeSpike > 1.5) volVolScore += (lastClose > closes[closes.length - 2] ? 0.40 : -0.40);
   if (atrExpansion > 1.5) volVolScore += (isTrendingUp ? 0.30 : isTrendingDown ? -0.30 : 0);
 
-  let finalScore = (layer1Score * w1) + (layer2Score * w2) + (layer3Score * w3) + (layer4Score * w4) + (structureScore * w5) + (volVolScore * w6);
+  // ==========================================
+  // EVIDENCE BUCKETS MODEL (Part 7: Fixes Confidence Inflation)
+  // ==========================================
+  // Bucket 1: Trend Direction (Max Cap: 25)
+  let trendBucketRaw = 0;
+  trendBucketRaw += emaScore * 12.5;
+  if (supertrendSignal === 'bullish') trendBucketRaw += 7.5;
+  else if (supertrendSignal === 'bearish') trendBucketRaw -= 7.5;
+  if (isTrendingUp) trendBucketRaw += 5;
+  else if (isTrendingDown) trendBucketRaw -= 5;
+  const trendBucket = Math.max(-25, Math.min(25, trendBucketRaw));
+
+  // Bucket 2: Market Structure (Max Cap: 25)
+  let structBucketRaw = 0;
+  if (bos === 'bullish') structBucketRaw += 15;
+  else if (bos === 'bearish') structBucketRaw -= 15;
+  if (mss === 'bullish') structBucketRaw += 10;
+  else if (mss === 'bearish') structBucketRaw -= 10;
+  const structBucket = Math.max(-25, Math.min(25, structBucketRaw));
+
+  // Bucket 3: Momentum & Entry Timing (Max Cap: 20)
+  let momBucketRaw = 0;
+  momBucketRaw += macdScore * 6;
+  momBucketRaw += rsiScore * 5;
   
-  // ACE-v2 Sigmoid Confidence Squashing
-  const k_slope = 8.0;
-  const theta_offset = 0.40;
-  let confidence = 100 / (1 + Math.exp(-k_slope * (Math.abs(finalScore) - theta_offset)));
+  const hasBullishDiv = rsiDivergence === 'regular_bullish' || rsiDivergence === 'hidden_bullish' || macdDivergence === 'regular_bullish' || macdDivergence === 'hidden_bullish';
+  const hasBearishDiv = rsiDivergence === 'regular_bearish' || rsiDivergence === 'hidden_bearish' || macdDivergence === 'regular_bearish' || macdDivergence === 'hidden_bearish';
+  if (hasBullishDiv) momBucketRaw += 6;
+  if (hasBearishDiv) momBucketRaw -= 6;
+  const momBucket = Math.max(-20, Math.min(20, momBucketRaw));
+
+  // Bucket 4: Liquidity Context (Max Cap: 15)
+  let liqBucketRaw = 0;
+  if (liquidityGrab === 'bullish') liqBucketRaw += 10;
+  else if (liquidityGrab === 'bearish') liqBucketRaw -= 10;
+  if (sfp === 'bullish') liqBucketRaw += 5;
+  else if (sfp === 'bearish') liqBucketRaw -= 5;
+  const liqBucket = Math.max(-15, Math.min(15, liqBucketRaw));
+
+  // Bucket 5: Volume & Order Flow (Max Cap: 15)
+  let volBucketRaw = 0;
+  if (orderFlow.signal === 'bullish') volBucketRaw += 5;
+  else if (orderFlow.signal === 'bearish') volBucketRaw -= 5;
+  if (volumeSpike > 1.5 && (lastClose > closes[closes.length - 2])) volBucketRaw += 5;
+  else if (volumeSpike > 1.5 && (lastClose < closes[closes.length - 2])) volBucketRaw -= 5;
+  if (lastClose > volProfile.vaHigh) volBucketRaw += 5;
+  else if (lastClose < volProfile.vaLow) volBucketRaw -= 5;
+  const volBucket = Math.max(-15, Math.min(15, volBucketRaw));
+
+  // Combine evidence buckets (ranges from -100 to 100)
+  let combinedScore = trendBucket + structBucket + momBucket + liqBucket + volBucket;
+  let finalScore = combinedScore / 100;
+
+  // ==========================================
+  // EARLY REVERSAL PENALTIES & HTF LAG REDUCTION (Part 5)
+  // ==========================================
+  let penalty = 0;
+  if (combinedScore > 0) {
+    if (hasBearishDiv) penalty += 15;
+    if (sfp === 'bearish') penalty += 15;
+    if (mss === 'bearish') penalty += 20;
+    if (failedGrab === 'bearish') penalty += 15;
+  } else if (combinedScore < 0) {
+    if (hasBullishDiv) penalty += 15;
+    if (sfp === 'bullish') penalty += 15;
+    if (mss === 'bullish') penalty += 20;
+    if (failedGrab === 'bullish') penalty += 15;
+  }
+
+  // ==========================================
+  // POST-SWEEP COOLDOWN RULES (Part 6)
+  // ==========================================
+  let isSweepCooldownActive = false;
+  for (let s = 2; s <= 4; s++) {
+    if (data.length < s) break;
+    const sCandle = data[data.length - s];
+    const lookback = Math.max(0, data.length - s - 15);
+    const prevLow = Math.min(...data.slice(lookback, data.length - s).map(c => c.low));
+    const prevHigh = Math.max(...data.slice(lookback, data.length - s).map(c => c.high));
+    
+    if (sCandle.low < prevLow && sCandle.close > prevLow) { // Bullish sweep
+      const isStabilized = lastClose >= sCandle.low && data[data.length - 2].low >= sCandle.low;
+      const isDisplaced = lastClose > sCandle.close;
+      if (!isStabilized && !isDisplaced) {
+        isSweepCooldownActive = true;
+      }
+    }
+    if (sCandle.high > prevHigh && sCandle.close < prevHigh) { // Bearish sweep
+      const isStabilized = lastClose <= sCandle.high && data[data.length - 2].high <= sCandle.high;
+      const isDisplaced = lastClose < sCandle.close;
+      if (!isStabilized && !isDisplaced) {
+        isSweepCooldownActive = true;
+      }
+    }
+  }
+
+  if (isSweepCooldownActive) {
+    penalty += 20; // 20% confidence reduction during sweep cooldown
+  }
+
+  let baseConfidence = Math.abs(combinedScore);
+  let confidence = Math.max(0, baseConfidence - penalty);
 
   // Session Logic - Based on UTC Time
   const latestCandle = data[data.length - 1];
@@ -483,7 +556,6 @@ export const analyzeChart = (
   else if (inLondonSession) currentSession = 'London';
   else if (inAsianSession) currentSession = 'Asian';
 
-  // Optional: Cap confidence at 100
   confidence = Math.min(100, confidence);
 
   // ==========================================
@@ -492,6 +564,21 @@ export const analyzeChart = (
   let signal: 'LONG' | 'SHORT' | 'NO TRADE' = 'NO TRADE';
   let tier: 'WATCH' | 'STRONG' | 'ELITE' | 'STANDBY' = 'STANDBY';
   let reason = 'Awaiting high-probability setup.';
+
+  // MSS Veto Logic (Part 4)
+  let isMssVetoed = false;
+  let vetoReason = '';
+  if (finalScore > 0 && mss === 'bearish') {
+    if (bos !== 'bullish') {
+      isMssVetoed = true;
+      vetoReason = 'Bearish MSS Veto: Long entries temporarily blocked.';
+    }
+  } else if (finalScore < 0 && mss === 'bullish') {
+    if (bos !== 'bearish') {
+      isMssVetoed = true;
+      vetoReason = 'Bullish MSS Veto: Short entries temporarily blocked.';
+    }
+  }
 
   // Perfect Confirmation Logic
   const isPerfectConfirmation = (
@@ -506,28 +593,24 @@ export const analyzeChart = (
     const direction = Math.sign(score);
     if (direction === 0) return false;
 
-    // 1. Directional Confluence: All layers must align or be neutral
     const layers = [l1, l2, l3, l4, sScore, vvScore];
     const allAgree = layers.every(l => Math.sign(l) === direction || l === 0);
     
-    // 3. High confidence threshold
     return allAgree && Math.abs(score) > 0.3;
   };
 
   const perfect = isPerfectConfirmation(finalScore, layer1Score, layer2Score, layer3Score, layer4Score, structureScore, volVolScore);
 
-  // Removed strict conflict check to allow structure to override trend
-  // const isConflict = Math.sign(layer2Score) !== Math.sign(structureScore) && Math.abs(layer2Score) > 0.5 && Math.abs(structureScore) > 0.5;
-
   if (perfect) {
-    confidence = Math.min(100, confidence + 10); // Boost confidence for perfect setup
+    confidence = Math.min(100, confidence + 10);
   }
 
-  if (confidence >= 65) {
+  // Preserving dynamic active trade count by using 55 limit
+  if (confidence >= 55 && !isMssVetoed) {
     signal = finalScore > 0 ? 'LONG' : 'SHORT';
-    if (confidence >= 88) {
+    if (confidence >= 85) {
       tier = 'ELITE';
-    } else if (confidence >= 78) {
+    } else if (confidence >= 70) {
       tier = 'STRONG';
     } else {
       tier = 'WATCH';
@@ -536,7 +619,7 @@ export const analyzeChart = (
   } else {
     signal = 'NO TRADE';
     tier = 'STANDBY';
-    reason = 'Awaiting high-probability setup.';
+    reason = isMssVetoed ? vetoReason : 'Awaiting high-probability setup.';
   }
 
   // Reject trades in extreme low volatility

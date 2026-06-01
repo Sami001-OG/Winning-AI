@@ -1,4 +1,4 @@
-# 🌟 Endellion Trading Bot & Executive Trading Manual
+# 🌟 Endellion Trading Bot (ACE-v2) & Executive Trading Manual
 
 Welcome to the **Endellion Trading Platform**—a high-performance, autonomous market scanning and trade management engine built for Binance Futures. We designed this system to do one thing with absolute surgical precision: relentlessly scan futures markets, isolate high-probability-of-displacement setups, and automatically manage risk and profit-taking throughout the trade lifecycle.
 
@@ -29,8 +29,11 @@ The platform leverages robust, institutional-grade technical indicators mathemat
 - **Order Flow (Net Volume):** Analyzed via buying/selling pressure intensity on recent candles.
 - **Volume Profile:** Calculates Point of Control (POC), Value Area High (VAH), and Value Area Low (VAL) to map deep institutional liquidity.
 
-### Market Structure
-- **Smart Money Concepts (SMC):** Detects micro and macro structural shifts, including Break of Structure (BOS), Change of Character (CHoCH), and Liquidity Grabs (Sweeps).
+### Market Structure & ACE-v2
+- **Smart Money Concepts (SMC) & Swing-Based BOS:** Detects micro and macro structural shifts using practical swing pivot detections for BOS and CHoCH.
+- **Liquidity Events:** True bullish/bearish sweeps confirmed strictly by volume displacement and structural breaks to eliminate trap trades.
+- **MSS Veto Engine:** Market Structure Shifts (MSS) instantly block conflicting signals temporarily rather than permanently breaking the system.
+- **Evidence Buckets (ACE-v2):** Dynamically scores Trend Direction, Market Structure, Momentum, Liquidity, and Volume independently with caps to prevent cross-indicator confidence inflation.
 
 ---
 
@@ -38,18 +41,20 @@ The platform leverages robust, institutional-grade technical indicators mathemat
 
 The bot isn't just mindlessly throwing alerts at you. We've evolved it from a basic signal generator into an **Elite Selection Engine**. Its main job is actually to *reject* mediocre setups so that only the highest quality trades make it to your screen. 
 
-### 1. The Tiered Filtering Funnel 🌪️
+### 1. The ACE-v2 Tiered Filtering Funnel 🌪️
 To analyze over 300 symbols efficiently without driving the Binance API crazy, the bot runs pairs through a progressive gauntlet. Trades are only fired when the macro trend, medium-term momentum, and micro execution triggers are perfectly mathematically aligned.
 
 1. **Liquidity Filter (300+ → 30):** First, we grab the top 300 USDT pairs and filter them down to the top 30 based on 24h volume. We only want to trade where the liquidity is.
 2. **Strict Macro Filter (200 EMA):** Before any technical analysis begins, the asset's price MUST be aligned with the 200 EMA macro trend. If price is below the 200 EMA, longs are vetoed (-100 score). If price is above, shorts are vetoed.
 3. **4H Bias Alignment (50 → ~12):** We check the 4-hour timeframe for the "big picture" trend. We require a strong conviction score to establish a firm LONG or SHORT bias based on EMA alignment and structure.
 4. **1H Control Layer (Veto Check):** The momentum gatekeeper. Once a 4H bias exists, the 1H chart determines if the market has healthy momentum. It looks at MACD expansion/contraction and RSI limits to classify the state as `CONTINUATION`, `EXHAUSTION`, or a full `VETO`.
-5. **15M Confirmation (12 → 6):** This is where setup validation occurs. We check the 15m chart for volume profile alignment, order flow, MACD/RSI divergence, and indicator health to build our core confidence score. The base confidence must be **≥ 50%** (Rank #1 backtested optimal threshold) for the signal to proceed. We also run a strict **FOMO Filter**: if the price is within 1.5 ATR of the recent structural high/low, we reject the setup to avoid buying tops or selling bottoms.
-6. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers. The trade *aborts completely* unless there is:
-   - An explicit Volume Spike
-   - Order Flow explicitly confirming the direction
-   - At least one of the following: EMA Alignment, Momentum Shift, Break of Structure, Liquidity Sweep, or strong Price Displacement.
+5. **15M ACE-v2 Confirmation Engine (12 → 6):** This is where setup validation occurs. 
+   - **Evidence Buckets:** The system scores metrics into capped buckets (Trend 25%, Structure 25%, Momentum 20%, Liquidity 15%, Volume 15%) to prevent confidence inflation.
+   - **Trend Lag Reduction:** Bearish divergence, Swing Failure Patterns (SFP), and failed grabs apply heavy confidence penalties to counter early reversal lags.
+   - **MSS Vetoes:** A recent opposing Market Structure Shift (MSS) strictly vetoes counter-trend trade triggers.
+   - **Post-Sweep Cooldowns:** Protects against premature entries immediately following liquidity raids without sufficient stabilization or displacement.
+   - The base confidence must be **≥ 55%** for the signal to proceed avoiding extreme trade compression. We also run a strict **FOMO Filter**: if the price is within 1.5 ATR of the recent structural high/low, we reject the setup to avoid buying tops or selling bottoms.
+6. **3M Sniper Entry (6 → 2-3):** Finally, we drop down to the 3-minute chart looking for precise entry triggers. The trade *aborts completely* unless there is an aggregated lightweight score (EMA Alignment, Structure, Momentum, Liquidity Sweep, Volume) exceeding the internal threshold for LTF execution.
 
 ### 2. High-Winrate TP/SL Mechanics 🎯
 Through intensive backtesting over 1-year of Binance Futures data, we deployed dynamic volatility-based targeting which achieved an **81%+ Win Rate** and a **4.0+ Profit Factor**.

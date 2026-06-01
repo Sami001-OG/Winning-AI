@@ -202,33 +202,48 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
   const isEmaCrossImminentUp = lastEma10 < lastEma30 && (lastEma30 - lastEma10) / lastEma30 < 0.001;
   const isEmaCrossImminentDown = lastEma10 > lastEma30 && (lastEma10 - lastEma30) / lastEma30 < 0.001;
 
+  let score = 0;
+  const breakDown: Record<string, number> = {};
+
   if (direction === 'LONG') {
     const isEmaAligned = lastCandle.close > lastEma10 && lastEma10 > lastEma30;
-    const isMomentumUp = lastAdx && lastAdx.adx > 15 && lastAdx.pdi > lastAdx.mdi;
+    if (isEmaAligned) { score += 25; breakDown['EMA'] = 25; }
 
     const isMicroBOS = bos === 'bullish';
+    if (isMicroBOS) { score += 25; breakDown['Structure'] = 25; }
+
+    const isMomentumUp = (lastAdx && lastAdx.adx > 15 && lastAdx.pdi > lastAdx.mdi) || (lastRsi > 50 && lastRsi < 70);
+    if (isMomentumUp) { score += 20; breakDown['Momentum'] = 20; }
+
     const isLiquiditySweep = liquidityGrab === 'bullish';
-    const isBullishOrderFlow = orderFlow.signal === 'bullish';
-    
-    // Anticipatory Triggers
-    const isAnticipatory = (priceAtVwap && lastRsi < 45 && isEmaCrossImminentUp) || (volumeSpike && isBullishOrderFlow);
-    
-    if (!isEmaAligned && !isMomentumUp && !isMicroBOS && !isLiquiditySweep && !isDisplacementUp && !isAnticipatory) {
-      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Up, BOS, Sweep, Displacement, Anticipatory Limit)' };
+    if (isLiquiditySweep) { score += 15; breakDown['Liquidity'] = 15; }
+
+    const isVolumeUp = isDisplacementUp || (lastVol > lastVolSma && orderFlow.signal === 'bullish') || (volumeSpike && orderFlow.signal === 'bullish');
+    if (isVolumeUp) { score += 15; breakDown['Volume'] = 15; }
+
+    const threshold = 40;
+    if (score < threshold) {
+      return { isValid: false, reason: `LTF Rejection: Score is ${score}/${threshold} (Needed >= ${threshold}). Details: [${Object.entries(breakDown).map(([k,v]) => `${k}:${v}`).join(', ')}]` };
     }
   } else {
     const isEmaAligned = lastCandle.close < lastEma10 && lastEma10 < lastEma30;
-    const isMomentumDown = lastAdx && lastAdx.adx > 15 && lastAdx.mdi > lastAdx.pdi;
+    if (isEmaAligned) { score += 25; breakDown['EMA'] = 25; }
 
     const isMicroBOS = bos === 'bearish';
+    if (isMicroBOS) { score += 25; breakDown['Structure'] = 25; }
+
+    const isMomentumDown = (lastAdx && lastAdx.adx > 15 && lastAdx.mdi > lastAdx.pdi) || (lastRsi < 50 && lastRsi > 30);
+    if (isMomentumDown) { score += 20; breakDown['Momentum'] = 20; }
+
     const isLiquiditySweep = liquidityGrab === 'bearish';
-    const isBearishOrderFlow = orderFlow.signal === 'bearish';
-    
-    // Anticipatory Triggers
-    const isAnticipatory = (priceAtVwap && lastRsi > 55 && isEmaCrossImminentDown) || (volumeSpike && isBearishOrderFlow);
-    
-    if (!isEmaAligned && !isMomentumDown && !isMicroBOS && !isLiquiditySweep && !isDisplacementDown && !isAnticipatory) {
-      return { isValid: false, reason: 'LTF Rejection: Must have ONE of (EMA Align, Momentum Down, BOS, Sweep, Displacement, Anticipatory Limit)' };
+    if (isLiquiditySweep) { score += 15; breakDown['Liquidity'] = 15; }
+
+    const isVolumeUp = isDisplacementDown || (lastVol > lastVolSma && orderFlow.signal === 'bearish') || (volumeSpike && orderFlow.signal === 'bearish');
+    if (isVolumeUp) { score += 15; breakDown['Volume'] = 15; }
+
+    const threshold = 40;
+    if (score < threshold) {
+      return { isValid: false, reason: `LTF Rejection: Score is ${score}/${threshold} (Needed >= ${threshold}). Details: [${Object.entries(breakDown).map(([k,v]) => `${k}:${v}`).join(', ')}]` };
     }
   }
 
