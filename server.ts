@@ -1199,7 +1199,7 @@ ${directionIcon} Direction: ${trade.type}
                   const streakSign = sizeModel.consecutiveStreak > 0 ? "+" : "";
                   const entryAlertMsg = `🪙 Pair: #${symbol}
 ${directionIcon} Direction: ${activeTrade.direction}
-  Confidence: 100% (Pulled back to fill)
+💼 Status: Entry Filled (Pullback Hit)
 🎯 Entry Price: ${formatPrice(activeTrade.entry)}
 🎯 TP1 (50% Booking): ${formatPrice(activeTrade.tp1)}
 🎯 TP2 (30% Booking): ${formatPrice(activeTrade.tp2)}
