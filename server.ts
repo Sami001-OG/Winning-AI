@@ -103,6 +103,226 @@ function calculatePnL(
       : ((entry - exit) / entry) * 100 * 10;
   return pnl >= 0 ? `+${pnl.toFixed(2)}%` : `${pnl.toFixed(2)}%`;
 }
+// --- DAILY PNL TRACKER ---
+interface DailyPnLState {
+  dateStr: string;
+  totalNetReturn: number;
+  wins: number;
+  losses: number;
+  grossProfit: number;
+  grossLoss: number;
+  signalsGenerated: number;
+  totalTradesCompleted: number;
+  bestTrade: number;
+  worstTrade: number;
+  highestConfWin: number;
+  highestConfLoss: number;
+  longWins: number;
+  longLosses: number;
+  shortWins: number;
+  shortLosses: number;
+  sessionWins: Record<string, number>;
+  sessionLosses: Record<string, number>;
+  reported: boolean;
+}
+
+const DAILY_PNL_FILE_PATH = path.join(process.cwd(), "daily_pnl_state.json");
+let dailyPnLState: DailyPnLState = {
+  dateStr: "",
+  totalNetReturn: 0,
+  wins: 0,
+  losses: 0,
+  grossProfit: 0,
+  grossLoss: 0,
+  signalsGenerated: 0,
+  totalTradesCompleted: 0,
+  bestTrade: -9999,
+  worstTrade: 9999,
+  highestConfWin: 0,
+  highestConfLoss: 0,
+  longWins: 0,
+  longLosses: 0,
+  shortWins: 0,
+  shortLosses: 0,
+  sessionWins: { London: 0, "New York": 0, Asian: 0, OUTSIDE: 0 },
+  sessionLosses: { London: 0, "New York": 0, Asian: 0, OUTSIDE: 0 },
+  reported: false
+};
+
+function getBstDateString(offsetMs = 0) {
+  return new Date(Date.now() + 6 * 60 * 60 * 1000 + offsetMs).toISOString().split('T')[0];
+}
+
+function loadDailyPnLState() {
+  try {
+    if (fs.existsSync(DAILY_PNL_FILE_PATH)) {
+      dailyPnLState = JSON.parse(fs.readFileSync(DAILY_PNL_FILE_PATH, "utf8"));
+    }
+    const currentBstDay = getBstDateString();
+    if (!dailyPnLState.dateStr) {
+      dailyPnLState.dateStr = currentBstDay;
+      saveDailyPnLState();
+    }
+  } catch (e) {
+    console.error("[Daily PnL] Error:", e);
+  }
+}
+
+function saveDailyPnLState() {
+  try {
+    fs.writeFileSync(DAILY_PNL_FILE_PATH, JSON.stringify(dailyPnLState), "utf8");
+  } catch (e) {}
+}
+
+loadDailyPnLState();
+
+function calculatePnLNumber(
+  entry: number, exit: number, direction: "LONG" | "SHORT"
+): number {
+  return direction === "LONG"
+      ? ((exit - entry) / entry) * 100 * 10
+      : ((entry - exit) / entry) * 100 * 10;
+}
+
+function recordPnLSegment(pnlPct: number, portion: number, isWinOrLossSegment: "WIN" | "LOSS" | null, activeTrade: any = null) {
+    loadDailyPnLState();
+    const realizedPnl = pnlPct * portion;
+    
+    dailyPnLState.totalNetReturn += realizedPnl;
+    
+    if (realizedPnl >= 0) {
+       dailyPnLState.grossProfit += realizedPnl;
+    } else {
+       dailyPnLState.grossLoss += Math.abs(realizedPnl);
+    }
+    
+    if (isWinOrLossSegment) {
+       dailyPnLState.totalTradesCompleted++;
+       
+       if (activeTrade) {
+          const tradeNetPnl = (activeTrade as any)._accumulatedPnl ? ((activeTrade as any)._accumulatedPnl + realizedPnl) : realizedPnl;
+          
+          if (tradeNetPnl > dailyPnLState.bestTrade || dailyPnLState.bestTrade === -9999) dailyPnLState.bestTrade = tradeNetPnl;
+          if (tradeNetPnl < dailyPnLState.worstTrade || dailyPnLState.worstTrade === 9999) dailyPnLState.worstTrade = tradeNetPnl;
+          
+          if (isWinOrLossSegment === "WIN") {
+              if (activeTrade.confidence && activeTrade.confidence > dailyPnLState.highestConfWin) dailyPnLState.highestConfWin = activeTrade.confidence;
+              if (activeTrade.direction === "LONG") dailyPnLState.longWins++;
+              if (activeTrade.direction === "SHORT") dailyPnLState.shortWins++;
+              if (activeTrade.session) {
+                 if (!dailyPnLState.sessionWins[activeTrade.session]) dailyPnLState.sessionWins[activeTrade.session] = 0;
+                 dailyPnLState.sessionWins[activeTrade.session]++;
+              }
+          }
+          if (isWinOrLossSegment === "LOSS") {
+              if (activeTrade.confidence && activeTrade.confidence > dailyPnLState.highestConfLoss) dailyPnLState.highestConfLoss = activeTrade.confidence;
+              if (activeTrade.direction === "LONG") dailyPnLState.longLosses++;
+              if (activeTrade.direction === "SHORT") dailyPnLState.shortLosses++;
+              if (activeTrade.session) {
+                 if (!dailyPnLState.sessionLosses[activeTrade.session]) dailyPnLState.sessionLosses[activeTrade.session] = 0;
+                 dailyPnLState.sessionLosses[activeTrade.session]++;
+              }
+          }
+       }
+       
+       if (isWinOrLossSegment === "WIN") dailyPnLState.wins++;
+       if (isWinOrLossSegment === "LOSS") dailyPnLState.losses++;
+    } else if (activeTrade) {
+       // Just accumulating part of a trade
+       (activeTrade as any)._accumulatedPnl = ((activeTrade as any)._accumulatedPnl || 0) + realizedPnl;
+    }
+    
+    saveDailyPnLState();
+}
+
+function processDailyRolloverAndReport(botToken: string, chatId: string) {
+  try {
+     loadDailyPnLState();
+     const currentBstDay = getBstDateString();
+     
+     if (dailyPnLState.dateStr && dailyPnLState.dateStr !== currentBstDay) {
+        if (!dailyPnLState.reported) {
+           const sign = dailyPnLState.totalNetReturn >= 0 ? "+" : "";
+           
+           const grossLoss = dailyPnLState.grossLoss === 0 ? 1 : dailyPnLState.grossLoss;
+           const profitFactor = dailyPnLState.grossProfit / grossLoss;
+           
+           const winRate = dailyPnLState.totalTradesCompleted > 0 ? (dailyPnLState.wins / dailyPnLState.totalTradesCompleted * 100) : 0;
+           
+           const bestTradeStr = dailyPnLState.bestTrade !== -9999 ? (dailyPnLState.bestTrade >= 0 ? `+${dailyPnLState.bestTrade.toFixed(1)}%` : `${dailyPnLState.bestTrade.toFixed(1)}%`) : "N/A";
+           const worstTradeStr = dailyPnLState.worstTrade !== 9999 ? (dailyPnLState.worstTrade >= 0 ? `+${dailyPnLState.worstTrade.toFixed(1)}%` : `${dailyPnLState.worstTrade.toFixed(1)}%`) : "N/A";
+           
+           let sessionStr = "";
+           const allSessions = new Set([...Object.keys(dailyPnLState.sessionWins), ...Object.keys(dailyPnLState.sessionLosses)]);
+           allSessions.forEach(sess => {
+              if (sess !== "OUTSIDE") {
+                 const w = dailyPnLState.sessionWins[sess] || 0;
+                 const l = dailyPnLState.sessionLosses[sess] || 0;
+                 if (w > 0 || l > 0) {
+                     sessionStr += `${sess}: ${w}W / ${l}L\n`;
+                 }
+              }
+           });
+           if (!sessionStr) sessionStr = "N/A\n";
+           
+           const msg = `📊 Daily Performance Report (${dailyPnLState.dateStr})
+
+💰 Net Return: ${sign}${dailyPnLState.totalNetReturn.toFixed(2)}%
+📈 Profit Factor: ${profitFactor.toFixed(2)}
+
+✅ Wins: ${dailyPnLState.wins}
+❌ Losses: ${dailyPnLState.losses}
+🎯 Win Rate: ${winRate.toFixed(2)}%
+
+📊 Signals Generated: ${dailyPnLState.signalsGenerated}
+🚀 Trades Taken: ${dailyPnLState.totalTradesCompleted}
+
+🏆 Best Trade: ${bestTradeStr}
+💀 Worst Trade: ${worstTradeStr}
+
+🔥 Highest Confidence Win: ${dailyPnLState.highestConfWin.toFixed(0)}%
+⚠️ Highest Confidence Loss: ${dailyPnLState.highestConfLoss.toFixed(0)}%
+
+🟢 Longs: ${dailyPnLState.longWins}W / ${dailyPnLState.longLosses}L
+🔴 Shorts: ${dailyPnLState.shortWins}W / ${dailyPnLState.shortLosses}L
+
+⏱ Session:
+${sessionStr}
+Time: 00:00 BST`;
+           
+           if (botToken && chatId) {
+              sendTelegramSignal(botToken, chatId, msg).catch(console.error);
+           }
+        }
+        
+        dailyPnLState = {
+           dateStr: currentBstDay,
+           totalNetReturn: 0,
+           wins: 0,
+           losses: 0,
+           grossProfit: 0,
+           grossLoss: 0,
+           signalsGenerated: 0,
+           totalTradesCompleted: 0,
+           bestTrade: -9999,
+           worstTrade: 9999,
+           highestConfWin: 0,
+           highestConfLoss: 0,
+           longWins: 0,
+           longLosses: 0,
+           shortWins: 0,
+           shortLosses: 0,
+           sessionWins: { London: 0, "New York": 0, Asian: 0, OUTSIDE: 0 },
+           sessionLosses: { London: 0, "New York": 0, Asian: 0, OUTSIDE: 0 },
+           reported: false
+        };
+        saveDailyPnLState();
+     }
+  } catch (e) {
+     console.error("[Daily PnL] Rollover error:", e);
+  }
+}
+
 import { Candle, Trade } from "./src/types";
 
 const DEFAULT_RELIABILITY = {
@@ -864,7 +1084,7 @@ async function startServer() {
         const tp3 = parseFloat(trade.tp3) || tpPrice;
 
         const alreadyActive = !!activeTrades[trade.symbol];
-        const recentlySignaled = Date.now() - (lastSignalTimestamp[trade.symbol] || 0) < 15 * 60 * 1000;
+        const recentlySignaled = Date.now() - (signalCooldowns[trade.symbol]?.timestamp || 0) < 15 * 60 * 1000;
 
         if (!alreadyActive) {
           activeTrades[trade.symbol] = {
@@ -884,7 +1104,11 @@ async function startServer() {
              hasHitTp3: false,
              registeredAt: Date.now()
           };
-          lastSignalTimestamp[trade.symbol] = Date.now();
+          signalCooldowns[trade.symbol] = {
+             timestamp: Date.now(),
+             direction: trade.type || trade.direction,
+             confidence: 0
+          };
           console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
         } else {
           console.log(`[Backend] Trade for ${trade.symbol} is already active/monitored. Skipping duplicate registration state override.`);
@@ -1014,9 +1238,16 @@ ${directionIcon} Direction: ${trade.type}
     hasHitTp3: boolean;
     registeredAt: number;
     slUpdatedTime?: number;
+    confidence?: number;
+    session?: string;
+  }
+  interface SignalCooldown {
+    timestamp: number;
+    direction: "LONG" | "SHORT";
+    confidence: number;
   }
   const activeTrades: Record<string, ActiveTrade> = {};
-  const lastSignalTimestamp: Record<string, number> = {};
+  const signalCooldowns: Record<string, SignalCooldown> = {};
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
@@ -1040,6 +1271,10 @@ ${directionIcon} Direction: ${trade.type}
     }
 
     try {
+      if (telegramEnabled) {
+         processDailyRolloverAndReport(botToken, chatId);
+      }
+      
       // --- Session Notifications ---
       const now = new Date();
       const utcHour = now.getUTCHours();
@@ -1302,6 +1537,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                     const softPnlNum = activeTrade.direction === "LONG" ? (currentClose - activeTrade.entry) : (activeTrade.entry - currentClose);
                     recordTradeResult(softPnlNum >= 0 ? "WIN" : "LOSS");
                     
+                    const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+                    recordPnLSegment(calculatePnLNumber(activeTrade.entry, currentClose, activeTrade.direction), remPortion, softPnlNum >= 0 ? "WIN" : "LOSS", activeTrade);
+                    
                     delete activeTrades[symbol];
                     tradeClosed = true;
                     break;
@@ -1330,6 +1568,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       recordTradeResult(isBE ? "WIN" : "LOSS");
                       
+                      const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "LONG"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     } else if (!activeTrade.hasHitTp1 && currentHigh >= activeTrade.tp1) {
@@ -1339,6 +1580,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       activeTrade.slUpdatedTime = Date.now();
 
                       const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG");
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp1, "LONG"), 0.50, null, activeTrade);
                       sendTelegramSignal(
                         botToken,
                         chatId,
@@ -1349,6 +1591,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       activeTrade.achieved = 3;
 
                       const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp2, "LONG");
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp2, "LONG"), 0.30, null, activeTrade);
                       sendTelegramSignal(
                         botToken,
                         chatId,
@@ -1366,6 +1609,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       ).catch(console.error);
                       
                       recordTradeResult("WIN");
+                      
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "LONG"), 0.20, "WIN", activeTrade);
                       
                       delete activeTrades[symbol];
                       tradeClosed = true;
@@ -1388,6 +1633,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       recordTradeResult(isBE ? "WIN" : "LOSS");
                       
+                      const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "SHORT"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     } else if (!activeTrade.hasHitTp1 && currentLow <= activeTrade.tp1) {
@@ -1397,6 +1645,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       activeTrade.slUpdatedTime = Date.now();
 
                       const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT");
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp1, "SHORT"), 0.50, null, activeTrade);
                       sendTelegramSignal(
                         botToken,
                         chatId,
@@ -1407,6 +1656,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       activeTrade.achieved = 3;
 
                       const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp2, "SHORT");
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp2, "SHORT"), 0.30, null, activeTrade);
                       sendTelegramSignal(
                         botToken,
                         chatId,
@@ -1425,6 +1675,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       recordTradeResult("WIN");
                       
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "SHORT"), 0.20, "WIN", activeTrade);
+                      
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     }
@@ -1432,15 +1684,13 @@ ${directionIcon} Direction: ${activeTrade.direction}
                 }
               }
           }
-          if (activeTrade || tradeClosed) return; // Skip generating new signals if a trade is already active or just closed
+          if (tradeClosed) {
+            delete signalCooldowns[symbol];
+            return; // Skip generating new signals if a trade just closed on this tick
+          }
           // --- END ACTIVE TRADE MONITORING ---
 
-          // Cooldown check: Signal of a symbol won't go twice in two hours
-          const lastSigTime = lastSignalTimestamp[symbol] || 0;
-          if (Date.now() - lastSigTime < 2 * 60 * 60 * 1000) {
-            return; // Skip generation if already generated < 2h ago
-          }
-
+          // We continue to MTF analysis to evaluate strategy upgrades and opposite-direction signals
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
             const htfDirection = getHTFDirection(klines4h);
@@ -1593,16 +1843,45 @@ ${directionIcon} Direction: ${activeTrade.direction}
                 entryDirection: 'none'
               });
 
-              allSignals.push({
-                symbol,
-                signalKey,
-                analysis: mtfAnalysis,
-                entryPrice,
-                tp,
-                sl,
-                control1H,
-                sessionName,
-              });
+              const direction = mtfAnalysis.signal as "LONG" | "SHORT";
+              const lastSignal = signalCooldowns[symbol];
+              let shouldSend = true;
+              let isUpgrade = false;
+              let oldConfidence = 0;
+
+              if (lastSignal && (Date.now() - lastSignal.timestamp < 60 * 60 * 1000)) {
+                  if (lastSignal.direction === direction) {
+                      if (mtfAnalysis.confidence - lastSignal.confidence >= 5) {
+                          isUpgrade = true; // Signal Upgrade
+                          oldConfidence = lastSignal.confidence;
+                      } else {
+                          shouldSend = false; // Block duplicate
+                      }
+                  } else {
+                      // Opposite direction! Cooldown does not apply.
+                      shouldSend = true;
+                  }
+              }
+
+              if (shouldSend) {
+                  signalCooldowns[symbol] = {
+                      timestamp: Date.now(),
+                      direction,
+                      confidence: mtfAnalysis.confidence
+                  };
+                  allSignals.push({
+                    symbol,
+                    signalKey,
+                    analysis: mtfAnalysis,
+                    entryPrice,
+                    tp,
+                    sl,
+                    control1H,
+                    sessionName,
+                    isUpgrade,
+                    oldConfidence
+                  });
+              }
             } else {
               diagnosticCounts.lowConfidence++;
             }
@@ -1632,24 +1911,32 @@ ${directionIcon} Direction: ${activeTrade.direction}
           // Determine if limit is distinctly set
           const isLimitTrue = isLimit && sig.analysis.limitEntry !== sig.entryPrice;
 
-          activeTrades[sig.symbol] = {
-            symbol: sig.symbol,
-            direction: sig.analysis.signal as "LONG" | "SHORT",
-            entry: entryPrice,
-            tp: sig.tp,
-            tp1,
-            tp2,
-            tp3,
-            sl: sig.sl,
-            currentSl: sig.sl,
-            achieved: isLimitTrue ? 0 : 1, // 0: Pending Fill, 1: Filled
-            isLimitEntry: isLimitTrue,
-            hasHitTp1: false,
-            hasHitTp2: false,
-            hasHitTp3: false,
-            registeredAt: Date.now(),
-          };
-          lastSignalTimestamp[sig.symbol] = Date.now();
+          const sessionInd = sig.analysis.indicators.find((i: any) => i.name === 'Session Killzone');
+          const sessionName = sessionInd ? sessionInd.value : "OUTSIDE";
+
+          if (!sig.isUpgrade || !activeTrades[sig.symbol]) {
+              activeTrades[sig.symbol] = {
+                symbol: sig.symbol,
+                direction: sig.analysis.signal as "LONG" | "SHORT",
+                entry: entryPrice,
+                tp: sig.tp,
+                tp1,
+                tp2,
+                tp3,
+                sl: sig.sl,
+                currentSl: sig.sl,
+                achieved: isLimitTrue ? 0 : 1, // 0: Pending Fill, 1: Filled
+                isLimitEntry: isLimitTrue,
+                hasHitTp1: false,
+                hasHitTp2: false,
+                hasHitTp3: false,
+                registeredAt: Date.now(),
+                confidence: sig.analysis.confidence || 0,
+                session: sessionName,
+              };
+          } else {
+              activeTrades[sig.symbol].confidence = sig.analysis.confidence;
+          }
 
           const directionEmoji =
             sig.analysis.signal === "LONG" ? "🟢 LONG" : "🔴 SHORT";
@@ -1677,7 +1964,10 @@ ${directionIcon} Direction: ${activeTrade.direction}
           let message = "";
           const directionIcon = sig.analysis.signal === "LONG" ? "📈" : "📉";
           const confValue = (sig.analysis.confidence || 0).toFixed(1);
-          if (isLimitTrue) {
+          if (sig.isUpgrade) {
+              const oldConfValue = (sig.oldConfidence || 0).toFixed(1);
+              message = `🔄 <b>Signal Upgrade</b>\n\n🪙 Pair: #${sig.symbol}\n${directionIcon} Direction: ${sig.analysis.signal}\n\n📈 Confidence: ${oldConfValue}% → ${confValue}%\n\n📝 Reason:\n${logicStr}\n${strategyStr}${riskSizingStr}`;
+          } else if (isLimitTrue) {
             message = `🪙 Pair: #${sig.symbol}
 ${directionIcon} Direction: ${sig.analysis.signal}
   Confidence: ${confValue}%
@@ -1708,6 +1998,10 @@ ${directionIcon} Direction: ${sig.analysis.signal}
             sig.analysis.signal === "LONG" ? bullishImageUrl : bearishImageUrl;
 
           sendTelegramSignal(botToken, chatId, message, imageUrl).catch(console.error);
+          
+          loadDailyPnLState();
+          dailyPnLState.signalsGenerated++;
+          saveDailyPnLState();
         }
       }
 
@@ -1725,8 +2019,8 @@ ${directionIcon} Direction: ${sig.analysis.signal}
       
       const cooldowns: Record<string, number> = {};
       const nowMs = Date.now();
-      for (const [sym, ts] of Object.entries(lastSignalTimestamp)) {
-        const remaining = 2 * 60 * 60 * 1000 - (nowMs - ts);
+      for (const [sym, state] of Object.entries(signalCooldowns)) {
+        const remaining = 60 * 60 * 1000 - (nowMs - state.timestamp);
         if (remaining > 0) {
           cooldowns[sym] = Math.ceil(remaining / 1000); // remaining seconds
         }
