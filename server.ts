@@ -10,6 +10,7 @@ import {
   validateLTFEntry,
   get1HControlState,
 } from "./src/multiTimeframe.ts";
+import { detectMSS } from "./src/structure.ts";
 import { formatPrice } from "./src/utils/format.ts";
 import { EMA, MACD, RSI } from "technicalindicators";
 
@@ -1455,103 +1456,28 @@ ${directionIcon} Direction: ${activeTrade.direction}
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
                 const recentCandles = klines3m.filter((c) => (c.time + 180) * 1000 >= registeredAtVal);
 
+                // 1. Process SL and TP against historical 3m price action
                 for (const candle of recentCandles) {
                   if (tradeClosed) break;
 
                   const currentHigh = candle.high;
                   const currentLow = candle.low;
-                  const currentClose = candle.close;
-
-                  // Soft Exit Logic (Momentum Reversal)
-                  let softExit = false;
-                  let softExitReason = "";
-                  try {
-                    const klines15mForExit = await fetchKlines(symbol, "15m");
-                    if (klines15mForExit.length >= 30) {
-                      const closes15m = klines15mForExit.map((k) => k.close);
-                      const macd15m = MACD.calculate({
-                        values: closes15m,
-                        fastPeriod: 12,
-                        slowPeriod: 26,
-                        signalPeriod: 9,
-                        SimpleMAOscillator: false,
-                        SimpleMASignal: false,
-                      });
-                      const rsi15m = RSI.calculate({
-                        values: closes15m,
-                        period: 14,
-                      });
-
-                      if (macd15m.length >= 2 && rsi15m.length >= 1) {
-                        const lastMacd = macd15m[macd15m.length - 1];
-                        const prevMacd = macd15m[macd15m.length - 2];
-                        const lastRsi = rsi15m[rsi15m.length - 1];
-
-                        const avgVol =
-                          klines15mForExit
-                            .slice(-10)
-                            .reduce((sum, c) => sum + c.volume, 0) / 10;
-                        const lastVol =
-                          klines15mForExit[klines15mForExit.length - 1].volume;
-                        const lossOfVolume = lastVol < avgVol * 0.8;
-
-                        if (activeTrade.direction === "LONG") {
-                          const macdFading =
-                            (lastMacd.histogram || 0) <
-                              (prevMacd.histogram || 0) &&
-                            (lastMacd.histogram || 0) < 0;
-                          const rsiLeavingTrend = lastRsi < 45;
-                          if (macdFading && rsiLeavingTrend && lossOfVolume) {
-                            softExit = true;
-                            softExitReason =
-                              "Momentum Reversed (MACD Fading, RSI under 45, Volume Dropping)";
-                          }
-                        } else if (activeTrade.direction === "SHORT") {
-                          const macdFading =
-                            (lastMacd.histogram || 0) >
-                              (prevMacd.histogram || 0) &&
-                            (lastMacd.histogram || 0) > 0;
-                          const rsiLeavingTrend = lastRsi > 55;
-                          if (macdFading && rsiLeavingTrend && lossOfVolume) {
-                            softExit = true;
-                            softExitReason =
-                              "Momentum Reversed (MACD Fading, RSI over 55, Volume Dropping)";
-                          }
-                        }
-                      }
-                    }
-                  } catch (e) {
-                    console.error(`Failed to check soft exit for ${symbol}:`, e);
-                  }
-
-                  if (softExit) {
-                    console.log(
-                      `[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`,
-                    );
-                    sendTelegramSignal(
-                      botToken,
-                      chatId,
-                      `🚨 <b>TRADE UPDATE: SOFT EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentClose)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentClose, activeTrade.direction)}`,
-                    ).catch(console.error);
-                    
-                    const softPnlNum = activeTrade.direction === "LONG" ? (currentClose - activeTrade.entry) : (activeTrade.entry - currentClose);
-                    recordTradeResult(softPnlNum >= 0 ? "WIN" : "LOSS");
-                    
-                    const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
-                    recordPnLSegment(calculatePnLNumber(activeTrade.entry, currentClose, activeTrade.direction), remPortion, softPnlNum >= 0 ? "WIN" : "LOSS", activeTrade);
-                    
-                    delete activeTrades[symbol];
-                    tradeClosed = true;
-                    break;
-                  }
 
                   // Lookback protection: Avoid Same-Bar / Historical Wick violation
                   const slCheckVal = (activeTrade.slUpdatedTime && (candle.time * 1000 < activeTrade.slUpdatedTime))
                     ? activeTrade.sl // Retain original protective stop loss for retro-historical wicks
                     : activeTrade.currentSl; // Apply the tightened trailing/break-even stop loss
 
-                  if (activeTrade.direction === "LONG") {
-                    if (currentLow <= slCheckVal) {
+                  // 1. STOP LOSS CHECK (Priority 1)
+                  let slHit = false;
+                  if (activeTrade.direction === "LONG" && currentLow <= slCheckVal) {
+                    slHit = true;
+                  } else if (activeTrade.direction === "SHORT" && currentHigh >= slCheckVal) {
+                    slHit = true;
+                  }
+
+                  if (slHit) {
+                    if (activeTrade.direction === "LONG") {
                       console.log(
                         `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${slCheckVal}`,
                       );
@@ -1570,10 +1496,34 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "LONG"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
+                    } else {
+                      console.log(
+                        `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${slCheckVal}`,
+                      );
+                      const isBE = slCheckVal === activeTrade.entry;
+                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, slCheckVal, "SHORT");
+                      const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
+                      const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
+
+                      sendTelegramSignal(
+                        botToken,
+                        chatId,
+                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                      ).catch(console.error);
                       
-                      delete activeTrades[symbol];
-                      tradeClosed = true;
-                    } else if (!activeTrade.hasHitTp1 && currentHigh >= activeTrade.tp1) {
+                      recordTradeResult(isBE ? "WIN" : "LOSS");
+                      
+                      const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "SHORT"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
+                    }
+                    delete activeTrades[symbol];
+                    tradeClosed = true;
+                    break;
+                  }
+
+                  // 4. TAKE PROFIT LOGIC (Priority 4, but evaluated tick-by-tick)
+                  if (!tradeClosed && activeTrade.direction === "LONG") {
+                    if (!activeTrade.hasHitTp1 && currentHigh >= activeTrade.tp1) {
                       activeTrade.hasHitTp1 = true;
                       activeTrade.achieved = 2;
                       activeTrade.currentSl = activeTrade.entry; // Move SL to Break-Even!
@@ -1615,30 +1565,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     }
-                  } else if (activeTrade.direction === "SHORT") {
-                    if (currentHigh >= slCheckVal) {
-                      console.log(
-                        `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${slCheckVal}`,
-                      );
-                      const isBE = slCheckVal === activeTrade.entry;
-                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, slCheckVal, "SHORT");
-                      const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
-                      const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
-
-                      sendTelegramSignal(
-                        botToken,
-                        chatId,
-                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
-                      ).catch(console.error);
-                      
-                      recordTradeResult(isBE ? "WIN" : "LOSS");
-                      
-                      const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
-                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "SHORT"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
-                      
-                      delete activeTrades[symbol];
-                      tradeClosed = true;
-                    } else if (!activeTrade.hasHitTp1 && currentLow <= activeTrade.tp1) {
+                  } else if (!tradeClosed && activeTrade.direction === "SHORT") {
+                    if (!activeTrade.hasHitTp1 && currentLow <= activeTrade.tp1) {
                       activeTrade.hasHitTp1 = true;
                       activeTrade.achieved = 2;
                       activeTrade.currentSl = activeTrade.entry; // Move SL to Break-Even!
@@ -1679,6 +1607,143 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       delete activeTrades[symbol];
                       tradeClosed = true;
+                    }
+                  }
+                } // End of recentCandles loop
+
+                // 2. Advanced Exits (MSS, Soft Exit) on CURRENT market state ONLY
+                if (activeTrade.achieved >= 1 && !tradeClosed) {
+                  let klines15mForExit: any[] = [];
+                  try {
+                    // Fetch 15m data ONCE per symbol, outside of loop
+                    klines15mForExit = await fetchKlines(symbol, "15m");
+                  } catch (e) {
+                    console.error(`Failed to fetch 15m klines for ${symbol} exits:`, e);
+                  }
+
+                  if (klines15mForExit.length >= 30) {
+                    // Use latest LIVE price for exit pricing
+                    const currentPrice = klines15mForExit[klines15mForExit.length - 1].close;
+
+                    // 2. MSS EXIT LOGIC (Priority 2 - High-Confidence Reversal)
+                    // CRITICAL FIX: Only use CLOSED candles for structural shift confirmation
+                    const closedKlines15m = klines15mForExit.slice(0, -1);
+                    
+                    let mssExit = false;
+                    let mssReason = "";
+                    
+                    if (!tradeClosed && closedKlines15m.length >= 30) {
+                      try {
+                        const mssSignal = detectMSS(closedKlines15m);
+                        if (activeTrade.direction === "LONG" && mssSignal === "bearish") {
+                          mssExit = true;
+                          mssReason = "Bearish MSS Confirmed - Market Structure Reversal";
+                        } else if (activeTrade.direction === "SHORT" && mssSignal === "bullish") {
+                          mssExit = true;
+                          mssReason = "Bullish MSS Confirmed - Market Structure Reversal";
+                        }
+                      } catch (e) {
+                        console.error(`Failed to evaluate MSS for ${symbol}:`, e);
+                      }
+                    }
+
+                    if (!tradeClosed && mssExit) {
+                      console.log(`[DEBUG] MSS Exit for ${symbol}: ${mssReason}`);
+                      const mssPnlNum = activeTrade.direction === "LONG" ? (currentPrice - activeTrade.entry) : (activeTrade.entry - currentPrice);
+                      const outcome = mssPnlNum >= 0 ? "WIN" : "LOSS";
+
+                      const msg = `🚨 <b>TRADE UPDATE: MSS EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n\n⚠️ <b>Status:</b> Market Structure Reversal Detected\n\n🧠 <b>Reason:</b>\n${activeTrade.direction === "LONG" ? "Bearish MSS Confirmed" : "Bullish MSS Confirmed"}\n\n💰 <b>Exit Price:</b> <code>${formatPrice(currentPrice)}</code>\n\n💵 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentPrice, activeTrade.direction)}`;
+
+                      sendTelegramSignal(botToken, chatId, msg).catch(console.error);
+
+                      recordTradeResult(outcome);
+                      const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, currentPrice, activeTrade.direction), remPortion, outcome, activeTrade);
+
+                      delete activeTrades[symbol];
+                      tradeClosed = true;
+                    }
+
+                    // 3. SOFT EXIT LOGIC (Priority 3 - Momentum Reversal)
+                    if (!tradeClosed) {
+                      let softExit = false;
+                      let softExitReason = "";
+                      try {
+                        // Use fully resolved close mapping for indicators
+                        const closes15m = klines15mForExit.map((k) => k.close);
+                        const macd15m = MACD.calculate({
+                          values: closes15m,
+                          fastPeriod: 12,
+                          slowPeriod: 26,
+                          signalPeriod: 9,
+                          SimpleMAOscillator: false,
+                          SimpleMASignal: false,
+                        });
+                        const rsi15m = RSI.calculate({
+                          values: closes15m,
+                          period: 14,
+                        });
+
+                        if (macd15m.length >= 2 && rsi15m.length >= 1) {
+                          const lastMacd = macd15m[macd15m.length - 1];
+                          const prevMacd = macd15m[macd15m.length - 2];
+                          const lastRsi = rsi15m[rsi15m.length - 1];
+
+                          const avgVol =
+                            klines15mForExit
+                              .slice(-10)
+                              .reduce((sum, c) => sum + c.volume, 0) / 10;
+                          const lastVol =
+                            klines15mForExit[klines15mForExit.length - 1].volume;
+                          const lossOfVolume = lastVol < avgVol * 0.8;
+
+                          if (activeTrade.direction === "LONG") {
+                            const macdFading =
+                              (lastMacd.histogram || 0) <
+                                (prevMacd.histogram || 0) &&
+                              (lastMacd.histogram || 0) < 0;
+                            const rsiLeavingTrend = lastRsi < 45;
+                            if (macdFading && rsiLeavingTrend && lossOfVolume) {
+                              softExit = true;
+                              softExitReason =
+                                "Momentum Reversed (MACD Fading, RSI under 45, Volume Dropping)";
+                            }
+                          } else if (activeTrade.direction === "SHORT") {
+                            const macdFading =
+                              (lastMacd.histogram || 0) >
+                                (prevMacd.histogram || 0) &&
+                              (lastMacd.histogram || 0) > 0;
+                            const rsiLeavingTrend = lastRsi > 55;
+                            if (macdFading && rsiLeavingTrend && lossOfVolume) {
+                              softExit = true;
+                              softExitReason =
+                                "Momentum Reversed (MACD Fading, RSI over 55, Volume Dropping)";
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        console.error(`Failed to calculate Soft Exit for ${symbol}:`, e);
+                      }
+
+                      if (softExit) {
+                        console.log(
+                          `[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`,
+                        );
+                        sendTelegramSignal(
+                          botToken,
+                          chatId,
+                          `🚨 <b>TRADE UPDATE: SOFT EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentPrice)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentPrice, activeTrade.direction)}`,
+                        ).catch(console.error);
+                        
+                        const softPnlNum = activeTrade.direction === "LONG" ? (currentPrice - activeTrade.entry) : (activeTrade.entry - currentPrice);
+                        recordTradeResult(softPnlNum >= 0 ? "WIN" : "LOSS");
+                        
+                        const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+                        recordPnLSegment(calculatePnLNumber(activeTrade.entry, currentPrice, activeTrade.direction), remPortion, softPnlNum >= 0 ? "WIN" : "LOSS", activeTrade);
+                        
+                        delete activeTrades[symbol];
+                        tradeClosed = true;
+                      }
                     }
                   }
                 }
