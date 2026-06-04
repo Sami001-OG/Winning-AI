@@ -206,7 +206,10 @@ function recordPnLSegment(pnlPct: number, portion: number, isWinOrLossSegment: "
           if (tradeNetPnl > dailyPnLState.bestTrade || dailyPnLState.bestTrade === -9999) dailyPnLState.bestTrade = tradeNetPnl;
           if (tradeNetPnl < dailyPnLState.worstTrade || dailyPnLState.worstTrade === 9999) dailyPnLState.worstTrade = tradeNetPnl;
           
-          if (isWinOrLossSegment === "WIN") {
+          // Override the segment's outcome with the true net outcome of the entire trade
+          const trueOutcome = tradeNetPnl >= 0 ? "WIN" : "LOSS";
+
+          if (trueOutcome === "WIN") {
               if (activeTrade.confidence && activeTrade.confidence > dailyPnLState.highestConfWin) dailyPnLState.highestConfWin = activeTrade.confidence;
               if (activeTrade.direction === "LONG") dailyPnLState.longWins++;
               if (activeTrade.direction === "SHORT") dailyPnLState.shortWins++;
@@ -215,7 +218,7 @@ function recordPnLSegment(pnlPct: number, portion: number, isWinOrLossSegment: "
                  dailyPnLState.sessionWins[activeTrade.session]++;
               }
           }
-          if (isWinOrLossSegment === "LOSS") {
+          if (trueOutcome === "LOSS") {
               if (activeTrade.confidence && activeTrade.confidence > dailyPnLState.highestConfLoss) dailyPnLState.highestConfLoss = activeTrade.confidence;
               if (activeTrade.direction === "LONG") dailyPnLState.longLosses++;
               if (activeTrade.direction === "SHORT") dailyPnLState.shortLosses++;
@@ -224,10 +227,14 @@ function recordPnLSegment(pnlPct: number, portion: number, isWinOrLossSegment: "
                  dailyPnLState.sessionLosses[activeTrade.session]++;
               }
           }
+          
+          if (trueOutcome === "WIN") dailyPnLState.wins++;
+          if (trueOutcome === "LOSS") dailyPnLState.losses++;
+       } else {
+          // Fallback if no activeTrade object passed
+          if (isWinOrLossSegment === "WIN") dailyPnLState.wins++;
+          if (isWinOrLossSegment === "LOSS") dailyPnLState.losses++;
        }
-       
-       if (isWinOrLossSegment === "WIN") dailyPnLState.wins++;
-       if (isWinOrLossSegment === "LOSS") dailyPnLState.losses++;
     } else if (activeTrade) {
        // Just accumulating part of a trade
        (activeTrade as any)._accumulatedPnl = ((activeTrade as any)._accumulatedPnl || 0) + realizedPnl;
@@ -1110,6 +1117,7 @@ async function startServer() {
              direction: trade.type || trade.direction,
              confidence: 0
           };
+          saveScannerState();
           console.log(`[Backend] Registered frontend trade for monitoring: ${trade.symbol}`);
         } else {
           console.log(`[Backend] Trade for ${trade.symbol} is already active/monitored. Skipping duplicate registration state override.`);
@@ -1247,8 +1255,38 @@ ${directionIcon} Direction: ${trade.type}
     direction: "LONG" | "SHORT";
     confidence: number;
   }
-  const activeTrades: Record<string, ActiveTrade> = {};
-  const signalCooldowns: Record<string, SignalCooldown> = {};
+  let activeTrades: Record<string, ActiveTrade> = {};
+  let signalCooldowns: Record<string, SignalCooldown> = {};
+
+  const STATE_FILE_PATH = path.join(process.cwd(), "scanner_state.json");
+  
+  function loadScannerState() {
+    try {
+      if (fs.existsSync(STATE_FILE_PATH)) {
+        const data = fs.readFileSync(STATE_FILE_PATH, "utf8");
+        const obj = JSON.parse(data);
+        if (obj.activeTrades) {
+           activeTrades = obj.activeTrades;
+        }
+        if (obj.signalCooldowns) {
+           signalCooldowns = obj.signalCooldowns;
+        }
+        console.log(`[State] Loaded ${Object.keys(activeTrades).length} active trades and ${Object.keys(signalCooldowns).length} cooldowns from disk.`);
+      }
+    } catch (e) {
+      console.error("[State] Error loading state:", e);
+    }
+  }
+
+  function saveScannerState() {
+    try {
+      fs.writeFileSync(STATE_FILE_PATH, JSON.stringify({ activeTrades, signalCooldowns }, null, 2), "utf8");
+    } catch (e) {
+      console.error("[State] Error saving state:", e);
+    }
+  }
+
+  loadScannerState();
 
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
@@ -2122,6 +2160,7 @@ ${directionIcon} Direction: ${sig.analysis.signal}
     } catch (err) {
       console.error("Error in background loop:", err);
     } finally {
+      saveScannerState();
       setTimeout(runBackgroundLoop, 60000); // Check every minute
     }
   };
