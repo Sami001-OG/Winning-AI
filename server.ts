@@ -1562,6 +1562,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "LONG"), 0.20, "WIN", activeTrade);
                       
+                      delete signalCooldowns[symbol]; // Allow new setups to be generated in this direction now that trade is successfully finished
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     }
@@ -1605,6 +1606,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "SHORT"), 0.20, "WIN", activeTrade);
                       
+                      delete signalCooldowns[symbol]; // Allow new setups to be generated in this direction now that trade is successfully finished
                       delete activeTrades[symbol];
                       tradeClosed = true;
                     }
@@ -1750,7 +1752,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
               }
           }
           if (tradeClosed) {
-            delete signalCooldowns[symbol];
+            // Keep signalCooldowns intact so we don't immediately reprint the same setup again
+            // after an exit just because the indicators haven't fully reversed yet.
             return; // Skip generating new signals if a trade just closed on this tick
           }
           // --- END ACTIVE TRADE MONITORING ---
@@ -1914,13 +1917,23 @@ ${directionIcon} Direction: ${activeTrade.direction}
               let isUpgrade = false;
               let oldConfidence = 0;
 
-              if (lastSignal && (Date.now() - lastSignal.timestamp < 60 * 60 * 1000)) {
+              // 1. Block duplicate signals if a trade is already active in the same direction
+              if (activeTrades[symbol] && activeTrades[symbol].direction === direction) {
+                  shouldSend = false;
+              }
+
+              // 2. Time-based Cooldowns (Evaluate if shouldSend hasn't been blocked yet)
+              if (shouldSend && lastSignal) {
                   if (lastSignal.direction === direction) {
-                      if (mtfAnalysis.confidence - lastSignal.confidence >= 5) {
-                          isUpgrade = true; // Signal Upgrade
-                          oldConfidence = lastSignal.confidence;
-                      } else {
-                          shouldSend = false; // Block duplicate
+                      // Extended cooldown (4 hours) for same-direction repeated signals 
+                      // to prevent spamming if the market just ranges on the setup
+                      if (Date.now() - lastSignal.timestamp < 4 * 60 * 60 * 1000) {
+                          if (mtfAnalysis.confidence - lastSignal.confidence >= 5) {
+                              isUpgrade = true; // Signal Upgrade
+                              oldConfidence = lastSignal.confidence;
+                          } else {
+                              shouldSend = false; // Block duplicate
+                          }
                       }
                   } else {
                       // Opposite direction! Cooldown does not apply.
