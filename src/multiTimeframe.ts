@@ -215,10 +215,7 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isMomentumUp = (lastAdx && lastAdx.adx > 15 && lastAdx.pdi > lastAdx.mdi) || (lastRsi > 50 && lastRsi < 70);
     if (isMomentumUp) { score += 20; breakDown['Momentum'] = 20; }
 
-    const isLiquiditySweep = liquidityGrab === 'bullish';
-    if (isLiquiditySweep) { score += 15; breakDown['Liquidity'] = 15; }
-
-    const isVolumeUp = isDisplacementUp || (lastVol > lastVolSma && orderFlow.signal === 'bullish') || (volumeSpike && orderFlow.signal === 'bullish');
+    const isVolumeUp = isDisplacementUp || lastVol > lastVolSma;
     if (isVolumeUp) { score += 15; breakDown['Volume'] = 15; }
 
     const threshold = 40;
@@ -235,10 +232,7 @@ export const validateLTFEntry = (data: Candle[], direction: 'LONG' | 'SHORT'): {
     const isMomentumDown = (lastAdx && lastAdx.adx > 15 && lastAdx.mdi > lastAdx.pdi) || (lastRsi < 50 && lastRsi > 30);
     if (isMomentumDown) { score += 20; breakDown['Momentum'] = 20; }
 
-    const isLiquiditySweep = liquidityGrab === 'bearish';
-    if (isLiquiditySweep) { score += 15; breakDown['Liquidity'] = 15; }
-
-    const isVolumeUp = isDisplacementDown || (lastVol > lastVolSma && orderFlow.signal === 'bearish') || (volumeSpike && orderFlow.signal === 'bearish');
+    const isVolumeUp = isDisplacementDown || lastVol > lastVolSma;
     if (isVolumeUp) { score += 15; breakDown['Volume'] = 15; }
 
     const threshold = 40;

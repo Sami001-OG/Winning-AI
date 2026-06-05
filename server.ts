@@ -712,7 +712,7 @@ async function fetchTopSymbols() {
         (a: any, b: any) =>
           parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume),
       )
-      .slice(0, 30) // background scanner will parse the top 30 volume pairs
+      .slice(0, 50) // background scanner will parse the top 50 volume pairs
       .map((t: any) => t.symbol);
     lastTopSymbolsUpdate = Date.now();
     return cachedTopSymbols;
@@ -1409,25 +1409,26 @@ ${directionIcon} Direction: ${trade.type}
       const allSignals: any[] = [];
       const currentFrontendTrades: any[] = [];
 
-      // Upgrade 1: King Filter (BTC 1H Trend)
+      // Upgrade 1: King Filter (BTC 15M Trend)
       let btcTrend = "NEUTRAL";
       try {
-        const btcKlines1h = await fetchKlines("BTCUSDT", "1h");
-        if (btcKlines1h.length >= 50) {
-          const btcCloses = btcKlines1h.map((k) => k.close);
+        const btcKlines15m = await fetchKlines("BTCUSDT", "15m");
+        if (btcKlines15m.length >= 50) {
+          const btcCloses = btcKlines15m.map((k) => k.close);
           const btcEma20 = EMA.calculate({ values: btcCloses, period: 20 });
           const btcEma50 = EMA.calculate({ values: btcCloses, period: 50 });
+          const lastBtcClose = btcCloses[btcCloses.length - 1];
           const lastBtcEma20 = btcEma20[btcEma20.length - 1];
           const lastBtcEma50 = btcEma50[btcEma50.length - 1];
           btcTrend =
-            lastBtcEma20 > lastBtcEma50
+            lastBtcClose > lastBtcEma20 && lastBtcEma20 > lastBtcEma50
               ? "LONG"
-              : lastBtcEma20 < lastBtcEma50
+              : lastBtcClose < lastBtcEma20 && lastBtcEma20 < lastBtcEma50
                 ? "SHORT"
                 : "NEUTRAL";
         }
       } catch (e) {
-        console.error("Failed to fetch BTC 1H trend for King Filter:", e);
+        console.error("Failed to fetch BTC 15M trend for King Filter:", e);
       }
 
       // Process symbols simultaneously but with concurrency limit (e.g. 5 at a time) to prevent network choke
@@ -1438,16 +1439,16 @@ ${directionIcon} Direction: ${trade.type}
         const chunk = symbols.slice(i, i + CONCURRENCY);
         await Promise.all(chunk.map(async (symbol) => {
           try {
-          // 1. Fetch 3M for active trade monitoring and sniper entry
+          // 1. Fetch 5M for active trade monitoring and sniper entry
                 // --- ACTIVE TRADE MONITORING (24/7) ---
           const activeTrade = activeTrades[symbol];
-          const klines3m = await fetchKlines(symbol, "3m");
+          const klines5m = await fetchKlines(symbol, "5m");
           let tradeClosed = false;
-          if (activeTrade && klines3m.length > 0) {
+          if (activeTrade && klines5m.length > 0) {
               // Check if the trade is pending entry (achieved === 0)
               if (activeTrade.achieved === 0) {
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
-                const recentCandles = klines3m.filter((c) => (c.time + 180) * 1000 >= registeredAtVal);
+                const recentCandles = klines5m.filter((c) => (c.time + 300) * 1000 >= registeredAtVal);
                 let entryFilled = false;
                 for (const candle of recentCandles) {
                   const currentHigh = candle.high;
@@ -1492,9 +1493,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
               // Evaluate active trade targets if filled
               if (activeTrade.achieved >= 1) {
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
-                const recentCandles = klines3m.filter((c) => (c.time + 180) * 1000 >= registeredAtVal);
+                const recentCandles = klines5m.filter((c) => (c.time + 300) * 1000 >= registeredAtVal);
 
-                // 1. Process SL and TP against historical 3m price action
+                // 1. Process SL and TP against historical 5m price action
                 for (const candle of recentCandles) {
                   if (tradeClosed) break;
 
@@ -1650,143 +1651,6 @@ ${directionIcon} Direction: ${activeTrade.direction}
                     }
                   }
                 } // End of recentCandles loop
-
-                // 2. Advanced Exits (MSS, Soft Exit) on CURRENT market state ONLY
-                if (activeTrade.achieved >= 1 && !tradeClosed) {
-                  let klines15mForExit: any[] = [];
-                  try {
-                    // Fetch 15m data ONCE per symbol, outside of loop
-                    klines15mForExit = await fetchKlines(symbol, "15m");
-                  } catch (e) {
-                    console.error(`Failed to fetch 15m klines for ${symbol} exits:`, e);
-                  }
-
-                  if (klines15mForExit.length >= 30) {
-                    // Use latest LIVE price for exit pricing
-                    const currentPrice = klines15mForExit[klines15mForExit.length - 1].close;
-
-                    // 2. MSS EXIT LOGIC (Priority 2 - High-Confidence Reversal)
-                    // CRITICAL FIX: Only use CLOSED candles for structural shift confirmation
-                    const closedKlines15m = klines15mForExit.slice(0, -1);
-                    
-                    let mssExit = false;
-                    let mssReason = "";
-                    
-                    if (!tradeClosed && closedKlines15m.length >= 30) {
-                      try {
-                        const mssSignal = detectMSS(closedKlines15m);
-                        if (activeTrade.direction === "LONG" && mssSignal === "bearish") {
-                          mssExit = true;
-                          mssReason = "Bearish MSS Confirmed - Market Structure Reversal";
-                        } else if (activeTrade.direction === "SHORT" && mssSignal === "bullish") {
-                          mssExit = true;
-                          mssReason = "Bullish MSS Confirmed - Market Structure Reversal";
-                        }
-                      } catch (e) {
-                        console.error(`Failed to evaluate MSS for ${symbol}:`, e);
-                      }
-                    }
-
-                    if (!tradeClosed && mssExit) {
-                      console.log(`[DEBUG] MSS Exit for ${symbol}: ${mssReason}`);
-                      const mssPnlNum = activeTrade.direction === "LONG" ? (currentPrice - activeTrade.entry) : (activeTrade.entry - currentPrice);
-                      const outcome = mssPnlNum >= 0 ? "WIN" : "LOSS";
-
-                      const msg = `🚨 <b>TRADE UPDATE: MSS EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n\n⚠️ <b>Status:</b> Market Structure Reversal Detected\n\n🧠 <b>Reason:</b>\n${activeTrade.direction === "LONG" ? "Bearish MSS Confirmed" : "Bullish MSS Confirmed"}\n\n💰 <b>Exit Price:</b> <code>${formatPrice(currentPrice)}</code>\n\n💵 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentPrice, activeTrade.direction)}`;
-
-                      sendTelegramSignal(botToken, chatId, msg).catch(console.error);
-
-                      recordTradeResult(outcome);
-                      const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
-                      recordPnLSegment(calculatePnLNumber(activeTrade.entry, currentPrice, activeTrade.direction), remPortion, outcome, activeTrade);
-
-                      delete activeTrades[symbol];
-                      tradeClosed = true;
-                    }
-
-                    // 3. SOFT EXIT LOGIC (Priority 3 - Momentum Reversal)
-                    if (!tradeClosed) {
-                      let softExit = false;
-                      let softExitReason = "";
-                      try {
-                        // Use fully resolved close mapping for indicators
-                        const closes15m = klines15mForExit.map((k) => k.close);
-                        const macd15m = MACD.calculate({
-                          values: closes15m,
-                          fastPeriod: 12,
-                          slowPeriod: 26,
-                          signalPeriod: 9,
-                          SimpleMAOscillator: false,
-                          SimpleMASignal: false,
-                        });
-                        const rsi15m = RSI.calculate({
-                          values: closes15m,
-                          period: 14,
-                        });
-
-                        if (macd15m.length >= 2 && rsi15m.length >= 1) {
-                          const lastMacd = macd15m[macd15m.length - 1];
-                          const prevMacd = macd15m[macd15m.length - 2];
-                          const lastRsi = rsi15m[rsi15m.length - 1];
-
-                          const avgVol =
-                            klines15mForExit
-                              .slice(-10)
-                              .reduce((sum, c) => sum + c.volume, 0) / 10;
-                          const lastVol =
-                            klines15mForExit[klines15mForExit.length - 1].volume;
-                          const lossOfVolume = lastVol < avgVol * 0.8;
-
-                          if (activeTrade.direction === "LONG") {
-                            const macdFading =
-                              (lastMacd.histogram || 0) <
-                                (prevMacd.histogram || 0) &&
-                              (lastMacd.histogram || 0) < 0;
-                            const rsiLeavingTrend = lastRsi < 45;
-                            if (macdFading && rsiLeavingTrend && lossOfVolume) {
-                              softExit = true;
-                              softExitReason =
-                                "Momentum Reversed (MACD Fading, RSI under 45, Volume Dropping)";
-                            }
-                          } else if (activeTrade.direction === "SHORT") {
-                            const macdFading =
-                              (lastMacd.histogram || 0) >
-                                (prevMacd.histogram || 0) &&
-                              (lastMacd.histogram || 0) > 0;
-                            const rsiLeavingTrend = lastRsi > 55;
-                            if (macdFading && rsiLeavingTrend && lossOfVolume) {
-                              softExit = true;
-                              softExitReason =
-                                "Momentum Reversed (MACD Fading, RSI over 55, Volume Dropping)";
-                            }
-                          }
-                        }
-                      } catch (e) {
-                        console.error(`Failed to calculate Soft Exit for ${symbol}:`, e);
-                      }
-
-                      if (softExit) {
-                        console.log(
-                          `[DEBUG] Soft Exit for ${symbol}: ${softExitReason}`,
-                        );
-                        sendTelegramSignal(
-                          botToken,
-                          chatId,
-                          `🚨 <b>TRADE UPDATE: SOFT EXIT</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n${activeTrade.direction === "LONG" ? "📈" : "📉"} <b>Direction:</b> ${activeTrade.direction}\n⚠️ <b>Status:</b> Soft Exit Triggered at <code>${formatPrice(currentPrice)}</code>\n🧠 <b>Reason:</b> ${softExitReason}\n💰 <b>PnL:</b> ${calculatePnL(activeTrade.entry, currentPrice, activeTrade.direction)}`,
-                        ).catch(console.error);
-                        
-                        const softPnlNum = activeTrade.direction === "LONG" ? (currentPrice - activeTrade.entry) : (activeTrade.entry - currentPrice);
-                        recordTradeResult(softPnlNum >= 0 ? "WIN" : "LOSS");
-                        
-                        const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
-                        recordPnLSegment(calculatePnLNumber(activeTrade.entry, currentPrice, activeTrade.direction), remPortion, softPnlNum >= 0 ? "WIN" : "LOSS", activeTrade);
-                        
-                        delete activeTrades[symbol];
-                        tradeClosed = true;
-                      }
-                    }
-                  }
-                }
               }
           }
           if (tradeClosed) {
@@ -1800,14 +1664,23 @@ ${directionIcon} Direction: ${activeTrade.direction}
             // 2. 4H Bias Alignment
             const klines4h = await fetchKlines(symbol, "4h");
             const htfDirection = getHTFDirection(klines4h);
-            const strictHtfAlignment = false; // Rank #1 Optimized Setting: disabled for higher-timeframe alignment
-            if (strictHtfAlignment && htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; return; }
+            const strictHtfAlignment = true; // Best Config: strict HTF alignment
+            const htfNeutralSkip = true; // Best Config: skip NEUTRAL
+            if (htfNeutralSkip && htfDirection === "NEUTRAL") { diagnosticCounts.htfNeutral++; return; }
 
             // 2.5 1H Control Layer
             const klines1h = await fetchKlines(symbol, "1h");
             const htfBiasFor1H = htfDirection === "NEUTRAL" ? "LONG" : htfDirection;
             const control1H = get1HControlState(klines1h, htfBiasFor1H);
-
+            const use1hControl = true; // Best Config: use 1H control filter
+            if (use1hControl && control1H.state === "WAIT") {
+               console.log(`[Reject] ${symbol}: 1H Control is WAIT`);
+               return; 
+            }
+            if (use1hControl && control1H.state === "VETO") {
+               console.log(`[Reject] ${symbol}: 1H Control is VETO`);
+               return; 
+            }
 
             // 3. 15M Confirmation (Confidence/Setup)
             const klines15m = await fetchKlines(symbol, "15m");
@@ -1821,7 +1694,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
             if (strictHtfAlignment && htfDirection !== mtfAnalysis.signal) { diagnosticCounts.mtfMismatch++; return; }
 
             // Upgrade 1: King Filter Application
-            const useBtcFilter = false; // Rank #1 Optimized Setting: disabled for altcoins
+            const useBtcFilter = true; // Best Config: enabled
             if (useBtcFilter && symbol !== "BTCUSDT") {
               // Altcoin LONG allowed only if BTC not bearish (LONG or NEUTRAL)
               if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { 
@@ -1837,9 +1710,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
               }
             }
 
-            // 4. 3M Entry (already fetched klines3m)
+            // 4. 5M Entry Validation
             const ltfValidation = validateLTFEntry(
-              klines3m,
+              klines5m,
               mtfAnalysis.signal as "LONG" | "SHORT",
             );
             if (!ltfValidation.isValid) { 
@@ -1848,28 +1721,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
               return; 
             }
 
-            // Upgrade 3: VWAP & Liquidity Sniping (Limit Entry)
-            const closes3m = klines3m.map((k) => k.close);
-            const ema20_3m = EMA.calculate({ values: closes3m, period: 20 });
-            const lastEma20_3m =
-              ema20_3m[ema20_3m.length - 1] || closes3m[closes3m.length - 1];
-
-            let cumulativeTypicalVolume = 0;
-            let cumulativeVolume = 0;
-            // Calculate rolling VWAP over last 100 3m candles (5 hours)
-            for (const candle of klines3m.slice(-100)) {
-              const typicalPrice =
-                (candle.high + candle.low + candle.close) / 3;
-              cumulativeTypicalVolume += typicalPrice * candle.volume;
-              cumulativeVolume += candle.volume;
-            }
-            const vwap3m =
-              cumulativeVolume > 0
-                ? cumulativeTypicalVolume / cumulativeVolume
-                : closes3m[closes3m.length - 1];
-
             // Calculate dynamic limit entry with pullback factor of 0.45 (Rank #1 Optimized Setting)
-            const originalClose = closes3m[closes3m.length - 1];
+            const originalClose = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
             const sl = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
             const gap = Math.abs(originalClose - sl);
             const pullbackFactor = 0.45; // 45% Pullback from backtest Rank #1
@@ -1936,9 +1789,9 @@ ${directionIcon} Direction: ${activeTrade.direction}
 
             // 5. Combine and Send
             if (mtfAnalysis.confidence >= requiredConfidence) {
-              const signalKey = `${symbol}-Multi-TF (4h, 15m, 3m)`;
+              const signalKey = `${symbol}-Multi-TF (4h, 15m, 5m)`;
               
-              const entryPrice = klines3m.length > 0 ? klines3m[klines3m.length - 1].close : 0;
+              const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
               const tp = mtfAnalysis.tp || 0;
               const sl = mtfAnalysis.sl || 0;
 
@@ -2020,9 +1873,11 @@ ${directionIcon} Direction: ${activeTrade.direction}
           const entryPrice = sig.analysis.limitEntry || sig.entryPrice;
           
           // Compute correct progressive targets relative to the target entry
-          const tp1 = sig.analysis.tp1 || (sig.analysis.signal === "LONG" ? entryPrice + (entryPrice - sig.sl) : entryPrice - (sig.sl - entryPrice));
-          const tp2 = sig.analysis.tp2 || (sig.analysis.signal === "LONG" ? entryPrice + (entryPrice - sig.sl) * 2 : entryPrice - (sig.sl - entryPrice) * 2);
-          const tp3 = sig.analysis.tp3 || sig.tp;
+          const riskAmount = Math.abs(entryPrice - sig.sl);
+          const dirMulti = sig.analysis.signal === "LONG" ? 1 : -1;
+          const tp1 = entryPrice + (dirMulti * riskAmount * 1.8);
+          const tp2 = entryPrice + (dirMulti * riskAmount * 3.0);
+          const tp3 = entryPrice + (dirMulti * riskAmount * 5.0);
 
           // Determine if limit is distinctly set
           const isLimitTrue = isLimit && sig.analysis.limitEntry !== sig.entryPrice;
@@ -2172,7 +2027,7 @@ ${directionIcon} Direction: ${sig.analysis.signal}
       console.log(`[Warmup] Retrieved ${topSymbols.length} core symbols. Spreading REST api warmups to respect limits.`);
       for (let sIdx = 0; sIdx < topSymbols.length; sIdx++) {
          const symbol = topSymbols[sIdx];
-         const timeframes = ["3m", "15m", "1h", "4h"];
+         const timeframes = ["5m", "15m", "1h", "4h"];
          console.log(`[Warmup] Loading [${sIdx + 1}/${topSymbols.length}] ${symbol} indicators...`);
          for (const tf of timeframes) {
              try {

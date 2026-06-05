@@ -114,14 +114,14 @@ export const analyzeChart = (
   // CALCULATE INDICATORS
   // ==========================================
   
-  const TF_CONFIG: Record<string, { ema: number[], bb: [number, number], adx: number, orderFlow: number }> = {
-    '5m': { ema: [10, 30, 100], bb: [20, 2.5], adx: 7, orderFlow: 3 },
-    '15m': { ema: [20, 50, 200], bb: [30, 2], adx: 20, orderFlow: 5 },
-    '1h': { ema: [9, 21, 50], bb: [30, 2], adx: 10, orderFlow: 5 },
-    '4h': { ema: [9, 21, 50], bb: [30, 2], adx: 20, orderFlow: 10 },
-    '1d': { ema: [20, 50, 200], bb: [20, 2.5], adx: 20, orderFlow: 20 },
+  const TF_CONFIG: Record<string, { ema: number[], bb: [number, number], adx: number, rsi: number, orderFlow: number }> = {
+    '5m': { ema: [10, 30, 100], bb: [20, 2.5], adx: 7, rsi: 14, orderFlow: 3 },
+    '15m': { ema: [20, 50, 200], bb: [30, 2], adx: 14, rsi: 21, orderFlow: 5 },
+    '1h': { ema: [9, 21, 50], bb: [30, 2], adx: 10, rsi: 14, orderFlow: 5 },
+    '4h': { ema: [9, 21, 50], bb: [30, 2], adx: 20, rsi: 14, orderFlow: 10 },
+    '1d': { ema: [20, 50, 200], bb: [20, 2.5], adx: 20, rsi: 14, orderFlow: 20 },
   };
-  const config = TF_CONFIG[timeframe] || { ema: [20, 50, 200], bb: [20, 2], adx: 14, orderFlow: 14 };
+  const config = TF_CONFIG[timeframe] || { ema: [20, 50, 200], bb: [20, 2], adx: 14, rsi: 14, orderFlow: 14 };
 
   // Volatility & Market Condition
   const atr = calculateATR(highs, lows, closes, 14);
@@ -165,7 +165,7 @@ export const analyzeChart = (
   const prevPrevMacd = macd[macd.length - 3];
 
   // Momentum / Entry
-  const rsi = calculateRSI(closes, 14);
+  const rsi = calculateRSI(closes, config.rsi);
   const lastRsi = rsi[rsi.length - 1];
 
   // Volume / Confirmation
