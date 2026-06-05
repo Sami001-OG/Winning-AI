@@ -118,7 +118,7 @@ async function runBacktestSuite() {
     "4h": Candle[];
     "1h": Candle[];
     "15m": Candle[];
-    "3m": Candle[];
+    "5m": Candle[];
   }> = {};
   
   for (const symbol of SYMBOLS) {
@@ -128,11 +128,11 @@ async function runBacktestSuite() {
       const k4h = await fetchKlinesWithRetry(symbol, "4h", 600); 
       const k1h = await fetchKlinesWithRetry(symbol, "1h", 1500);
       const k15m = await fetchKlinesWithRetry(symbol, "15m", BASE_CANDLES);
-      const k3m = await fetchKlinesWithRetry(symbol, "3m", BASE_CANDLES * 5); // Match timestamp boundaries (~20k candles max, let's keep it to 5000 to avoid huge memory footprint, but we need enough. 3m is 5x more than 15m so 20000 limit)
-      // Actually, we'll cap 3m because retrieving 20k candles takes 13 batches. Let's cap at 5000 and the engine will just skip earlier trades if 3m isn't available.
+      const k5m = await fetchKlinesWithRetry(symbol, "5m", BASE_CANDLES * 5); // Match timestamp boundaries (~20k candles max, let's keep it to 5000 to avoid huge memory footprint, but we need enough. 5m is 5x more than 15m so 20000 limit)
+      // Actually, we'll cap 5m because retrieving 20k candles takes 13 batches. Let's cap at 5000 and the engine will just skip earlier trades if 5m isn't available.
       
-      dataStore[symbol] = { "4h": k4h, "1h": k1h, "15m": k15m, "3m": k3m };
-      console.log(`OK [4H:${k4h.length}, 1H:${k1h.length}, 15M:${k15m.length}, 3M:${k3m.length}]`);
+      dataStore[symbol] = { "4h": k4h, "1h": k1h, "15m": k15m, "5m": k5m };
+      console.log(`OK [4H:${k4h.length}, 1H:${k1h.length}, 15M:${k15m.length}, 3M:${k5m.length}]`);
     } catch (e) {
       console.log("FAILED to fetch. Skipping...");
     }
@@ -178,7 +178,7 @@ async function runBacktestSuite() {
   const rawSignals: Record<string, any[]> = {};
   
   for (const symbol of Object.keys(dataStore)) {
-    const { "4h": all4h, "1h": all1h, "15m": all15m, "3m": all3m } = dataStore[symbol];
+    const { "4h": all4h, "1h": all1h, "15m": all15m, "5m": all5m } = dataStore[symbol];
     rawSignals[symbol] = [];
     const startIdx = 200;
     const endIdx = all15m.length - 1;
@@ -190,9 +190,9 @@ async function runBacktestSuite() {
         const limit15m = all15m.slice(0, i + 1);
         const limit4h = all4h.filter(k => k.time <= currentTime);
         const limit1h = all1h.filter(k => k.time <= currentTime);
-        const limit3m = all3m.filter(k => k.time <= currentTime);
+        const limit5m = all5m.filter(k => k.time <= currentTime);
         
-        if (limit4h.length < 50 || limit1h.length < 50 || limit15m.length < 50 || limit3m.length < 50) continue;
+        if (limit4h.length < 50 || limit1h.length < 50 || limit15m.length < 50 || limit5m.length < 50) continue;
         
         const htfDirection = getHTFDirection(limit4h);
         const htfBiasFor1H = htfDirection === "NEUTRAL" ? "LONG" : htfDirection;
@@ -210,8 +210,8 @@ async function runBacktestSuite() {
         
         let ltfValidLong = false, ltfValidShort = false;
         if (mtfAnalysis.signal !== "NO TRADE") {
-            ltfValidLong = validateLTFEntry(limit3m, "LONG").isValid;
-            ltfValidShort = validateLTFEntry(limit3m, "SHORT").isValid;
+            ltfValidLong = validateLTFEntry(limit5m, "LONG").isValid;
+            ltfValidShort = validateLTFEntry(limit5m, "SHORT").isValid;
         }
 
         rawSignals[symbol].push({
@@ -246,7 +246,7 @@ async function runBacktestSuite() {
     
     // Step through each coin
     for (const symbol of Object.keys(dataStore)) {
-      const { "4h": all4h, "1h": all1h, "15m": all15m, "3m": all3m } = dataStore[symbol];
+      const { "4h": all4h, "1h": all1h, "15m": all15m, "5m": all5m } = dataStore[symbol];
       let pendingTrade: BacktestTrade | null = null;
       
       const startIdx = 200;

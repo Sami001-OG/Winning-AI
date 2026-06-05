@@ -1234,6 +1234,9 @@ ${directionIcon} Direction: ${trade.type}
     symbol: string;
     direction: "LONG" | "SHORT";
     entry: number;
+    initialEntry?: number;
+    pullbackTarget?: number;
+    hasHitPullback?: boolean;
     tp: number;
     tp1: number;
     tp2: number;
@@ -1445,47 +1448,30 @@ ${directionIcon} Direction: ${trade.type}
           const klines5m = await fetchKlines(symbol, "5m");
           let tradeClosed = false;
           if (activeTrade && klines5m.length > 0) {
-              // Check if the trade is pending entry (achieved === 0)
-              if (activeTrade.achieved === 0) {
+              // Check if pullback target is hit to average the entry
+              if (activeTrade.achieved > 0 && activeTrade.pullbackTarget && !activeTrade.hasHitPullback) {
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
                 const recentCandles = klines5m.filter((c) => (c.time + 300) * 1000 >= registeredAtVal);
-                let entryFilled = false;
+                let hitPullback = false;
                 for (const candle of recentCandles) {
-                  const currentHigh = candle.high;
-                  const currentLow = candle.low;
-
                   if (activeTrade.direction === "LONG") {
-                    if (currentLow <= activeTrade.entry) {
-                      entryFilled = true;
-                      break;
-                    }
-                  } else { // SHORT
-                    if (currentHigh >= activeTrade.entry) {
-                      entryFilled = true;
-                      break;
-                    }
+                    if (candle.low <= activeTrade.pullbackTarget) hitPullback = true;
+                  } else {
+                    if (candle.high >= activeTrade.pullbackTarget) hitPullback = true;
                   }
+                  if (hitPullback) break;
                 }
 
-                if (entryFilled) {
-                  activeTrade.achieved = 1; // Mark as active and filled!
+                if (hitPullback) {
+                  activeTrade.hasHitPullback = true;
+                  activeTrade.entry = (activeTrade.initialEntry + activeTrade.pullbackTarget) / 2;
+                  
                   const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
-                  const sizeModel = getSizingModel();
-                  const streakSign = sizeModel.consecutiveStreak > 0 ? "+" : "";
                   const entryAlertMsg = `🪙 Pair: #${symbol}
 ${directionIcon} Direction: ${activeTrade.direction}
-💼 Status: Entry Filled (Pullback Hit)
-🎯 Entry Price: ${formatPrice(activeTrade.entry)}
-🎯 TP1 (50% Booking): ${formatPrice(activeTrade.tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(activeTrade.tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(activeTrade.tp3)}
-❌ Stop Loss: ${formatPrice(activeTrade.sl)}
-🛡 Trail Mode: Move SL to Break-Even at TP1
-
-🔥 Current Streak: <b>${streakSign}${sizeModel.consecutiveStreak}</b> consecutive ${sizeModel.consecutiveStreak > 0 ? "wins" : "losses"}
-📊 Sizing Modifier: <code>${sizeModel.mStreak.toFixed(2)}x</code>
-💰 Recommended Kelly Allocation: <b>${sizeModel.recommendedSizingPercent.toFixed(1)}%</b> of Portfolio (Quarter-Kelly)`;
-                  
+💼 Status: DCA Pullback Hit! (Averaged Entry)
+🎯 New Averaged Entry: ${formatPrice(activeTrade.entry)}
+❌ Stop Loss: ${formatPrice(activeTrade.sl)}`;
                   sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
                 }
               }
@@ -1896,8 +1882,11 @@ ${directionIcon} Direction: ${activeTrade.direction}
                 tp3,
                 sl: sig.sl,
                 currentSl: sig.sl,
-                achieved: isLimitTrue ? 0 : 1, // 0: Pending Fill, 1: Filled
+                achieved: 1, // Start active directly at market! 100% signals traded. 
                 isLimitEntry: isLimitTrue,
+                pullbackTarget: isLimitTrue ? sig.analysis.limitEntry : undefined,
+                hasHitPullback: false,
+                initialEntry: entryPrice,
                 hasHitTp1: false,
                 hasHitTp2: false,
                 hasHitTp3: false,
