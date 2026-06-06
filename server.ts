@@ -1234,9 +1234,6 @@ ${directionIcon} Direction: ${trade.type}
     symbol: string;
     direction: "LONG" | "SHORT";
     entry: number;
-    initialEntry?: number;
-    pullbackTarget?: number;
-    hasHitPullback?: boolean;
     tp: number;
     tp1: number;
     tp2: number;
@@ -1399,7 +1396,7 @@ ${directionIcon} Direction: ${trade.type}
       // Upgrade 4: Time-of-Day / Volume Weighting
       const currentHour = new Date().getUTCHours();
       const isAsianSession = currentHour >= 21 || currentHour < 8;
-      const requiredConfidence = 45; // Rank #1 Optimized threshold (from backtest: 45)
+      const requiredConfidence = 50; // Rank #1 Optimized threshold (from backtest: 50)
       const sessionName = isAsianSession
         ? "Asian (Low Vol)"
         : "London/NY (High Vol)";
