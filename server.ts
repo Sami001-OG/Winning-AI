@@ -61,11 +61,13 @@ function recordTradeResult(result: "WIN" | "LOSS") {
 }
 
 function getSizingModel() {
-  const winRate = 0.584; // Backtested baseline win rate (Rank #1 top-performing parameter set)
+  const winRate = process.env.ACE_WIN_RATE
+    ? parseFloat(process.env.ACE_WIN_RATE)
+    : 0.584; // Fallback to backtested baseline
   // Weighted expected R:R based on take profit levels:
-  // TP1 (50% Volume at ~1.0 R:R), TP2 (30% Volume at ~2.0 R:R), TP3 (20% Volume at ~4.0 R:R)
-  // Weighted expected reward: 0.50 * 1.0 + 0.30 * 2.0 + 0.20 * 4.0 = 1.90 R:R
-  const rr = 1.90; 
+  // TP1 (50% Volume), TP2 (30% Volume), TP3 (20% Volume)
+  // Weighted expected reward: 0.50 * 1.8 + 0.30 * 3.0 + 0.20 * 5.0 = 2.80 R:R
+  const rr = 2.80; 
   // Kelly Fraction: f* = w - (1 - w) / RR
   const fStar = winRate - (1 - winRate) / rr; 
   const quarterKelly = 0.25 * fStar; // Conservative Quarter-Kelly sizing
@@ -100,8 +102,8 @@ function calculatePnL(
 ) {
   const pnl =
     direction === "LONG"
-      ? ((exit - entry) / entry) * 100 * 10
-      : ((entry - exit) / entry) * 100 * 10;
+      ? ((exit - entry) / entry) * 100
+      : ((entry - exit) / entry) * 100;
   return pnl >= 0 ? `+${pnl.toFixed(2)}%` : `${pnl.toFixed(2)}%`;
 }
 // --- DAILY PNL TRACKER ---
@@ -181,8 +183,8 @@ function calculatePnLNumber(
   entry: number, exit: number, direction: "LONG" | "SHORT"
 ): number {
   return direction === "LONG"
-      ? ((exit - entry) / entry) * 100 * 10
-      : ((entry - exit) / entry) * 100 * 10;
+      ? ((exit - entry) / entry) * 100
+      : ((entry - exit) / entry) * 100;
 }
 
 function recordPnLSegment(pnlPct: number, portion: number, isWinOrLossSegment: "WIN" | "LOSS" | null, activeTrade: any = null) {
@@ -516,15 +518,10 @@ async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICAT
 
     // Handle Binance Geoblocks on US environments (Render, etc.), IP Bans (429), or HTML responses from Cloudflare
     if ((!response.ok && (response.status === 451 || response.status === 403 || response.status === 429 || response.status === 418)) || (response.ok && isHtml)) {
-      if (url.includes('binance.com')) {
-        console.log(`[Binance] Blocked by proxy/limit. Status: ${response.status}. URL: ${url}`);
-        
-        // If it's a klines request, fallback to Bybit to bypass IP ban instantly
-        if (url.includes('/v1/klines') || url.includes('/v1/premiumIndex') || url.includes('openInterestHist')) {
-          return handleBybitFallback(url, options);
-        }
-      } else if (response.ok && isHtml) {
+      if (response.ok && isHtml) {
         throw new Error(`Expected JSON but received HTML from ${url}`);
+      } else {
+        throw new Error(`API Request blocked or limited. Status: ${response.status}. URL: ${url}`);
       }
     }
 
@@ -534,100 +531,6 @@ async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICAT
     clearTimeout(id);
     throw error;
   }
-}
-
-async function handleBybitFallback(binanceUrl: string, options: any) {
-  try {
-    const urlObj = new URL(binanceUrl);
-    const symbol = urlObj.searchParams.get('symbol');
-    
-    if (binanceUrl.includes('/v1/klines')) {
-      let interval = urlObj.searchParams.get('interval');
-      const limit = urlObj.searchParams.get('limit') || 200;
-      
-      // Map Binance interval to Bybit
-      const intervalMap: Record<string, string> = {
-        '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
-        '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
-        '1d': 'D', '1w': 'W', '1M': 'M'
-      };
-      const bybitInterval = intervalMap[interval as string] || '1';
-      
-      const bybitUrl = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
-      const res = await fetch(bybitUrl, options);
-      if (!res.headers.get("content-type")?.includes("application/json")) {
-        throw new Error("Bybit HTML error");
-      }
-      const data = await res.json();
-      
-      if (data.retCode === 0 && data.result && data.result.list) {
-        // Bybit returns list sorted DESCENDING (newest first)
-        // Binance expects ASCENDING (oldest first)
-        const mapped = data.result.list.reverse().map((k: any) => [
-          parseInt(k[0]), // open time
-          k[1], // open
-          k[2], // high
-          k[3], // low
-          k[4], // close
-          k[5], // volume
-          parseInt(k[0]) + 60000, // Bybit doesn't give closeTime directly by default
-          "0", "0", "0", "0", "0" // Padding to match Binance structure
-        ]);
-        
-        // Mock a response object to match `fetch` signature
-        return {
-          ok: true,
-          status: 200,
-          json: async () => mapped
-        } as Response;
-      }
-    } 
-    else if (binanceUrl.includes('/v1/premiumIndex')) {
-      // Bybit Premium Index (Funding Rate) fallback
-      const bybitUrl = `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`;
-      const res = await fetch(bybitUrl, options);
-      if (!res.headers.get("content-type")?.includes("application/json")) {
-        throw new Error("Bybit HTML error");
-      }
-      const data = await res.json();
-      if (data.retCode === 0 && data.result?.list?.length > 0) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            lastFundingRate: data.result.list[0].fundingRate
-          })
-        } as Response;
-      }
-    }
-    else if (binanceUrl.includes('openInterestHist')) {
-      const bybitUrl = `https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=15min&limit=2`;
-      const res = await fetch(bybitUrl, options);
-      if (!res.headers.get("content-type")?.includes("application/json")) {
-        throw new Error("Bybit HTML error");
-      }
-      const data = await res.json();
-      if (data.retCode === 0 && data.result?.list?.length > 0) {
-        const mapped = data.result.list.reverse().map((item: any) => ({
-             sumOpenInterestValue: item.openInterest
-        }));
-        return {
-          ok: true,
-          status: 200,
-          json: async () => mapped
-        } as Response;
-      }
-    }
-  } catch (e) {
-    console.error("Bybit fallback failed:", e);
-  }
-  
-  // Return an empty successful format if all fails to not crash the engine
-  return {
-    ok: true,
-    status: 200,
-    json: async () => []
-  } as Response;
 }
 
 const MEME_COINS = new Set([
@@ -1234,6 +1137,9 @@ ${directionIcon} Direction: ${trade.type}
     symbol: string;
     direction: "LONG" | "SHORT";
     entry: number;
+    initialEntry?: number;
+    pullbackTarget?: number;
+    hasHitPullback?: boolean;
     tp: number;
     tp1: number;
     tp2: number;
@@ -1445,8 +1351,8 @@ ${directionIcon} Direction: ${trade.type}
           const klines5m = await fetchKlines(symbol, "5m");
           let tradeClosed = false;
           if (activeTrade && klines5m.length > 0) {
-              // Check if pullback target is hit to average the entry
-              if (activeTrade.achieved > 0 && activeTrade.pullbackTarget && !activeTrade.hasHitPullback) {
+              // Check if limit entry is filled
+              if (activeTrade.achieved === 0 && activeTrade.isLimitEntry && activeTrade.pullbackTarget && !activeTrade.hasHitPullback) {
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
                 const recentCandles = klines5m.filter((c) => (c.time + 300) * 1000 >= registeredAtVal);
                 let hitPullback = false;
@@ -1461,13 +1367,13 @@ ${directionIcon} Direction: ${trade.type}
 
                 if (hitPullback) {
                   activeTrade.hasHitPullback = true;
-                  activeTrade.entry = (activeTrade.initialEntry + activeTrade.pullbackTarget) / 2;
+                  activeTrade.achieved = 1; // Mark as filled
                   
                   const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
                   const entryAlertMsg = `🪙 Pair: #${symbol}
 ${directionIcon} Direction: ${activeTrade.direction}
-💼 Status: DCA Pullback Hit! (Averaged Entry)
-🎯 New Averaged Entry: ${formatPrice(activeTrade.entry)}
+💼 Status: Limit Order Filled! (Pullback Entry)
+🎯 Entry Price: ${formatPrice(activeTrade.entry)}
 ❌ Stop Loss: ${formatPrice(activeTrade.sl)}`;
                   sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
                 }
@@ -1705,7 +1611,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
             }
 
             // Calculate dynamic limit entry with pullback factor of 0.45 (Rank #1 Optimized Setting)
-            const originalClose = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+            if (klines5m.length === 0) return;
+            const originalClose = klines5m[klines5m.length - 1].close;
             const sl = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
             const gap = Math.abs(originalClose - sl);
             const pullbackFactor = 0.45; // 45% Pullback from backtest Rank #1
@@ -1879,7 +1786,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                 tp3,
                 sl: sig.sl,
                 currentSl: sig.sl,
-                achieved: 1, // Start active directly at market! 100% signals traded. 
+                achieved: isLimitTrue ? 0 : 1, // 0 = Unfilled Limit, 1 = Filled at Market
                 isLimitEntry: isLimitTrue,
                 pullbackTarget: isLimitTrue ? sig.analysis.limitEntry : undefined,
                 hasHitPullback: false,
@@ -2104,6 +2011,32 @@ ${directionIcon} Direction: ${sig.analysis.signal}
       }
     });
   };
+
+  function shutdown(signal: string) {
+    console.log(`\n[Shutdown] ${signal} received. Saving state and closing...`);
+    saveScannerState();
+    saveStreakState();
+    saveDailyPnLState();
+    wss.close(() => {
+      console.log('[Shutdown] WebSocket server closed.');
+    });
+    httpServer.close(() => {
+      console.log('[Shutdown] HTTP server closed. Goodbye.');
+      process.exit(0);
+    });
+    // Force exit after 5 seconds if graceful shutdown hangs
+    setTimeout(() => {
+      console.error('[Shutdown] Forced exit after timeout.');
+      process.exit(1);
+    }, 5000);
+  }
+  
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('uncaughtException', (err) => {
+    console.error('[Shutdown] Uncaught exception:', err);
+    shutdown('uncaughtException');
+  });
 }
 
 startServer();

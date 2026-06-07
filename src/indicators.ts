@@ -35,8 +35,9 @@ export const calculateSupertrend = (data: Candle[], atrArray: number[], period: 
     if (i === 1 || finalUpperband === 0) {
       finalUpperband = basicUpperband;
       finalLowerband = basicLowerband;
-      trend = 1;
-      supertrend.push({ value: finalLowerband, trend });
+      const prevClose = data[i - 1].close;
+      trend = prevClose > finalUpperband ? -1 : 1;
+      supertrend.push({ value: trend === 1 ? finalLowerband : finalUpperband, trend });
       continue;
     }
 
@@ -78,7 +79,7 @@ export const calculateATR = (highs: number[], lows: number[], closes: number[], 
 };
 
 export const calculateOBV = (closes: number[], volumes: number[]): number[] => {
-  const obv = [volumes[0]];
+  const obv = [0];
   for (let i = 1; i < closes.length; i++) {
     if (closes[i] > closes[i - 1]) {
       obv.push(obv[i - 1] + volumes[i]);

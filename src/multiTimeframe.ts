@@ -114,7 +114,7 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
 
   if (htfBias === 'LONG') {
     // EXHAUSTION TYPE B (Deep) / VETO
-    if (hist < 0 && hist < prevHist && hist < -0.05) {
+    if (hist < 0 && hist < prevHist && hist < lastClose * -0.0001) {
       return { state: 'VETO', reason: 'Strong Bearish Pullback (Dark Red MACD)' };
     }
     
@@ -128,16 +128,16 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
       return { state: 'WAIT', reason: 'Bearish Exhaustion or Minor Pullback' };
     }
     
-    return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
+    return { state: 'WAIT', reason: 'Defaulting to WAIT — no clear signal' };
   } else {
     // SHORT BIAS
     // EXHAUSTION TYPE B (Deep) / VETO
-    if (hist > 0 && hist > prevHist && hist > 0.05) {
+    if (hist > 0 && hist > prevHist && hist > lastClose * 0.0001) {
       return { state: 'VETO', reason: 'Strong Bullish Pullback (Dark Green MACD)' };
     }
     
     // CONTINUATION
-    if (hist < 0 && hist < prevHist && lastRsi < 55) {
+    if (hist < 0 && hist < prevHist && lastRsi < 50 && lastClose < lastEma20) {
       return { state: 'CONTINUATION', reason: 'Momentum Expansion (Dark Red MACD)' };
     }
     
@@ -146,7 +146,7 @@ export const get1HControlState = (data: Candle[], htfBias: 'LONG' | 'SHORT'): { 
       return { state: 'WAIT', reason: 'Bullish Exhaustion or Minor Pullback' };
     }
     
-    return { state: 'CONTINUATION', reason: 'Defaulting to Continuation' };
+    return { state: 'WAIT', reason: 'Defaulting to WAIT — no clear signal' };
   }
 };
 
