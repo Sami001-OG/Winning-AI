@@ -14,86 +14,7 @@ import { detectMSS } from "./src/structure.ts";
 import { formatPrice } from "./src/utils/format.ts";
 import { EMA, MACD, RSI } from "technicalindicators";
 
-// --- STREAK TRACKER & QUARTER-KELLY RISK SIZING ---
-let consecutiveStreak = 0; // Positive for wins, negative for losses
-const STREAK_FILE_PATH = path.join(process.cwd(), "streak_state.json");
 
-function loadStreakState() {
-  try {
-    if (fs.existsSync(STREAK_FILE_PATH)) {
-      const data = fs.readFileSync(STREAK_FILE_PATH, "utf8");
-      const obj = JSON.parse(data);
-      consecutiveStreak = parseInt(obj.consecutiveStreak) || 0;
-      console.log(`[Streak Tracker] Loaded consecutive streak: ${consecutiveStreak}`);
-    } else {
-      console.log(`[Streak Tracker] No streak state file found, initialized to 0.`);
-    }
-  } catch (e) {
-    console.error("[Streak Tracker] Error loading streak state:", e);
-  }
-}
-
-function saveStreakState() {
-  try {
-    fs.writeFileSync(STREAK_FILE_PATH, JSON.stringify({ consecutiveStreak }), "utf8");
-  } catch (e) {
-    console.error("[Streak Tracker] Error saving streak state:", e);
-  }
-}
-
-function recordTradeResult(result: "WIN" | "LOSS") {
-  const prevStreak = consecutiveStreak;
-  if (result === "WIN") {
-    if (consecutiveStreak < 0) {
-      consecutiveStreak = 1;
-    } else {
-      consecutiveStreak++;
-    }
-  } else {
-    if (consecutiveStreak > 0) {
-      consecutiveStreak = -1;
-    } else {
-      consecutiveStreak--;
-    }
-  }
-  saveStreakState();
-  console.log(`[Streak Tracker] Trade outcome: ${result}. Streak shifted from ${prevStreak} to ${consecutiveStreak}`);
-}
-
-function getSizingModel() {
-  const winRate = process.env.ACE_WIN_RATE
-    ? parseFloat(process.env.ACE_WIN_RATE)
-    : 0.584; // Fallback to backtested baseline
-  // Weighted expected R:R based on take profit levels:
-  // TP1 (50% Volume), TP2 (30% Volume), TP3 (20% Volume)
-  // Weighted expected reward: 0.50 * 1.8 + 0.30 * 3.0 + 0.20 * 5.0 = 2.80 R:R
-  const rr = 2.80; 
-  // Kelly Fraction: f* = w - (1 - w) / RR
-  const fStar = winRate - (1 - winRate) / rr; 
-  const quarterKelly = 0.25 * fStar; // Conservative Quarter-Kelly sizing
-  
-  // Streak Modifier (M_streak)
-  let mStreak = 1.0;
-  if (consecutiveStreak >= 0) {
-    mStreak = 1.0 + Math.min(consecutiveStreak * 0.10, 0.50); // Cap boost at +50% (+0.50)
-  } else {
-    mStreak = 1.0 - Math.min(Math.abs(consecutiveStreak) * 0.15, 0.75); // Floor reduction at -75% (0.25)
-  }
-  
-  const recommendedSizingPercent = Math.max(0.1, quarterKelly * mStreak * 100); // recommended % of account size
-  
-  return {
-    consecutiveStreak,
-    mStreak,
-    winRate,
-    rr,
-    quarterKelly,
-    recommendedSizingPercent
-  };
-}
-
-// Load the streak state at boot
-loadStreakState();
 
 function calculatePnL(
   entry: number,
@@ -950,8 +871,7 @@ async function startServer() {
 
   app.get("/api/scanner-status", (req, res) => {
     res.json({
-      lastScanMetrics,
-      sizingModel: getSizingModel()
+      lastScanMetrics
     });
   });
 
@@ -1351,36 +1271,45 @@ ${directionIcon} Direction: ${trade.type}
           const klines5m = await fetchKlines(symbol, "5m");
           let tradeClosed = false;
           if (activeTrade && klines5m.length > 0) {
-              // Check if limit entry is filled
+              // Check if limit entry is filled or invalidated
               if (activeTrade.achieved === 0 && activeTrade.isLimitEntry && activeTrade.pullbackTarget && !activeTrade.hasHitPullback) {
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
                 const recentCandles = klines5m.filter((c) => (c.time + 300) * 1000 >= registeredAtVal);
-                let hitPullback = false;
+                
                 for (const candle of recentCandles) {
+                  let invalidated = false;
+                  let hitPullback = false;
+
                   if (activeTrade.direction === "LONG") {
+                    if (candle.high >= activeTrade.tp1 || candle.low <= activeTrade.sl) invalidated = true;
                     if (candle.low <= activeTrade.pullbackTarget) hitPullback = true;
                   } else {
+                    if (candle.low <= activeTrade.tp1 || candle.high >= activeTrade.sl) invalidated = true;
                     if (candle.high >= activeTrade.pullbackTarget) hitPullback = true;
                   }
-                  if (hitPullback) break;
-                }
 
-                if (hitPullback) {
-                  activeTrade.hasHitPullback = true;
-                  activeTrade.achieved = 1; // Mark as filled
-                  
-                  const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
-                  const entryAlertMsg = `🪙 Pair: #${symbol}
-${directionIcon} Direction: ${activeTrade.direction}
-💼 Status: Limit Order Filled! (Pullback Entry)
-🎯 Entry Price: ${formatPrice(activeTrade.entry)}
-❌ Stop Loss: ${formatPrice(activeTrade.sl)}`;
-                  sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
+                  if (invalidated && !hitPullback) {
+                     delete activeTrades[symbol];
+                     tradeClosed = true;
+                     console.log(`[Limit Cancelled] ${symbol} setup invalidated (hit TP1 or SL before Limit Entry).`);
+                     break; 
+                  } else if (hitPullback) {
+                     activeTrade.hasHitPullback = true;
+                     activeTrade.achieved = 1; // Mark as filled
+                     // Update registration time so TP/SL checking only starts from this fill candle onwards
+                     activeTrade.registeredAt = candle.time * 1000;
+                   
+                     const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
+                     const entryAlertMsg = `⚡️ <b>TRADE TAKEN (Limit Hit)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n${directionIcon} <b>Direction:</b> ${activeTrade.direction}\n🎯 <b>Entry Price:</b> <code>${formatPrice(activeTrade.entry)}</code>\n\n❌ <b>Stop Loss:</b> <code>${formatPrice(activeTrade.sl)}</code>\n🎯 <b>TP1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n🎯 <b>TP2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n🎯 <b>TP3:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n\n🛡 <b>Risk:</b> Move SL to Entry at TP1`;
+                     sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
+                     
+                     break;
+                  }
                 }
               }
 
               // Evaluate active trade targets if filled
-              if (activeTrade.achieved >= 1) {
+              if (activeTrade.achieved >= 1 && !tradeClosed) {
                 const registeredAtVal = activeTrade.registeredAt || Date.now();
                 const recentCandles = klines5m.filter((c) => (c.time + 300) * 1000 >= registeredAtVal);
 
@@ -1410,17 +1339,15 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         `[DEBUG] SL Hit for ${symbol}: Low ${currentLow}, SL ${slCheckVal}`,
                       );
                       const isBE = slCheckVal === activeTrade.entry;
-                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, slCheckVal, "LONG");
-                      const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
-                      const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
+                      const pnlStr = isBE ? "0.00%" : calculatePnL(activeTrade.entry, slCheckVal, "LONG");
+                      const titleText = isBE ? "🛡 <b>BREAK-EVEN HIT</b>" : "❌ <b>STOP LOSS HIT</b>";
+                      const subtitleText = isBE ? "Position closed at Entry." : "Position closed at Stop Loss.";
 
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                        `${titleText}\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n⚠️ <b>Status:</b> ${subtitleText} (<code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL:</b> ${pnlStr}`,
                       ).catch(console.error);
-                      
-                      recordTradeResult(isBE ? "WIN" : "LOSS");
                       
                       const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "LONG"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
@@ -1429,17 +1356,15 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         `[DEBUG] SL Hit for ${symbol}: High ${currentHigh}, SL ${slCheckVal}`,
                       );
                       const isBE = slCheckVal === activeTrade.entry;
-                      const pnlStr = isBE ? "0.00% (B/E Secured)" : calculatePnL(activeTrade.entry, slCheckVal, "SHORT");
-                      const titleText = isBE ? "🛡 <b>BREAK-EVEN STOP LOSS HIT</b> 🛡" : "❌ <b>STOP LOSS HIT</b> ❌";
-                      const subtitleText = isBE ? "Rest of the position exited at cost." : "Position closed at protective Stop Loss.";
+                      const pnlStr = isBE ? "0.00%" : calculatePnL(activeTrade.entry, slCheckVal, "SHORT");
+                      const titleText = isBE ? "🛡 <b>BREAK-EVEN HIT</b>" : "❌ <b>STOP LOSS HIT</b>";
+                      const subtitleText = isBE ? "Position closed at Entry." : "Position closed at Stop Loss.";
 
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🚨 <b>TRADE UPDATE</b> 🚨\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n${titleText}\n⚠️ <b>Status:</b> ${subtitleText} (Price: <code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL Secured:</b> ${pnlStr}`,
+                        `${titleText}\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n⚠️ <b>Status:</b> ${subtitleText} (<code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL:</b> ${pnlStr}`,
                       ).catch(console.error);
-                      
-                      recordTradeResult(isBE ? "WIN" : "LOSS");
                       
                       const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "SHORT"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
@@ -1462,7 +1387,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
+                        `🎯 <b>TP1 HIT (50% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n🛡 <b>Risk:</b> SL moved to Break-Even`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentHigh >= activeTrade.tp2) {
                       activeTrade.hasHitTp2 = true;
@@ -1473,7 +1398,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
+                        `🎯 <b>TP2 HIT (30% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>PnL:</b> ${pnlSegment}`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentHigh >= activeTrade.tp3) {
                       activeTrade.hasHitTp3 = true;
@@ -1483,10 +1408,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
+                        `🎉 <b>TP3 HIT (Trade Completed)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n⭐️ <b>Status:</b> All targets hit. Enjoy!`,
                       ).catch(console.error);
-                      
-                      recordTradeResult("WIN");
                       
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "LONG"), 0.20, "WIN", activeTrade);
                       
@@ -1506,7 +1429,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
+                        `🎯 <b>TP1 HIT (50% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n🛡 <b>Risk:</b> SL moved to Break-Even`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentLow <= activeTrade.tp2) {
                       activeTrade.hasHitTp2 = true;
@@ -1517,7 +1440,7 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
+                        `🎯 <b>TP2 HIT (30% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>PnL:</b> ${pnlSegment}`,
                       ).catch(console.error);
                     } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentLow <= activeTrade.tp3) {
                       activeTrade.hasHitTp3 = true;
@@ -1527,10 +1450,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                       sendTelegramSignal(
                         botToken,
                         chatId,
-                        `🎉 <b>TAKE PROFIT 3 ACHIEVED (Trade Completed)</b> 🎉\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Final Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>Final Secured Return:</b> ${pnlSegment} (on remaining 20% runner)\n⭐️ <b>Status:</b> Trade successfully reached ultimate target! Enjoy the profits.`,
+                        `🎉 <b>TP3 HIT (Trade Completed)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n⭐️ <b>Status:</b> All targets hit. Enjoy!`,
                       ).catch(console.error);
-                      
-                      recordTradeResult("WIN");
                       
                       recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "SHORT"), 0.20, "WIN", activeTrade);
                       
@@ -1610,7 +1531,6 @@ ${directionIcon} Direction: ${activeTrade.direction}
               return; 
             }
 
-            // Calculate dynamic limit entry with pullback factor of 0.45 (Rank #1 Optimized Setting)
             if (klines5m.length === 0) return;
             const originalClose = klines5m[klines5m.length - 1].close;
             const sl = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
@@ -1618,59 +1538,88 @@ ${directionIcon} Direction: ${activeTrade.direction}
             const pullbackFactor = 0.45; // 45% Pullback from backtest Rank #1
             const shift = gap * pullbackFactor;
             
-            mtfAnalysis.limitEntry = mtfAnalysis.signal === "LONG" ? originalClose - shift : originalClose + shift;
-            mtfAnalysis.entryStrategy = "Limit (Pullback)";
+            // Base limit logic
+            let doLimitEntry = true;
+            let oiRising = false;
+            let oiFalling = false;
+            let premiumLogicStr = "";
 
             // Premium Upgrades: OI and Funding Rate
-            let premiumLogicStr = "";
             try {
-              if (control1H.state === "CONTINUATION") {
                 const oiRes = await fetchWithTimeout(
                   `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
                   { timeout: 10000 },
                   'INDICATOR'
                 );
-                if (!oiRes.headers.get("content-type")?.includes("application/json")) {
-                  throw new Error("Binance HTML error");
-                }
-                const oiData = await oiRes.json();
-                if (Array.isArray(oiData) && oiData.length === 2) {
-                  const prev = parseFloat(oiData[0].sumOpenInterestValue);
-                  const curr = parseFloat(oiData[1].sumOpenInterestValue);
-                  if (prev > 0) {
-                    const oiChange = (curr - prev) / prev;
-                    if (oiChange > 0.001) {
-                      // > 0.1% increase in 15m
-                      // mtfAnalysis.confidence += 5;
-                      premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising`;
+                
+                if (oiRes.headers.get("content-type")?.includes("application/json")) {
+                  const oiData = await oiRes.json();
+                  if (Array.isArray(oiData) && oiData.length === 2) {
+                    const prev = parseFloat(oiData[0].sumOpenInterestValue);
+                    const curr = parseFloat(oiData[1].sumOpenInterestValue);
+                    if (prev > 0) {
+                      const oiChange = (curr - prev) / prev;
+                      if (oiChange > 0.001) {
+                         oiRising = true;
+                         premiumLogicStr += `\n• 🔥 Trend Fuel: OI Rising (+${(oiChange*100).toFixed(2)}%)`;
+                      } else if (oiChange < -0.001) {
+                         oiFalling = true;
+                         premiumLogicStr += `\n• 📉 Fuel Exhaustion: OI Declining (${(oiChange*100).toFixed(2)}%)`;
+                      }
                     }
                   }
                 }
-              } else if (control1H.state === "WAIT") {
-                const frRes = await fetchWithTimeout(
-                  `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
-                  { timeout: 10000 },
-                  'INDICATOR'
-                );
-                if (!frRes.headers.get("content-type")?.includes("application/json")) {
-                  throw new Error("Binance HTML error");
-                }
-                const frData = await frRes.json();
-                const fundingRate = parseFloat(frData.lastFundingRate);
-
-                if (mtfAnalysis.signal === "LONG" && fundingRate < -0.0001) {
-                  // mtfAnalysis.confidence += 8;
-                  premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate`;
-                } else if (
-                  mtfAnalysis.signal === "SHORT" &&
-                  fundingRate > 0.0005
-                ) {
-                  // mtfAnalysis.confidence += 8;
-                  premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate`;
-                }
-              }
             } catch (e) {
-              console.error(`Failed to fetch premium data for ${symbol}:`, e);
+               console.error(`Failed to fetch OI data for ${symbol}:`, e);
+            }
+            
+            try {
+               const frRes = await fetchWithTimeout(
+                 `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
+                 { timeout: 10000 },
+                 'INDICATOR'
+               );
+               if (frRes.headers.get("content-type")?.includes("application/json")) {
+                  const frData = await frRes.json();
+                  const fundingRate = parseFloat(frData.lastFundingRate);
+  
+                  if (mtfAnalysis.signal === "LONG" && fundingRate < -0.0001) {
+                    premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate`;
+                  } else if (
+                    mtfAnalysis.signal === "SHORT" &&
+                    fundingRate > 0.0005
+                  ) {
+                    premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate`;
+                  }
+               }
+            } catch(e) {}
+            
+            // Volume Check
+            const recentVols = klines15m.slice(-6).map(k => k.volume);
+            const avgVol = recentVols.reduce((a,b)=>a+b, 0) / 6;
+            const lastVol = recentVols[recentVols.length - 1];
+            const volumeExpanding = lastVol > avgVol * 1.2;
+            if (volumeExpanding) {
+                premiumLogicStr += `\n• 📊 Volume Expanding`;
+            }
+            
+            // BOS check
+            const bosStr = mtfAnalysis.indicators.find((i: any) => i.name === 'Market Structure')?.value || "";
+            const isBullishBos = bosStr.includes("BOS: Bullish");
+            const isBearishBos = bosStr.includes("BOS: Bearish");
+            
+            if (mtfAnalysis.signal === "LONG" && isBullishBos && volumeExpanding && oiRising) {
+                doLimitEntry = false; // Continuation
+            } else if (mtfAnalysis.signal === "SHORT" && isBearishBos && volumeExpanding && oiRising) {
+                doLimitEntry = false; // Continuation
+            }
+
+            if (doLimitEntry) {
+                mtfAnalysis.limitEntry = mtfAnalysis.signal === "LONG" ? originalClose - shift : originalClose + shift;
+                mtfAnalysis.entryStrategy = "Limit (Pullback)";
+            } else {
+                mtfAnalysis.limitEntry = undefined;
+                mtfAnalysis.entryStrategy = "Market (Continuation)";
             }
             (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
 
@@ -1821,37 +1770,16 @@ ${directionIcon} Direction: ${activeTrade.direction}
               
           const logicStr = escapeHtml(logicStrRaw);
 
-          const sizeModel = getSizingModel();
-          const streakSign = sizeModel.consecutiveStreak > 0 ? "+" : "";
-          const riskSizingStr = `\n\n🔥 Current Streak: <b>${streakSign}${sizeModel.consecutiveStreak}</b> consecutive ${sizeModel.consecutiveStreak > 0 ? "wins" : "losses"}\n📊 Sizing Modifier: <code>${sizeModel.mStreak.toFixed(2)}x</code>\n💰 Recommended Kelly Allocation: <b>${sizeModel.recommendedSizingPercent.toFixed(1)}%</b> of Portfolio (Quarter-Kelly)`;
-
           let message = "";
           const directionIcon = sig.analysis.signal === "LONG" ? "📈" : "📉";
           const confValue = (sig.analysis.confidence || 0).toFixed(1);
           if (sig.isUpgrade) {
               const oldConfValue = (sig.oldConfidence || 0).toFixed(1);
-              message = `🔄 <b>Signal Upgrade</b>\n\n🪙 Pair: #${sig.symbol}\n${directionIcon} Direction: ${sig.analysis.signal}\n\n📈 Confidence: ${oldConfValue}% → ${confValue}%\n\n📝 Reason:\n${logicStr}\n${strategyStr}${riskSizingStr}`;
+              message = `🔄 <b>Signal Upgrade</b>\n\n🪙 Pair: #${sig.symbol}\n${directionIcon} Direction: ${sig.analysis.signal}\n\n📈 Confidence: ${oldConfValue}% → ${confValue}%\n\n📝 Reason:\n${logicStr}\n${strategyStr}`;
           } else if (isLimitTrue) {
-            message = `🪙 Pair: #${sig.symbol}
-${directionIcon} Direction: ${sig.analysis.signal}
-  Confidence: ${confValue}%
-🎯 Entry Price: ${formatPrice(sig.entryPrice)}
-🎯 Limit Entry Price: ${formatPrice(entryPrice)}
-🎯 TP1 (50% Booking): ${formatPrice(tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(tp3)}
-❌ Stop Loss: ${formatPrice(sig.sl)}
-🛡 Trail Mode: Move SL to Break-Even at TP1${riskSizingStr}`;
+            message = `🔔 <b>PENDING SETUP (Limit Pullback)</b>\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionIcon} <b>Direction:</b> ${sig.analysis.signal}\n📊 <b>Confidence:</b> ${confValue}%\n⏱ <b>Session:</b> ${sessionName}\n🎯 <b>Limit Price:</b> <code>${formatPrice(entryPrice)}</code>\n\n❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>\n🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>\n🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>\n🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>\n\n🛡 <b>Risk:</b> Move SL to Entry at TP1${strategyStr}`;
           } else {
-            message = `🪙 Pair: #${sig.symbol}
-${directionIcon} Direction: ${sig.analysis.signal}
-  Confidence: ${confValue}%
-🎯 Entry Price: ${formatPrice(entryPrice)}
-🎯 TP1 (50% Booking): ${formatPrice(tp1)}
-🎯 TP2 (30% Booking): ${formatPrice(tp2)}
-🎯 TP3 (20% Runner): ${formatPrice(tp3)}
-❌ Stop Loss: ${formatPrice(sig.sl)}
-🛡 Trail Mode: Move SL to Break-Even at TP1${riskSizingStr}`;
+            message = `⚡️ <b>TRADE TAKEN (Market Continuation)</b>\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionIcon} <b>Direction:</b> ${sig.analysis.signal}\n📊 <b>Confidence:</b> ${confValue}%\n⏱ <b>Session:</b> ${sessionName}\n🎯 <b>Entry Price:</b> <code>${formatPrice(entryPrice)}</code>\n\n❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>\n🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>\n🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>\n🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>\n\n🛡 <b>Risk:</b> Move SL to Entry at TP1${strategyStr}`;
           }
 
           const bullishImageUrl =
@@ -2015,7 +1943,6 @@ ${directionIcon} Direction: ${sig.analysis.signal}
   function shutdown(signal: string) {
     console.log(`\n[Shutdown] ${signal} received. Saving state and closing...`);
     saveScannerState();
-    saveStreakState();
     saveDailyPnLState();
     wss.close(() => {
       console.log('[Shutdown] WebSocket server closed.');
