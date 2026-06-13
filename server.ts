@@ -79,23 +79,75 @@ function getBstDateString(offsetMs = 0) {
 
 function loadDailyPnLState() {
   try {
+    let rawObj: any = {};
     if (fs.existsSync(DAILY_PNL_FILE_PATH)) {
-      dailyPnLState = JSON.parse(fs.readFileSync(DAILY_PNL_FILE_PATH, "utf8"));
+      const content = fs.readFileSync(DAILY_PNL_FILE_PATH, "utf8");
+      if (content.trim()) {
+        rawObj = JSON.parse(content);
+      }
     }
     const currentBstDay = getBstDateString();
-    if (!dailyPnLState.dateStr) {
-      dailyPnLState.dateStr = currentBstDay;
-      saveDailyPnLState();
-    }
+    
+    // Fallback default structure validation to prevent any JSON type-mismatch or property-undefined crashes
+    dailyPnLState = {
+      dateStr: typeof rawObj.dateStr === "string" ? rawObj.dateStr : currentBstDay,
+      totalNetReturn: typeof rawObj.totalNetReturn === "number" ? rawObj.totalNetReturn : 0,
+      wins: typeof rawObj.wins === "number" ? rawObj.wins : 0,
+      losses: typeof rawObj.losses === "number" ? rawObj.losses : 0,
+      grossProfit: typeof rawObj.grossProfit === "number" ? rawObj.grossProfit : 0,
+      grossLoss: typeof rawObj.grossLoss === "number" ? rawObj.grossLoss : 0,
+      signalsGenerated: typeof rawObj.signalsGenerated === "number" ? rawObj.signalsGenerated : 0,
+      totalTradesCompleted: typeof rawObj.totalTradesCompleted === "number" ? rawObj.totalTradesCompleted : 0,
+      bestTrade: typeof rawObj.bestTrade === "number" ? rawObj.bestTrade : -9999,
+      worstTrade: typeof rawObj.worstTrade === "number" ? rawObj.worstTrade : 9999,
+      highestConfWin: typeof rawObj.highestConfWin === "number" ? rawObj.highestConfWin : 0,
+      highestConfLoss: typeof rawObj.highestConfLoss === "number" ? rawObj.highestConfLoss : 0,
+      longWins: typeof rawObj.longWins === "number" ? rawObj.longWins : 0,
+      longLosses: typeof rawObj.longLosses === "number" ? rawObj.longLosses : 0,
+      shortWins: typeof rawObj.shortWins === "number" ? rawObj.shortWins : 0,
+      shortLosses: typeof rawObj.shortLosses === "number" ? rawObj.shortLosses : 0,
+      sessionWins: rawObj.sessionWins && typeof rawObj.sessionWins === "object" ? { ...rawObj.sessionWins } : { London: 0, "New York": 0, Asian: 0, OUTSIDE: 0 },
+      sessionLosses: rawObj.sessionLosses && typeof rawObj.sessionLosses === "object" ? { ...rawObj.sessionLosses } : { London: 0, "New York": 0, Asian: 0, OUTSIDE: 0 },
+      reported: typeof rawObj.reported === "boolean" ? rawObj.reported : false
+    };
+
+    saveDailyPnLState();
   } catch (e) {
-    console.error("[Daily PnL] Error:", e);
+    console.error("[Daily PnL] Error loading state:", e);
   }
 }
 
 function saveDailyPnLState() {
   try {
-    fs.writeFileSync(DAILY_PNL_FILE_PATH, JSON.stringify(dailyPnLState), "utf8");
-  } catch (e) {}
+    fs.writeFileSync(DAILY_PNL_FILE_PATH, JSON.stringify(dailyPnLState, null, 2), "utf8");
+  } catch (e) {
+    console.error("[Daily PnL] Error saving state:", e);
+  }
+}
+
+const DAILY_PNL_HISTORY_FILE_PATH = path.join(process.cwd(), "daily_pnl_history.json");
+
+function appendDailyPnLHistory(state: DailyPnLState) {
+  try {
+    let historyList: DailyPnLState[] = [];
+    if (fs.existsSync(DAILY_PNL_HISTORY_FILE_PATH)) {
+      const content = fs.readFileSync(DAILY_PNL_HISTORY_FILE_PATH, "utf8");
+      if (content.trim()) {
+        historyList = JSON.parse(content);
+      }
+    }
+    const dateExists = historyList.some(item => item.dateStr === state.dateStr);
+    if (!dateExists) {
+      historyList.push({ ...state });
+      if (historyList.length > 30) {
+        historyList = historyList.slice(historyList.length - 30);
+      }
+      fs.writeFileSync(DAILY_PNL_HISTORY_FILE_PATH, JSON.stringify(historyList, null, 2), "utf8");
+      console.log(`[Daily PnL] Successfully archived day: ${state.dateStr}`);
+    }
+  } catch (e) {
+    console.error("[Daily PnL] History append failed:", e);
+  }
 }
 
 loadDailyPnLState();
@@ -172,7 +224,9 @@ function processDailyRolloverAndReport(botToken: string, chatId: string) {
      const currentBstDay = getBstDateString();
      
      if (dailyPnLState.dateStr && dailyPnLState.dateStr !== currentBstDay) {
-        if (!dailyPnLState.reported) {
+        const canTelegramPush = !!(botToken && chatId);
+        
+        if (!dailyPnLState.reported && canTelegramPush) {
            const sign = dailyPnLState.totalNetReturn >= 0 ? "+" : "";
            
            const grossLoss = dailyPnLState.grossLoss === 0 ? 1 : dailyPnLState.grossLoss;
@@ -221,11 +275,14 @@ function processDailyRolloverAndReport(botToken: string, chatId: string) {
 ${sessionStr}
 Time: 00:00 BST`;
            
-           if (botToken && chatId) {
-              sendTelegramSignal(botToken, chatId, msg).catch(console.error);
-           }
+           sendTelegramSignal(botToken, chatId, msg).catch(console.error);
+           dailyPnLState.reported = true;
         }
         
+        // Log previous day to our historical performance cache before resetting
+        appendDailyPnLHistory(dailyPnLState);
+        
+        // Always reset metrics cleanly at midnight date change, making it 0 again
         dailyPnLState = {
            dateStr: currentBstDay,
            totalNetReturn: 0,
@@ -248,6 +305,7 @@ Time: 00:00 BST`;
            reported: false
         };
         saveDailyPnLState();
+        console.log(`[Daily PnL] Midnight Rollover successful. Cleanly reset metrics to 0 for: ${currentBstDay}`);
      }
   } catch (e) {
      console.error("[Daily PnL] Rollover error:", e);
@@ -870,8 +928,10 @@ async function startServer() {
   });
 
   app.get("/api/scanner-status", (req, res) => {
+    loadDailyPnLState();
     res.json({
-      lastScanMetrics
+      lastScanMetrics,
+      dailyPnLState
     });
   });
 
@@ -1114,6 +1174,638 @@ ${directionIcon} Direction: ${trade.type}
 
   loadScannerState();
 
+  interface OiCacheEntry {
+    oiRising: boolean;
+    oiFalling: boolean;
+    premiumLogicStr: string;
+    timestamp: number;
+  }
+
+  interface FrCacheEntry {
+    fundingRate: number;
+    timestamp: number;
+  }
+
+  const openInterestCache = new Map<string, OiCacheEntry>();
+  const fundingRateCache = new Map<string, FrCacheEntry>();
+
+  async function getCachedOpenInterest(symbol: string): Promise<{ oiRising: boolean; oiFalling: boolean; premiumLogicStr: string }> {
+    const cached = openInterestCache.get(symbol);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < 120000) { // 2 minute cache
+      return { oiRising: cached.oiRising, oiFalling: cached.oiFalling, premiumLogicStr: cached.premiumLogicStr };
+    }
+
+    let oiRising = false;
+    let oiFalling = false;
+    let premiumLogicStr = "";
+
+    try {
+      const oiRes = await fetchWithTimeout(
+        `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
+        { timeout: 10000 },
+        'INDICATOR'
+      );
+      
+      if (oiRes.headers.get("content-type")?.includes("application/json")) {
+        const oiData = await oiRes.json();
+        if (Array.isArray(oiData) && oiData.length === 2) {
+          const prev = parseFloat(oiData[0].sumOpenInterestValue);
+          const curr = parseFloat(oiData[1].sumOpenInterestValue);
+          if (prev > 0) {
+            const oiChange = (curr - prev) / prev;
+            if (oiChange > 0.001) {
+               oiRising = true;
+               premiumLogicStr = `\n• 🔥 Trend Fuel: OI Rising (+${(oiChange*100).toFixed(2)}%)`;
+            } else if (oiChange < -0.001) {
+               oiFalling = true;
+               premiumLogicStr = `\n• 📉 Fuel Exhaustion: OI Declining (${(oiChange*100).toFixed(2)}%)`;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`Failed to fetch OI data for ${symbol}:`, e);
+    }
+
+    openInterestCache.set(symbol, { oiRising, oiFalling, premiumLogicStr, timestamp: now });
+    return { oiRising, oiFalling, premiumLogicStr };
+  }
+
+  async function getCachedFundingRate(symbol: string): Promise<number> {
+    const cached = fundingRateCache.get(symbol);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < 300000) { // 5 minute cache
+      return cached.fundingRate;
+    }
+
+    let fundingRate = 0;
+    try {
+      const frRes = await fetchWithTimeout(
+        `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
+        { timeout: 10000 },
+        'INDICATOR'
+      );
+      if (frRes.headers.get("content-type")?.includes("application/json")) {
+         const frData = await frRes.json();
+         fundingRate = parseFloat(frData.lastFundingRate) || 0;
+      }
+    } catch(e) {
+      console.error(`Failed to fetch FR for ${symbol}:`, e);
+    }
+
+    fundingRateCache.set(symbol, { fundingRate, timestamp: now });
+    return fundingRate;
+  }
+
+  function processActiveTradeState(symbol: string, klines5m: any[], botToken: string, chatId: string): boolean {
+    const activeTrade = activeTrades[symbol];
+    if (!activeTrade || !klines5m || klines5m.length === 0) return false;
+
+    let tradeClosed = false;
+
+    if (activeTrade.achieved === 0 && activeTrade.isLimitEntry && activeTrade.pullbackTarget && !activeTrade.hasHitPullback) {
+      const registeredAtVal = activeTrade.registeredAt || Date.now();
+      const recentCandles = klines5m.filter((c: any) => (c.time + 300) * 1000 >= registeredAtVal);
+      
+      for (const candle of recentCandles) {
+        let invalidated = false;
+        let hitPullback = false;
+
+        if (activeTrade.direction === "LONG") {
+          if (candle.high >= activeTrade.tp1 || candle.low <= activeTrade.sl) invalidated = true;
+          if (candle.low <= activeTrade.pullbackTarget) hitPullback = true;
+        } else {
+          if (candle.low <= activeTrade.tp1 || candle.high >= activeTrade.sl) invalidated = true;
+          if (candle.high >= activeTrade.pullbackTarget) hitPullback = true;
+        }
+
+        if (invalidated && !hitPullback) {
+           delete activeTrades[symbol];
+           tradeClosed = true;
+           console.log(`[Limit Cancelled] ${symbol} setup invalidated (hit TP1 or SL before Limit Entry).`);
+           break; 
+        } else if (hitPullback) {
+           activeTrade.hasHitPullback = true;
+           activeTrade.achieved = 1; // Mark as filled
+           activeTrade.registeredAt = candle.time * 1000;
+         
+           const directionIcon = activeTrade.direction === "LONG" ? "📈" : "📉";
+           const entryAlertMsg = `⚡️ <b>TRADE TAKEN (Limit Hit)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n${directionIcon} <b>Direction:</b> ${activeTrade.direction}\n🎯 <b>Entry Price:</b> <code>${formatPrice(activeTrade.entry)}</code>\n\n❌ <b>Stop Loss:</b> <code>${formatPrice(activeTrade.sl)}</code>\n🎯 <b>TP1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n🎯 <b>TP2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n🎯 <b>TP3:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n\n🛡 <b>Risk:</b> Move SL to Entry at TP1`;
+           sendTelegramSignal(botToken, chatId, entryAlertMsg).catch(console.error);
+           
+           break;
+        }
+      }
+    }
+
+    if (activeTrade.achieved >= 1 && !tradeClosed) {
+      const registeredAtVal = activeTrade.registeredAt || Date.now();
+      const recentCandles = klines5m.filter((c: any) => (c.time + 300) * 1000 >= registeredAtVal);
+
+      for (const candle of recentCandles) {
+        if (tradeClosed) break;
+
+        const currentHigh = candle.high;
+        const currentLow = candle.low;
+
+        const slCheckVal = (activeTrade.slUpdatedTime && (candle.time * 1000 < activeTrade.slUpdatedTime))
+          ? activeTrade.sl
+          : activeTrade.currentSl;
+
+        let slHit = false;
+        if (activeTrade.direction === "LONG" && currentLow <= slCheckVal) {
+          slHit = true;
+        } else if (activeTrade.direction === "SHORT" && currentHigh >= slCheckVal) {
+          slHit = true;
+        }
+
+        if (slHit) {
+          if (activeTrade.direction === "LONG") {
+            const isBE = slCheckVal === activeTrade.entry;
+            const pnlStr = isBE ? "0.00%" : calculatePnL(activeTrade.entry, slCheckVal, "LONG");
+            const titleText = isBE ? "🛡 <b>BREAK-EVEN HIT</b>" : "❌ <b>STOP LOSS HIT</b>";
+            const subtitleText = isBE ? "Position closed at Entry." : "Position closed at Stop Loss.";
+
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `${titleText}\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n⚠️ <b>Status:</b> ${subtitleText} (<code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL:</b> ${pnlStr}`,
+            ).catch(console.error);
+            
+            const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "LONG"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
+          } else {
+            const isBE = slCheckVal === activeTrade.entry;
+            const pnlStr = isBE ? "0.00%" : calculatePnL(activeTrade.entry, slCheckVal, "SHORT");
+            const titleText = isBE ? "🛡 <b>BREAK-EVEN HIT</b>" : "❌ <b>STOP LOSS HIT</b>";
+            const subtitleText = isBE ? "Position closed at Entry." : "Position closed at Stop Loss.";
+
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `${titleText}\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n⚠️ <b>Status:</b> ${subtitleText} (<code>${formatPrice(slCheckVal)}</code>)\n💰 <b>PnL:</b> ${pnlStr}`,
+            ).catch(console.error);
+            
+            const remPortion = activeTrade.achieved === 1 ? 1.0 : (activeTrade.achieved === 2 ? 0.5 : (activeTrade.achieved === 3 ? 0.2 : 0.0));
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, slCheckVal, "SHORT"), remPortion, isBE ? "WIN" : "LOSS", activeTrade);
+          }
+          delete activeTrades[symbol];
+          tradeClosed = true;
+          break;
+        }
+
+        if (!tradeClosed && activeTrade.direction === "LONG") {
+          if (!activeTrade.hasHitTp1 && currentHigh >= activeTrade.tp1) {
+            activeTrade.hasHitTp1 = true;
+            activeTrade.achieved = 2;
+            activeTrade.currentSl = activeTrade.entry;
+            activeTrade.slUpdatedTime = Date.now();
+
+            const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "LONG");
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp1, "LONG"), 0.50, null, activeTrade);
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `🎯 <b>TP1 HIT (50% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n🛡 <b>Risk:</b> SL moved to Break-Even`,
+            ).catch(console.error);
+          } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentHigh >= activeTrade.tp2) {
+            activeTrade.hasHitTp2 = true;
+            activeTrade.achieved = 3;
+
+            const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp2, "LONG");
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp2, "LONG"), 0.30, null, activeTrade);
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `🎯 <b>TP2 HIT (30% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>PnL:</b> ${pnlSegment}`,
+            ).catch(console.error);
+          } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentHigh >= activeTrade.tp3) {
+            activeTrade.hasHitTp3 = true;
+            activeTrade.achieved = 4;
+
+            const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp3, "LONG");
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `🎉 <b>TP3 HIT (Trade Completed)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n⭐️ <b>Status:</b> All targets hit. Enjoy!`,
+            ).catch(console.error);
+            
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "LONG"), 0.20, "WIN", activeTrade);
+            
+            delete signalCooldowns[symbol];
+            delete activeTrades[symbol];
+            tradeClosed = true;
+            break;
+          }
+        } else if (!tradeClosed && activeTrade.direction === "SHORT") {
+          if (!activeTrade.hasHitTp1 && currentLow <= activeTrade.tp1) {
+            activeTrade.hasHitTp1 = true;
+            activeTrade.achieved = 2;
+            activeTrade.currentSl = activeTrade.entry;
+            activeTrade.slUpdatedTime = Date.now();
+
+            const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp1, "SHORT");
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp1, "SHORT"), 0.50, null, activeTrade);
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `🎯 <b>TP1 HIT (50% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n🛡 <b>Risk:</b> SL moved to Break-Even`,
+            ).catch(console.error);
+          } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentLow <= activeTrade.tp2) {
+            activeTrade.hasHitTp2 = true;
+            activeTrade.achieved = 3;
+
+            const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp2, "SHORT");
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp2, "SHORT"), 0.30, null, activeTrade);
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `🎯 <b>TP2 HIT (30% Booked)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>PnL:</b> ${pnlSegment}`,
+            ).catch(console.error);
+          } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentLow <= activeTrade.tp3) {
+            activeTrade.hasHitTp3 = true;
+            activeTrade.achieved = 4;
+
+            const pnlSegment = calculatePnL(activeTrade.entry, activeTrade.tp3, "SHORT");
+            sendTelegramSignal(
+              botToken,
+              chatId,
+              `🎉 <b>TP3 HIT (Trade Completed)</b>\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target:</b> <code>${formatPrice(activeTrade.tp3)}</code>\n💰 <b>PnL:</b> ${pnlSegment}\n⭐️ <b>Status:</b> All targets hit. Enjoy!`,
+            ).catch(console.error);
+            
+            recordPnLSegment(calculatePnLNumber(activeTrade.entry, activeTrade.tp3, "SHORT"), 0.20, "WIN", activeTrade);
+            
+            delete signalCooldowns[symbol];
+            delete activeTrades[symbol];
+            tradeClosed = true;
+            break;
+          }
+        }
+      }
+    }
+
+    return tradeClosed;
+  }
+
+  const currentlyScanning = new Set<string>();
+
+  async function scanSymbol(
+    symbol: string,
+    btcTrend: string,
+    botToken: string,
+    chatId: string,
+    sessionName: string,
+    requiredConfidence: number,
+    diagnosticCounts: any,
+    allSignals: any[],
+    currentFrontendTrades: any[]
+  ) {
+    if (currentlyScanning.has(symbol)) {
+      return;
+    }
+    currentlyScanning.add(symbol);
+
+    try {
+      const activeTrade = activeTrades[symbol];
+      const klines5m = await fetchKlines(symbol, "5m");
+      let tradeClosed = false;
+      if (activeTrade && klines5m.length > 0) {
+        tradeClosed = processActiveTradeState(symbol, klines5m, botToken, chatId);
+      }
+
+      if (tradeClosed) {
+        return; 
+      }
+
+      const klines4h = await fetchKlines(symbol, "4h");
+      const htfDirection = getHTFDirection(klines4h);
+      const strictHtfAlignment = true;
+      const htfNeutralSkip = true;
+      if (htfNeutralSkip && htfDirection === "NEUTRAL") {
+        diagnosticCounts.htfNeutral++;
+        return;
+      }
+
+      const klines1h = await fetchKlines(symbol, "1h");
+      const htfBiasFor1H = htfDirection === "NEUTRAL" ? "LONG" : htfDirection;
+      const control1H = get1HControlState(klines1h, htfBiasFor1H);
+      const use1hControl = true;
+      if (use1hControl && control1H.state === "WAIT") {
+         return; 
+      }
+      if (use1hControl && control1H.state === "VETO") {
+         return; 
+      }
+
+      const klines15m = await fetchKlines(symbol, "15m");
+      const mtfAnalysis = analyzeChart(
+        klines15m,
+        DEFAULT_RELIABILITY,
+        [],
+        symbol
+      );
+      if (mtfAnalysis.signal === "NO TRADE") {
+        diagnosticCounts.mtfNoTrade++;
+        return;
+      }
+      if (strictHtfAlignment && htfDirection !== mtfAnalysis.signal) {
+        diagnosticCounts.mtfMismatch++;
+        return;
+      }
+
+      const useBtcFilter = true;
+      if (useBtcFilter && symbol !== "BTCUSDT") {
+        if (mtfAnalysis.signal === "LONG" && btcTrend === "SHORT") { 
+          diagnosticCounts.btcConflict++; 
+          return; 
+        }
+        if (mtfAnalysis.signal === "SHORT" && btcTrend === "LONG") { 
+          diagnosticCounts.btcConflict++; 
+          return; 
+        }
+      }
+
+      const ltfValidation = validateLTFEntry(
+        klines5m,
+        mtfAnalysis.signal as "LONG" | "SHORT"
+      );
+      if (!ltfValidation.isValid) { 
+        diagnosticCounts.ltfInvalid++; 
+        return; 
+      }
+
+      if (klines5m.length === 0) return;
+      const originalClose = klines5m[klines5m.length - 1].close;
+      const slVal = mtfAnalysis.sl || (mtfAnalysis.signal === "LONG" ? originalClose * 0.98 : originalClose * 1.02);
+      const gap = Math.abs(originalClose - slVal);
+      const pullbackFactor = 0.45;
+      const shift = gap * pullbackFactor;
+      
+      let doLimitEntry = true;
+      let oiRising = false;
+      let oiFalling = false;
+      let premiumLogicStr = "";
+
+      const oiCacheResult = await getCachedOpenInterest(symbol);
+      oiRising = oiCacheResult.oiRising;
+      oiFalling = oiCacheResult.oiFalling;
+      premiumLogicStr += oiCacheResult.premiumLogicStr;
+      
+      try {
+         const fundingRate = await getCachedFundingRate(symbol);
+         if (mtfAnalysis.signal === "LONG" && fundingRate < -0.0001) {
+           premiumLogicStr += `\n• 💥 Squeeze Hunter: Negative Funding Rate`;
+         } else if (
+           mtfAnalysis.signal === "SHORT" &&
+           fundingRate > 0.0005
+         ) {
+           premiumLogicStr += `\n• 💥 Squeeze Hunter: High Positive Funding Rate`;
+         }
+      } catch(e) {}
+      
+      const recentVols = klines15m.slice(-6).map(k => k.volume);
+      const avgVol = recentVols.reduce((a,b)=>a+b, 0) / 6;
+      const lastVol = recentVols[recentVols.length - 1];
+      const volumeExpanding = lastVol > avgVol * 1.2;
+      if (volumeExpanding) {
+          premiumLogicStr += `\n• 📊 Volume Expanding`;
+      }
+      
+      const bosStr = String(mtfAnalysis.indicators.find((i: any) => i.name === 'Market Structure')?.value || "");
+      const isBullishBos = bosStr.includes("BOS: Bullish");
+      const isBearishBos = bosStr.includes("BOS: Bearish");
+      
+      if (mtfAnalysis.signal === "LONG" && isBullishBos && volumeExpanding && oiRising) {
+          doLimitEntry = false;
+      } else if (mtfAnalysis.signal === "SHORT" && isBearishBos && volumeExpanding && oiRising) {
+          doLimitEntry = false;
+      }
+
+      if (doLimitEntry) {
+          mtfAnalysis.limitEntry = mtfAnalysis.signal === "LONG" ? originalClose - shift : originalClose + shift;
+          mtfAnalysis.entryStrategy = "Limit (Pullback)";
+      } else {
+          mtfAnalysis.limitEntry = undefined;
+          mtfAnalysis.entryStrategy = "Market (Continuation)";
+      }
+      (mtfAnalysis as any).premiumLogicStr = premiumLogicStr;
+
+      mtfAnalysis.confidence = Math.min(100, mtfAnalysis.confidence);
+
+      if (mtfAnalysis.confidence >= requiredConfidence) {
+        const signalKey = `${symbol}-Multi-TF (4h, 15m, 5m)`;
+        
+        const entryPrice = klines5m.length > 0 ? klines5m[klines5m.length - 1].close : 0;
+        const tp = mtfAnalysis.tp || 0;
+
+        currentFrontendTrades.push({
+          symbol,
+          analysis: mtfAnalysis,
+          lastPrice: entryPrice,
+          entryDirection: 'none'
+        });
+
+        const direction = mtfAnalysis.signal as "LONG" | "SHORT";
+        const lastSignal = signalCooldowns[symbol];
+        let shouldSend = true;
+        let isUpgrade = false;
+        let oldConfidence = 0;
+
+        if (activeTrades[symbol] && activeTrades[symbol].direction === direction) {
+            shouldSend = false;
+        }
+
+        if (shouldSend && lastSignal) {
+            if (lastSignal.direction === direction) {
+                if (Date.now() - lastSignal.timestamp < 4 * 60 * 60 * 1000) {
+                    if (mtfAnalysis.confidence - lastSignal.confidence >= 5) {
+                        isUpgrade = true;
+                        oldConfidence = lastSignal.confidence;
+                    } else {
+                        shouldSend = false;
+                    }
+                }
+            } else {
+                shouldSend = true;
+            }
+        }
+
+        if (shouldSend) {
+            signalCooldowns[symbol] = {
+                timestamp: Date.now(),
+                direction,
+                confidence: mtfAnalysis.confidence
+            };
+            allSignals.push({
+              symbol,
+              signalKey,
+              analysis: mtfAnalysis,
+              entryPrice,
+              tp,
+              sl: slVal,
+              control1H,
+              sessionName,
+              isUpgrade,
+              oldConfidence
+            });
+        }
+      } else {
+        diagnosticCounts.lowConfidence++;
+      }
+    } catch (err) {
+      console.error(`Error in scanSymbol for ${symbol}:`, err);
+    } finally {
+      currentlyScanning.delete(symbol);
+    }
+  }
+
+  async function runInstantScannerForSymbol(symbol: string) {
+    try {
+      const botToken = process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || "";
+      const chatId = process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "";
+      if (!botToken || !chatId) return;
+
+      const currentHour = new Date().getUTCHours();
+      const isAsianSession = currentHour >= 21 || currentHour < 8;
+      const requiredConfidence = 50; 
+      const sessionName = isAsianSession ? "Asian (Low Vol)" : "London/NY (High Vol)";
+
+      let btcTrend = "NEUTRAL";
+      const btcKlines15m = await fetchKlines("BTCUSDT", "15m");
+      if (btcKlines15m.length >= 50) {
+        const btcCloses = btcKlines15m.map((k) => k.close);
+        const btcEma20 = EMA.calculate({ values: btcCloses, period: 20 });
+        const btcEma50 = EMA.calculate({ values: btcCloses, period: 50 });
+        const lastBtcClose = btcCloses[btcCloses.length - 1];
+        const lastBtcEma20 = btcEma20[btcEma20.length - 1];
+        const lastBtcEma50 = btcEma50[btcEma50.length - 1];
+        btcTrend =
+          lastBtcClose > lastBtcEma20 && lastBtcEma20 > lastBtcEma50
+            ? "LONG"
+            : lastBtcClose < lastBtcEma20 && lastBtcEma20 < lastBtcEma50
+              ? "SHORT"
+              : "NEUTRAL";
+      }
+
+      const diagnosticCounts = { total: 1, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };
+      const allSignals: any[] = [];
+      const currentFrontendTrades: any[] = [];
+
+      await scanSymbol(
+        symbol,
+        btcTrend,
+        botToken,
+        chatId,
+        sessionName,
+        requiredConfidence,
+        diagnosticCounts,
+        allSignals,
+        currentFrontendTrades
+      );
+
+      if (allSignals.length > 0) {
+        for (const sig of allSignals) {
+          const isLimit = !!sig.analysis.limitEntry;
+          const entryPrice = sig.analysis.limitEntry || sig.entryPrice;
+          
+          const riskAmount = Math.abs(entryPrice - sig.sl);
+          const dirMulti = sig.analysis.signal === "LONG" ? 1 : -1;
+          const tp1 = entryPrice + (dirMulti * riskAmount * 1.8);
+          const tp2 = entryPrice + (dirMulti * riskAmount * 3.0);
+          const tp3 = entryPrice + (dirMulti * riskAmount * 5.0);
+
+          const isLimitTrue = isLimit && sig.analysis.limitEntry !== sig.entryPrice;
+
+          const sessionInd = sig.analysis.indicators.find((i: any) => i.name === 'Session Killzone');
+          const sessionNameVal = sessionInd ? sessionInd.value : "OUTSIDE";
+
+          if (!sig.isUpgrade || !activeTrades[sig.symbol]) {
+              activeTrades[sig.symbol] = {
+                symbol: sig.symbol,
+                direction: sig.analysis.signal as "LONG" | "SHORT",
+                entry: entryPrice,
+                tp: sig.tp,
+                tp1,
+                tp2,
+                tp3,
+                sl: sig.sl,
+                currentSl: sig.sl,
+                achieved: isLimitTrue ? 0 : 1,
+                isLimitEntry: isLimitTrue,
+                pullbackTarget: isLimitTrue ? sig.analysis.limitEntry : undefined,
+                hasHitPullback: false,
+                initialEntry: entryPrice,
+                hasHitTp1: false,
+                hasHitTp2: false,
+                hasHitTp3: false,
+                registeredAt: Date.now(),
+                confidence: sig.analysis.confidence || 0,
+                session: sessionNameVal,
+              };
+          } else {
+              activeTrades[sig.symbol].confidence = sig.analysis.confidence;
+          }
+
+          const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const strategyStr = sig.analysis.entryStrategy
+            ? `\n\n📝 Strategy: ${escapeHtml(sig.analysis.entryStrategy)}`
+            : "";
+
+          const logicStrRaw =
+            sig.analysis.indicators
+              .filter((i: any) => i.signal === (sig.analysis.signal === "LONG" ? "bullish" : "bearish"))
+              .map((i: any) => `• ${i.name}: ${i.description}`)
+              .join("\n") + ((sig.analysis as any).premiumLogicStr || "");
+              
+          const logicStr = escapeHtml(logicStrRaw);
+
+          let message = "";
+          const directionIcon = sig.analysis.signal === "LONG" ? "📈" : "📉";
+          const confValue = (sig.analysis.confidence || 0).toFixed(1);
+          if (sig.isUpgrade) {
+               const oldConfValue = (sig.oldConfidence || 0).toFixed(1);
+               message = `🔄 <b>Signal Upgrade</b>\n\n🪙 Pair: #${sig.symbol}\n${directionIcon} Direction: ${sig.analysis.signal}\n\n📈 Confidence: ${oldConfValue}% → ${confValue}%\n\n📝 Reason:\n${logicStr}\n${strategyStr}`;
+          } else if (isLimitTrue) {
+            message = `🔔 <b>PENDING SETUP (Limit Pullback)</b>\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionIcon} <b>Direction:</b> ${sig.analysis.signal}\n📊 <b>Confidence:</b> ${confValue}%\n⏱ <b>Session:</b> ${sessionNameVal}\n🎯 <b>Limit Price:</b> <code>${formatPrice(entryPrice)}</code>\n\n❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>\n🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>\n🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>\n🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>\n\n🛡 <b>Risk:</b> Move SL to Entry at TP1${strategyStr}`;
+          } else {
+            message = `⚡️ <b>TRADE TAKEN (Market Continuation)</b>\n\n🪙 <b>Pair:</b> #${sig.symbol}\n${directionIcon} <b>Direction:</b> ${sig.analysis.signal}\n📊 <b>Confidence:</b> ${confValue}%\n⏱ <b>Session:</b> ${sessionNameVal}\n🎯 <b>Entry Price:</b> <code>${formatPrice(entryPrice)}</code>\n\n❌ <b>Stop Loss:</b> <code>${formatPrice(sig.sl)}</code>\n🎯 <b>TP1:</b> <code>${formatPrice(tp1)}</code>\n🎯 <b>TP2:</b> <code>${formatPrice(tp2)}</code>\n🎯 <b>TP3:</b> <code>${formatPrice(tp3)}</code>\n\n🛡 <b>Risk:</b> Move SL to Entry at TP1${strategyStr}`;
+          }
+
+          const bullishImageUrl = "https://quickchart.io/chart?c=" + encodeURIComponent("{type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bullish',data:[10,15,13,22,18,28,35],borderColor:'rgb(16,185,129)',backgroundColor:'rgba(16,185,129,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}");
+          const bearishImageUrl = "https://quickchart.io/chart?c=" + encodeURIComponent("{type:'line',data:{labels:['1','2','3','4','5','6','7'],datasets:[{label:'Bearish',data:[35,28,32,20,24,15,10],borderColor:'rgb(244,63,94)',backgroundColor:'rgba(244,63,94,0.2)',fill:true}]},options:{legend:{display:false},scales:{xAxes:[{display:false}],yAxes:[{display:false}]}}}");
+          const imageUrl = sig.analysis.signal === "LONG" ? bullishImageUrl : bearishImageUrl;
+
+          sendTelegramSignal(botToken, chatId, message, imageUrl).catch(console.error);
+
+          loadDailyPnLState();
+          dailyPnLState.signalsGenerated++;
+          saveDailyPnLState();
+        }
+
+        const frontendTradesMap = new Map<string, any>();
+        for (const t of globalFrontendTrades) {
+          frontendTradesMap.set(t.symbol, t);
+        }
+        for (const t of currentFrontendTrades) {
+          frontendTradesMap.set(t.symbol, t);
+        }
+        const newGlobalTrades = Array.from(frontendTradesMap.values());
+        newGlobalTrades.sort((a, b) => b.analysis.confidence - a.analysis.confidence);
+        globalFrontendTrades = newGlobalTrades.slice(0, 15);
+
+        if ((global as any).broadcastToClients) {
+            (global as any).broadcastToClients({ type: 'top-trades', payload: globalFrontendTrades });
+        }
+        saveScannerState();
+      }
+    } catch (e) {
+      console.error(`Error in runInstantScannerForSymbol for ${symbol}:`, e);
+    }
+  }
+
+  loadScannerState();
+
   console.log("Initializing 24/7 Telegram Alert Scanner...");
   let hasLoggedMissingTokens = false;
   let hasSentStartupNotification = false;
@@ -1136,9 +1828,7 @@ ${directionIcon} Direction: ${trade.type}
     }
 
     try {
-      if (telegramEnabled) {
-         processDailyRolloverAndReport(botToken, chatId);
-      }
+      processDailyRolloverAndReport(botToken || "", chatId || "");
       
       // --- Session Notifications ---
       const now = new Date();
@@ -1257,11 +1947,33 @@ ${directionIcon} Direction: ${trade.type}
         console.error("Failed to fetch BTC 15M trend for King Filter:", e);
       }
 
-      // Process symbols simultaneously but with concurrency limit (e.g. 5 at a time) to prevent network choke
+      // Process symbols simultaneously but with concurrency limit (e.g. 8 at a time) to prevent network choke
       let diagnosticCounts = { total: symbols.length, htfNeutral: 0, veto1h: 0, mtfNoTrade: 0, mtfMismatch: 0, btcConflict: 0, ltfInvalid: 0, lowConfidence: 0 };
       
-      const CONCURRENCY = 5;
+      // Upgrade: Run the optimized and parallelized scanSymbol orchestrator
+      const CONCURRENCY = 8;
       for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+        const chunk = symbols.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(async (symbol) => {
+          await scanSymbol(
+            symbol,
+            btcTrend,
+            botToken || "",
+            chatId || "",
+            sessionName,
+            requiredConfidence,
+            diagnosticCounts,
+            allSignals,
+            currentFrontendTrades
+          );
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 100)); // Relieve CPU
+      }
+
+      // Legacy monolithic scan loop skipped for performance and speed
+      if (false as any) {
+        const CONCURRENCY_LEGACY = 5;
+        for (let i = 0; i < symbols.length; i += CONCURRENCY_LEGACY) {
         const chunk = symbols.slice(i, i + CONCURRENCY);
         await Promise.all(chunk.map(async (symbol) => {
           try {
@@ -1604,7 +2316,7 @@ ${directionIcon} Direction: ${trade.type}
             }
             
             // BOS check
-            const bosStr = mtfAnalysis.indicators.find((i: any) => i.name === 'Market Structure')?.value || "";
+            const bosStr = String(mtfAnalysis.indicators.find((i: any) => i.name === 'Market Structure')?.value || "");
             const isBullishBos = bosStr.includes("BOS: Bullish");
             const isBearishBos = bosStr.includes("BOS: Bearish");
             
@@ -1704,6 +2416,7 @@ ${directionIcon} Direction: ${trade.type}
         // Add a 1-second delay between chunks to avoid Binance burst rate limting (429 Too Many Requests)
         await new Promise((resolve) => setTimeout(resolve, 1000));
       } // End of chunk loop
+      } // End of legacy block wrap
 
       // --- SIGNAL FILTERING & SENDING ---
       if (allSignals.length > 0) {
