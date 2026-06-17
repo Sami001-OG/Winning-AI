@@ -47,7 +47,7 @@ export const analyzeChart = (
 
   const indicators: IndicatorResult[] = [];
   
-  if (data.length < 200) {
+  if (data.length === 0) {
     return {
       signal: 'NO TRADE',
       confidence: 0,
@@ -467,6 +467,8 @@ export const analyzeChart = (
   
   const hasBullishDiv = rsiDivergence === 'regular_bullish' || rsiDivergence === 'hidden_bullish' || macdDivergence === 'regular_bullish' || macdDivergence === 'hidden_bullish';
   const hasBearishDiv = rsiDivergence === 'regular_bearish' || rsiDivergence === 'hidden_bearish' || macdDivergence === 'regular_bearish' || macdDivergence === 'hidden_bearish';
+  if (hasBullishDiv) momBucketRaw += 6;
+  if (hasBearishDiv) momBucketRaw -= 6;
   const momBucket = Math.max(-20, Math.min(20, momBucketRaw));
 
   // Bucket 4: Liquidity Context (Max Cap: 15)
@@ -545,7 +547,7 @@ export const analyzeChart = (
     const prevHigh = Math.max(...data.slice(lookback, data.length - s).map(c => c.high));
     
     if (sCandle.low < prevLow && sCandle.close > prevLow) { // Bullish sweep
-      const isStabilized = lastClose >= sCandle.close && data[data.length - 2].low >= sCandle.low;
+      const isStabilized = lastClose >= sCandle.low && data[data.length - 2].low >= sCandle.low;
       const isDisplaced = lastClose > sCandle.close;
       if (!isStabilized && !isDisplaced) {
         isSweepCooldownActive = true;
@@ -1019,23 +1021,23 @@ export const analyzeChart = (
   
   // Complex patterns confidence adjustment
   if (finalScore > 0) {
-    if (patternNames.includes('Inverted Head and Shoulders')) confidenceAdjustment += 12;
-    if (patternNames.includes('Cup and Handle')) confidenceAdjustment += 10;
-    if (patternNames.includes('Bull Flag')) confidenceAdjustment += 10;
-    if (patternNames.includes('Triple Bottom')) confidenceAdjustment += 8;
-    if (patternNames.includes('Bull Pennant')) confidenceAdjustment += 6;
-    if (patternNames.includes('Falling Wedge')) confidenceAdjustment += 5;
-    if (patternNames.includes('Ascending Triangle')) confidenceAdjustment += 4;
-    if (patternNames.includes('Double Bottom')) confidenceAdjustment += 4;
+    if (patternNames.includes('Inverted Head and Shoulders')) confidenceAdjustment += 18;
+    if (patternNames.includes('Cup and Handle')) confidenceAdjustment += 16;
+    if (patternNames.includes('Bull Flag')) confidenceAdjustment += 15;
+    if (patternNames.includes('Triple Bottom')) confidenceAdjustment += 14;
+    if (patternNames.includes('Bull Pennant')) confidenceAdjustment += 12;
+    if (patternNames.includes('Falling Wedge')) confidenceAdjustment += 10;
+    if (patternNames.includes('Ascending Triangle')) confidenceAdjustment += 8;
+    if (patternNames.includes('Double Bottom')) confidenceAdjustment += 8;
   } else if (finalScore < 0) {
-    if (patternNames.includes('Head and Shoulders')) confidenceAdjustment += 12;
-    if (patternNames.includes('Inverted Cup and Handle')) confidenceAdjustment += 10;
-    if (patternNames.includes('Bear Flag')) confidenceAdjustment += 10;
-    if (patternNames.includes('Triple Top')) confidenceAdjustment += 8;
-    if (patternNames.includes('Bear Pennant')) confidenceAdjustment += 6;
-    if (patternNames.includes('Rising Wedge')) confidenceAdjustment += 5;
-    if (patternNames.includes('Descending Triangle')) confidenceAdjustment += 4;
-    if (patternNames.includes('Double Top')) confidenceAdjustment += 4;
+    if (patternNames.includes('Head and Shoulders')) confidenceAdjustment += 18;
+    if (patternNames.includes('Inverted Cup and Handle')) confidenceAdjustment += 16;
+    if (patternNames.includes('Bear Flag')) confidenceAdjustment += 15;
+    if (patternNames.includes('Triple Top')) confidenceAdjustment += 14;
+    if (patternNames.includes('Bear Pennant')) confidenceAdjustment += 12;
+    if (patternNames.includes('Rising Wedge')) confidenceAdjustment += 10;
+    if (patternNames.includes('Descending Triangle')) confidenceAdjustment += 8;
+    if (patternNames.includes('Double Top')) confidenceAdjustment += 8;
   }
   
   confidence = Math.min(100, Math.max(0, confidence + confidenceAdjustment));

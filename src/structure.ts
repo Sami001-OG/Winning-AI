@@ -20,8 +20,8 @@ export const detectBOS = (data: Candle[]): 'bullish' | 'bearish' | 'neutral' => 
     let isSL = true;
     
     for (let j = 1; j <= left; j++) {
-      if (highs[i - j] > h) isSH = false;
-      if (lows[i - j] < l) isSL = false;
+      if (highs[i - j] >= h) isSH = false;
+      if (lows[i - j] <= l) isSL = false;
     }
     for (let j = 1; j <= right; j++) {
       if (highs[i + j] > h) isSH = false;
@@ -374,14 +374,14 @@ export const detectMacdDivergences = (data: Candle[], macdHist: number[]): Diver
   const lastPrice = prices[lastPivot.idx];
   const prevPrice = prices[prevPivot.idx];
   
-  if (lastPivot.val < 0 && lastPivot.val < prevPivot.val) {
-      if (lastPrice > prevPrice) return 'hidden_bullish';
+  if (lastPivot.val < 0 && lastPivot.val > prevPivot.val) {
       if (lastPrice < prevPrice) return 'regular_bullish';
+      if (lastPrice > prevPrice) return 'hidden_bullish';
   }
   
-  if (lastPivot.val > 0 && lastPivot.val > prevPivot.val) {
-      if (lastPrice < prevPrice) return 'hidden_bearish';
+  if (lastPivot.val > 0 && lastPivot.val < prevPivot.val) {
       if (lastPrice > prevPrice) return 'regular_bearish';
+      if (lastPrice < prevPrice) return 'hidden_bearish';
   }
 
   return isColorShiftBullish ? 'regular_bullish' : isColorShiftBearish ? 'regular_bearish' : 'none';
