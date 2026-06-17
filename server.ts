@@ -299,16 +299,7 @@ ${sessionStr}
 Time: 00:00 BST`;
            
            if (botToken && chatId) {
-              const externalUrl = process.env.RENDER_EXTERNAL_URL;
-              const replyMarkup = externalUrl ? {
-                 inline_keyboard: [[
-                    {
-                       text: "📊 Open Interactive PnL Dashboard",
-                       url: externalUrl
-                    }
-                  ]]
-              } : undefined;
-              sendTelegramSignal(botToken, chatId, msg, undefined, 15, replyMarkup).catch(console.error);
+              sendTelegramSignal(botToken, chatId, msg).catch(console.error);
            }
         }
         
@@ -366,8 +357,7 @@ async function sendTelegramSignal(
   chatId: string,
   message: string,
   imageUrl?: string,
-  retries = 15,
-  replyMarkup?: any
+  retries = 15
 ) {
   if (!botToken || !chatId) return false;
 
@@ -401,10 +391,6 @@ async function sendTelegramSignal(
       caption: message,
       parse_mode: "HTML",
     };
-  }
-
-  if (replyMarkup) {
-    body.reply_markup = replyMarkup;
   }
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -503,28 +489,27 @@ async function sendTelegramSignal(
 
 async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICATOR' | 'WEBSOCKET' | 'TRADING' = 'INDICATOR') {
   const timeout = options.timeout || 10000;
-  
-  // Try direct fetch first
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
   try {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeout);
-    
-    const fetchOptions = { ...options, signal: controller.signal };
+    // If it's a Binance request, inject a specifically targeted API key to bypass potential IP rate limits
     if (url.includes('binance.com')) {
       let creds;
       if (intent === 'WEBSOCKET') creds = getWsKey();
       else creds = getIndicatorKey();
 
       if (creds && creds.key) {
-        fetchOptions.headers = {
-          ...fetchOptions.headers,
+        options.headers = {
+          ...options.headers,
           "X-MBX-APIKEY": creds.key
         };
       }
     }
 
-    const response = await fetch(url, fetchOptions);
-    clearTimeout(id);
+    let response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
     
     const contentType = response.headers.get("content-type");
     const isHtml = contentType && contentType.includes("text/html");
@@ -538,77 +523,11 @@ async function fetchWithTimeout(url: string, options: any = {}, intent: 'INDICAT
       }
     }
 
+    clearTimeout(id);
     return response;
-  } catch (directError: any) {
-    console.warn(`[Proxy Fallback] Direct API request failed for ${url}. Error: ${directError.message || directError}. Retrying via proxy...`);
-
-    // Only fallback for public Binance endpoints to avoid sending any private API payloads to public proxies if any exist
-    if (url.includes('binance.com') && !url.includes('proxy.io') && !url.includes('allorigins')) {
-      // Fallback 1: corsproxy.io
-      try {
-        const proxyUrl = `https://corsproxy.io/?${url}`;
-        console.log(`[Proxy Fallback 1] Retrying via corsproxy.io: ${proxyUrl}`);
-        
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), timeout + 5000);
-        
-        const proxyOptions = { ...options };
-        if (proxyOptions.headers) {
-          delete proxyOptions.headers["X-MBX-APIKEY"]; // Clean headers of API keys for proxy safety
-        }
-        
-        const response = await fetch(proxyUrl, {
-          ...proxyOptions,
-          signal: controller.signal
-        });
-        clearTimeout(id);
-
-        const contentType = response.headers.get("content-type");
-        const isHtml = contentType && contentType.includes("text/html");
-
-        if (response.ok && !isHtml) {
-          console.log(`[Proxy Fallback 1] Request succeeded via corsproxy.io`);
-          return response;
-        }
-        throw new Error(`Proxy returned status ${response.status} (isHtml: ${!!isHtml})`);
-      } catch (proxyError1: any) {
-        console.warn(`[Proxy Fallback 1] corsproxy.io failed: ${proxyError1.message || proxyError1}. Trying allorigins.win...`);
-        
-        // Fallback 2: api.allorigins.win raw proxy
-        try {
-          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-          console.log(`[Proxy Fallback 2] Retrying via allorigins: ${proxyUrl}`);
-          
-          const controller = new AbortController();
-          const id = setTimeout(() => controller.abort(), timeout + 5000);
-          
-          const proxyOptions = { ...options };
-          if (proxyOptions.headers) {
-            delete proxyOptions.headers["X-MBX-APIKEY"];
-          }
-          
-          const response = await fetch(proxyUrl, {
-            ...proxyOptions,
-            signal: controller.signal
-          });
-          clearTimeout(id);
-
-          const contentType = response.headers.get("content-type");
-          const isHtml = contentType && contentType.includes("text/html");
-
-          if (response.ok && !isHtml) {
-            console.log(`[Proxy Fallback 2] Request succeeded via allorigins.win`);
-            return response;
-          }
-          throw new Error(`AllOrigins returned status ${response.status}`);
-        } catch (proxyError2: any) {
-          console.error(`[Proxy Fallback 2] AllOrigins also failed: ${proxyError2.message || proxyError2}`);
-        }
-      }
-    }
-    
-    // If all fallbacks failed or aren't applicable, throw original error
-    throw directError;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
   }
 }
 
@@ -1032,11 +951,6 @@ async function startServer() {
       lastScanMetrics,
       sizingModel: getSizingModel()
     });
-  });
-
-  app.get("/api/daily-pnl", (req, res) => {
-    loadDailyPnLState();
-    res.json(dailyPnLState);
   });
 
   app.post("/api/telegram/send", async (req, res) => {
