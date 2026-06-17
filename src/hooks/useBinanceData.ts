@@ -50,11 +50,59 @@ export const useBinanceData = (symbol: string, interval: string) => {
   const [isConnected, setIsConnected] = useState(false);
   const key = `${symbol.toLowerCase()}_${interval}`;
 
+  // Helper method for fallback fetch
+  const fetchSnapshot = async () => {
+    try {
+      const res = await fetch(`/api/klines?symbol=${symbol}&interval=${interval}&limit=250`);
+      if (res.ok) {
+        const rawData = await res.json();
+        // Backend /api/klines returns binance formatted array [[time, open, high, low, close, volume], ...]
+        if (Array.isArray(rawData)) {
+          const formatted = rawData.map((d: any[]) => ({
+            time: Math.floor(d[0] / 1000),
+            open: parseFloat(d[1]),
+            high: parseFloat(d[2]),
+            low: parseFloat(d[3]),
+            close: parseFloat(d[4]),
+            volume: parseFloat(d[5]),
+            isFinal: true
+          }));
+          dataCache[key] = formatted;
+          setData(formatted);
+          setError(null);
+        }
+      } else {
+        // Fallback to direct binance api if backend proxy fails
+        const directRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=250`);
+        if (directRes.ok) {
+           const rawData = await directRes.json();
+           const formatted = rawData.map((d: any[]) => ({
+             time: Math.floor(d[0] / 1000),
+             open: parseFloat(d[1]),
+             high: parseFloat(d[2]),
+             low: parseFloat(d[3]),
+             close: parseFloat(d[4]),
+             volume: parseFloat(d[5]),
+             isFinal: true
+           }));
+           dataCache[key] = formatted;
+           setData(formatted);
+           setError(null);
+        } else {
+           setError("Unable to load chart data (Proxy & Direct fallback failed)");
+        }
+      }
+    } catch (e: any) {
+      setError(`Data fetch failed: ${e.message}`);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
     
-    if (!dataCache[key]) {
+    if (!dataCache[key] || dataCache[key].length === 0) {
       setData([]);
+      fetchSnapshot(); // Immediately fetch snapshot instead of waiting for WS to hopefully send it
     } else {
       setData(dataCache[key]);
     }
@@ -83,8 +131,11 @@ export const useBinanceData = (symbol: string, interval: string) => {
          }
       } else if (msg.type === 'market-data' && msg.symbol === symbol && msg.interval === interval) {
         const candles = msg.data;
-        dataCache[key] = candles;
-        setData(candles);
+        if (candles && candles.length > 0) {
+          dataCache[key] = candles;
+          setData(candles);
+          setError(null);
+        }
         if (msg.indicators) {
            setIndicators(msg.indicators);
         }
@@ -108,8 +159,16 @@ export const useBinanceData = (symbol: string, interval: string) => {
     
     wsSubscribers.add(handleMessage);
 
+    // Setup fallback polling in case WS totally fails or gets stuck
+    const pollingFallback = setInterval(() => {
+       if (!isConnected || !dataCache[key] || dataCache[key].length === 0) {
+           fetchSnapshot();
+       }
+    }, 10000); // Check every 10 seconds
+
     return () => {
       isMounted = false;
+      clearInterval(pollingFallback);
       wsSubscribers.delete(handleMessage);
       ws.removeEventListener('open', handleOpen);
       if (ws.readyState === WebSocket.OPEN) {
