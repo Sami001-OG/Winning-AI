@@ -15,6 +15,9 @@ import {
   LayoutGrid,
   Square,
   X,
+  Calculator,
+  BarChart3,
+  RefreshCw,
 } from "lucide-react";
 import { fetchWithRetry } from "./utils/api";
 import { formatPrice } from "./utils/format";
@@ -124,7 +127,58 @@ export default function App() {
   });
   const [scannerStatus, setScannerStatus] = useState<any>(null);
 
+  // --- INTERACTIVE PNL CALCULATOR & STATS STATES ---
+  const [calcActiveTab, setCalcActiveTab] = useState<"calculator" | "stats">("calculator");
+  const [calcBalance, setCalcBalance] = useState<number>(10000);
+  const [calcRiskPercent, setCalcRiskPercent] = useState<number>(1);
+  const [calcDirection, setCalcDirection] = useState<"LONG" | "SHORT">("LONG");
+  const [calcEntry, setCalcEntry] = useState<string>("");
+  const [calcStopLoss, setCalcStopLoss] = useState<string>("");
+  const [calcTakeProfit, setCalcTakeProfit] = useState<string>("");
+  const [calcLeverage, setCalcLeverage] = useState<number>(10);
+  
+  const [dailyPnL, setDailyPnL] = useState<any>(null);
+  const [isFetchingDailyPnL, setIsFetchingDailyPnL] = useState(false);
+
+  // Fetch daily PnL stats from backend of current state
+  const fetchDailyPnL = useCallback(async () => {
+    try {
+      setIsFetchingDailyPnL(true);
+      const res = await fetch("/api/daily-pnl");
+      if (res.ok) {
+        const data = await res.json();
+        setDailyPnL(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch daily pnl:", err);
+    } finally {
+      setIsFetchingDailyPnL(false);
+    }
+  }, []);
+
   useEffect(() => {
+    fetchDailyPnL();
+    const intervalId = setInterval(fetchDailyPnL, 15000);
+    return () => clearInterval(intervalId);
+  }, [fetchDailyPnL]);
+
+  // Set defaults for calculator based on active coin price when coin changes
+  useEffect(() => {
+    if (data && data.length > 0) {
+      const currentPrice = data[data.length - 1].close;
+      setCalcEntry(currentPrice.toString());
+      const isLong = calcDirection === "LONG";
+      const slPercent = 0.015;
+      const tpPercent = 0.03;
+      const defaultSl = isLong ? currentPrice * (1 - slPercent) : currentPrice * (1 + slPercent);
+      const defaultTp = isLong ? currentPrice * (1 + tpPercent) : currentPrice * (1 - tpPercent);
+      setCalcStopLoss(defaultSl.toFixed(2));
+      setCalcTakeProfit(defaultTp.toFixed(2));
+    }
+  }, [symbol]);
+
+  useEffect(() => {
+
     const fetchStatus = async () => {
       try {
         const res = await fetch("/api/scanner-status");
@@ -316,7 +370,36 @@ export default function App() {
     }
   }, [activeAnalysis, autoTradeEnabled, trades, symbol]);
 
+  // --- DETAILED CALCULATOR FORMULAS & HANDLERS ---
+  const handleSyncWithChart = () => {
+    if (data && data.length > 0) {
+      const currentPrice = data[data.length - 1].close;
+      setCalcEntry(currentPrice.toString());
+      const isLong = calcDirection === "LONG";
+      const targetSl = activeAnalysis?.sl ? activeAnalysis.sl : (isLong ? currentPrice * 0.985 : currentPrice * 1.015);
+      const targetTp = activeAnalysis?.tp ? activeAnalysis.tp : (isLong ? currentPrice * 1.03 : currentPrice * 0.97);
+      setCalcStopLoss(targetSl.toFixed(2));
+      setCalcTakeProfit(targetTp.toFixed(2));
+    }
+  };
+
+  const entryVal = parseFloat(calcEntry) || 0;
+  const slVal = parseFloat(calcStopLoss) || 0;
+  const tpVal = parseFloat(calcTakeProfit) || 0;
+  
+  const slPnLPct = entryVal > 0 ? (Math.abs(entryVal - slVal) / entryVal) * 100 : 0;
+  const tpPnLPct = entryVal > 0 ? (Math.abs(tpVal - entryVal) / entryVal) * 100 : 0;
+  
+  const calcRiskUsdt = calcBalance * (calcRiskPercent / 100);
+  const calcNotionalSize = slPnLPct > 0 ? calcRiskUsdt / (slPnLPct / 100) : 0;
+  const calcMarginRequired = calcNotionalSize > 0 ? calcNotionalSize / calcLeverage : 0;
+  
+  const calcRrRatio = slPnLPct > 0 ? tpPnLPct / slPnLPct : 0;
+  const calcEstProfit = calcNotionalSize * (tpPnLPct / 100);
+  const calcMarginRoi = tpPnLPct * calcLeverage;
+
   return (
+
     <div className="h-screen w-screen bg-[#050505] text-white/90 font-sans overflow-hidden flex flex-col selection:bg-emerald-500/30">
       {/* Top Navigation Bar */}
       <header className="min-h-14 sm:h-14 border-b border-white/10 bg-[#0A0A0A] flex flex-col sm:flex-row items-center justify-between px-3 sm:px-5 py-2.5 sm:py-0 gap-3 shrink-0">
@@ -534,110 +617,393 @@ export default function App() {
             )}
           </section>
 
-          {/* Bento-Grid: Risk & Kelly Sizing Panel */}
+          {/* Bento-Grid: PnL Calculator & Daily Performance Tracker */}
           <section className="w-full rounded-xl border border-white/10 bg-[#0A0A0A] overflow-hidden shadow-xl p-4 sm:p-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/5 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-white/5 mb-6">
               <div>
                 <h2 className="text-[10px] font-mono text-white/40 uppercase tracking-widest flex items-center gap-2">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Executive Risk Officer & Kelly Sizing Protocol
+                  <Calculator className="w-3.5 h-3.5 text-emerald-400" /> Interactive Sizing & Performance Laboratory
                 </h2>
                 <p className="text-white/60 text-xs font-sans mt-0.5">
-                  Continuous performance tracking and anti-fragile sizing logic based on dynamic streak modifiers.
+                  Simulate position sizing risk, calculate standard PnL ratios, and monitor live rolling daily performance.
                 </p>
               </div>
-              
-              <div className="flex items-center gap-2 bg-white/[0.02] border border-white/5 py-1.5 px-3 rounded-lg text-xs font-mono">
-                <span className="text-white/40">RISK PROTOCOL:</span>
-                <span className="text-emerald-400 font-bold flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                  ONLINE
-                </span>
+
+              {/* Tab Selector */}
+              <div className="flex bg-white/[0.03] border border-white/10 p-0.5 rounded-lg shrink-0 select-none">
+                <button
+                  onClick={() => setCalcActiveTab("calculator")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all cursor-pointer flex items-center gap-1.5",
+                    calcActiveTab === "calculator" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "text-white/40 hover:text-white/80 border border-transparent"
+                  )}
+                >
+                  <Calculator className="w-3 h-3" /> PnL Calculator
+                </button>
+                <button
+                  onClick={() => setCalcActiveTab("stats")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all cursor-pointer flex items-center gap-1.5",
+                    calcActiveTab === "stats" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "text-white/40 hover:text-white/80 border border-transparent"
+                  )}
+                >
+                  <BarChart3 className="w-3 h-3" /> Live Daily PnL
+                </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Streak Counter Box */}
-              <div className="bg-black/40 border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
-                <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                  Current Performance Streak
-                </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className={cn(
-                    "text-xl sm:text-2xl font-mono font-bold tracking-tight",
-                    (scannerStatus?.sizingModel?.consecutiveStreak || 0) > 0 ? "text-emerald-400" :
-                    (scannerStatus?.sizingModel?.consecutiveStreak || 0) < 0 ? "text-rose-400" : "text-white/90"
-                  )}>
-                    {(scannerStatus?.sizingModel?.consecutiveStreak || 0) > 0 ? "+" : ""}
-                    {scannerStatus?.sizingModel?.consecutiveStreak || 0}
-                  </span>
-                  <span className="text-[10px] font-mono text-white/40">
-                    consecutive {(scannerStatus?.sizingModel?.consecutiveStreak || 0) >= 0 ? "wins" : "losses"}
-                  </span>
-                </div>
-                <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
-                  Wins boost allocation levels, while consecutive losses dynamically scale down size to compound safely.
-                </div>
-              </div>
+            {calcActiveTab === "calculator" ? (
+              // --- INTERACTIVE PNL CALCULATOR PANEL ---
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Inputs: 5 Columns */}
+                <div className="lg:col-span-5 bg-black/30 border border-white/5 p-4 rounded-xl space-y-4 shadow-inner">
+                  <div className="flex items-center justify-between border-b border-white/[0.04] pb-2">
+                    <span className="text-[10px] font-mono text-white/50 uppercase tracking-wider font-bold">Simulator Controls</span>
+                    <button 
+                      onClick={handleSyncWithChart}
+                      className="text-[10px] font-mono font-bold bg-white/5 hover:bg-white/10 text-emerald-300 py-1 px-2 border border-white/10 rounded flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Sync entry & targets with current close price of active chart"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" /> Sync Chart
+                    </button>
+                  </div>
 
-              {/* Sizing Modifier Box */}
-              <div className="bg-black/40 border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
-                <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                  Streak Modifier (M_streak)
-                </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className="text-xl sm:text-2xl font-mono font-bold text-white/90">
-                    {(scannerStatus?.sizingModel?.mStreak || 1.0).toFixed(2)}x
-                  </span>
-                  <span className={cn(
-                    "text-[10px] font-mono px-1.5 py-0.5 rounded font-bold",
-                    (scannerStatus?.sizingModel?.mStreak || 1.0) > 1.0 ? "bg-emerald-500/10 text-emerald-400" :
-                    (scannerStatus?.sizingModel?.mStreak || 1.0) < 1.0 ? "bg-rose-500/10 text-rose-400" : "bg-white/5 text-white/40"
-                  )}>
-                    {(scannerStatus?.sizingModel?.mStreak || 1.0) > 1.0 ? "ACCELERATING" :
-                     (scannerStatus?.sizingModel?.mStreak || 1.0) < 1.0 ? "DEFENSIVE" : "BASELINE"}
-                  </span>
-                </div>
-                <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
-                  Calculated using standard dynamic modifier ceilings [0.25x - 1.50x] to defend equity curves.
-                </div>
-              </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Account Balance */}
+                    <div>
+                      <label className="block text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1">Portfolio (USDT)</label>
+                      <input
+                        type="number"
+                        value={calcBalance}
+                        onChange={(e) => setCalcBalance(Math.max(1, parseFloat(e.target.value) || 0))}
+                        className="w-full bg-[#141414] border border-white/10 text-white font-mono text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                    {/* Max Risk % */}
+                    <div>
+                      <label className="block text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1">Max Risk (% Balance)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        max="25"
+                        value={calcRiskPercent}
+                        onChange={(e) => setCalcRiskPercent(Math.max(0.1, Math.min(25, parseFloat(e.target.value) || 0.1)))}
+                        className="w-full bg-[#141414] border border-white/10 text-white font-mono text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                  </div>
 
-              {/* Advanced Sizing Multiplier */}
-              <div className="bg-black/40 border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
-                <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
-                  Optimal Kelly Fraction
-                </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className="text-xl sm:text-2xl font-mono font-bold text-white/95">
-                    {((scannerStatus?.sizingModel?.quarterKelly || 0.0911) * 100).toFixed(1)}%
-                  </span>
-                  <span className="text-[10px] font-mono text-white/40">
-                    of account (Quarter-Kelly)
-                  </span>
-                </div>
-                <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
-                  Derived from Backtested win-rate (58.4%) against 1.90 weighted reward multiplier.
-                </div>
-              </div>
+                  {/* Direction Selector */}
+                  <div>
+                    <label className="block text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1">Trade Direction</label>
+                    <div className="grid grid-cols-2 gap-2 bg-[#141414] p-1 border border-white/10 rounded-lg">
+                      <button
+                        onClick={() => setCalcDirection("LONG")}
+                        className={cn(
+                          "py-1.5 text-xs font-mono font-semibold rounded-md transition-colors cursor-pointer",
+                          calcDirection === "LONG" 
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                            : "text-white/40 hover:text-white/60"
+                        )}
+                      >
+                        📈 BUY / LONG
+                      </button>
+                      <button
+                        onClick={() => setCalcDirection("SHORT")}
+                        className={cn(
+                          "py-1.5 text-xs font-mono font-semibold rounded-md transition-colors cursor-pointer",
+                          calcDirection === "SHORT" 
+                            ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" 
+                            : "text-white/40 hover:text-white/60"
+                        )}
+                      >
+                        📉 SELL / SHORT
+                      </button>
+                    </div>
+                  </div>
 
-              {/* Recommended Allocation Size */}
-              <div className="bg-emerald-500/[0.02] border border-emerald-500/15 p-4 rounded-xl flex flex-col justify-between shadow-[0_0_15px_rgba(16,185,129,0.02)]">
-                <span className="text-[9px] font-mono text-emerald-400 uppercase tracking-widest font-bold">
-                  Recommended Position Size
-                </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className="text-2xl sm:text-3xl font-mono font-black text-emerald-400 leading-none">
-                    {(scannerStatus?.sizingModel?.recommendedSizingPercent || 9.1).toFixed(1)}%
-                  </span>
-                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-bold">
-                    PER TRADE
-                  </span>
+                  {/* Price Inputs */}
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="block text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1 font-bold">Entry Price (USD)</label>
+                      <input
+                        type="number"
+                        value={calcEntry}
+                        onChange={(e) => setCalcEntry(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full bg-[#141414] border border-white/10 text-white font-mono text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1 text-rose-400/80">Stop Loss (USD)</label>
+                        <input
+                          type="number"
+                          value={calcStopLoss}
+                          onChange={(e) => setCalcStopLoss(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-[#141414] border border-white/10 text-rose-300 font-mono text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-rose-500/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1 text-emerald-400/80">Take Profit (USD)</label>
+                        <input
+                          type="number"
+                          value={calcTakeProfit}
+                          onChange={(e) => setCalcTakeProfit(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-[#141414] border border-white/10 text-emerald-300 font-mono text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-emerald-500/50"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Leverage Selector */}
+                  <div>
+                    <div className="flex justify-between text-[9px] font-mono text-white/40 uppercase tracking-widest mb-1">
+                      <span>Leverage Multiplier</span>
+                      <span className="text-emerald-400 font-bold">{calcLeverage}x</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min="1"
+                        max="100"
+                        value={calcLeverage}
+                        onChange={(e) => setCalcLeverage(parseInt(e.target.value) || 1)}
+                        className="w-full accent-emerald-500 h-1 bg-[#141414] rounded-lg appearance-none cursor-pointer"
+                      />
+                      <input
+                        type="number"
+                        min="1"
+                        max="125"
+                        value={calcLeverage}
+                        onChange={(e) => setCalcLeverage(Math.max(1, Math.min(125, parseInt(e.target.value) || 1)))}
+                        className="w-14 text-center bg-[#141414] border border-white/10 text-white font-mono text-xs py-1 rounded focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-2 text-[10px] font-sans text-emerald-400/70 leading-relaxed border-t border-emerald-500/10 pt-2 font-medium">
-                  Applying streak modification directly to Quarter-Kelly sizing models ensures maximum compound longevity.
+
+                {/* Outputs & Analysis: 7 Columns */}
+                <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
+                  {/* Primary Outputs Grid */}
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Optimal Position Size (USDT Notional) */}
+                    <div className="bg-emerald-500/[0.02] border border-emerald-500/20 p-4 rounded-xl flex flex-col justify-between shadow-[0_0_15px_rgba(16,185,129,0.02)]">
+                      <span className="text-[9px] font-mono text-emerald-400 uppercase tracking-widest font-bold">
+                        Sized Position Size (Notional)
+                      </span>
+                      <div className="mt-2.5">
+                        <span className="text-xl sm:text-2xl font-mono font-black text-emerald-400">
+                          ${calcNotionalSize.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        <p className="text-[10px] font-mono text-emerald-400/70 mt-0.5">
+                          equivalent total trade USD value
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Capital Margin Required */}
+                    <div className="bg-white/[0.01] border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
+                      <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                        Required Cash Margin
+                      </span>
+                      <div className="mt-2.5">
+                        <span className="text-xl sm:text-2xl font-mono font-bold text-white/90">
+                          ${calcMarginRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        <p className="text-[10px] font-mono text-white/40 mt-0.5">
+                          actual margin required at {calcLeverage}x
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Calculations Breakdown */}
+                  <div className="bg-[#111111]/80 border border-white/5 rounded-xl p-4 space-y-3.5">
+                    <span className="text-[10px] font-mono text-white/30 uppercase tracking-wider font-bold block border-b border-white/[0.03] pb-1.5">Trade Math Calculations</span>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6 text-xs font-mono">
+                      {/* Distance to SL */}
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-white/40 animate-pulse text-[11px]">Distance to SL:</span>
+                        <span className="text-rose-400 font-bold">
+                          {slPnLPct.toFixed(2)}%
+                        </span>
+                      </div>
+
+                      {/* Distance to TP */}
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-white/40 text-[11px]">Distance to TP:</span>
+                        <span className="text-emerald-400 font-bold">
+                          {tpPnLPct.toFixed(2)}%
+                        </span>
+                      </div>
+
+                      {/* Risk-to-Reward Ratio */}
+                      <div className="flex justify-between items-center border-t border-white/[0.02] pt-2 sm:border-0 sm:pt-0 font-mono">
+                        <span className="text-white/40 text-[11px]">Risk-to-Reward:</span>
+                        <span className={cn(
+                          "font-bold px-1.5 py-0.5 rounded text-[10px]",
+                          calcRrRatio >= 2.0 ? "bg-emerald-500/10 text-emerald-400" :
+                          calcRrRatio >= 1.0 ? "bg-amber-500/10 text-amber-400" : "bg-rose-500/10 text-rose-400"
+                        )}>
+                          {calcRrRatio.toFixed(2)} R
+                        </span>
+                      </div>
+
+                      {/* Max Wallet Risk */}
+                      <div className="flex justify-between items-center border-t border-white/[0.02] pt-2 sm:border-0 sm:pt-0 font-mono">
+                        <span className="text-white/40 text-[11px]">Balance Risk:</span>
+                        <span className="text-rose-400 font-semibold">
+                          -${calcRiskUsdt.toFixed(2)} ({calcRiskPercent}%)
+                        </span>
+                      </div>
+
+                      {/* Forecasted USD profit */}
+                      <div className="flex justify-between items-center border-t border-white/[0.02] pt-2 font-mono">
+                        <span className="text-white/40 text-[11px]">Forecasted Profit:</span>
+                        <span className="text-emerald-400 font-bold">
+                          +${calcEstProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+
+                      {/* Estimated ROI */}
+                      <div className="flex justify-between items-center border-t border-white/[0.02] pt-2 font-mono">
+                        <span className="text-white/40 text-[11px]">Leverage Margin ROI:</span>
+                        <span className="text-emerald-400 font-semibold">
+                          +{calcMarginRoi.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Safety guidelines text */}
+                  <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-sans text-white/50 leading-relaxed">
+                    {calcRrRatio >= 2.0 ? (
+                      <span className="flex items-start gap-2">
+                        <span className="text-emerald-500 shrink-0 font-bold">✓</span>
+                        Asymmetrical Reward index verified ({calcRrRatio.toFixed(1)} R). Optimal mathematical trade profile.
+                      </span>
+                    ) : calcRrRatio >= 1.0 ? (
+                      <span className="flex items-start gap-2">
+                        <span className="text-yellow-500 shrink-0 font-bold">⚠</span>
+                        Moderate payout ratio. Limit size accordingly. Position values are scaled to guarantee maximum downside does not exceed ${calcRiskUsdt.toFixed(0)}.
+                      </span>
+                    ) : (
+                      <span className="flex items-start gap-2">
+                        <span className="text-rose-500 shrink-0 font-bold">✖</span>
+                        Risk outpaces Reward. Recommend shifting targets to build an asymmetrical trading profile and defend long-term portfolio growth.
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              // --- INTERACTIVE DAILY PERFORMANCE STATS REPORT PANEL ---
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Net Returns Card */}
+                <div className="bg-[#0f0f0f] border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
+                  <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                    Rolling Daily Return
+                  </span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className={cn(
+                      "text-2xl font-mono font-bold tracking-tight",
+                      (dailyPnL?.totalNetReturn || 0) > 0 ? "text-emerald-400" :
+                      (dailyPnL?.totalNetReturn || 0) < 0 ? "text-rose-400" : "text-white/90"
+                    )}>
+                      {(dailyPnL?.totalNetReturn || 0) >= 0 ? "+" : ""}
+                      {(dailyPnL?.totalNetReturn || 0).toFixed(2)}%
+                    </span>
+                    <span className="text-[10px] font-sans text-white/40">
+                      compounded return
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
+                    Net return secured today ({dailyPnL?.dateStr || "Rolling"}). Resets daily at 00:00 BST.
+                  </div>
+                </div>
+
+                {/* Win Rate / Profit Factor */}
+                <div className="bg-[#0f0f0f] border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
+                  <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                    Win Rate & Profit Factor
+                  </span>
+                  <div className="flex items-center justify-between mt-2.5">
+                    <div>
+                      <span className="text-xl font-mono font-bold text-white/95">
+                        {dailyPnL?.wins || 0}W / {dailyPnL?.losses || 0}L
+                      </span>
+                      <p className="text-[9px] font-mono text-white/40 mt-0.5">
+                        {dailyPnL?.totalTradesCompleted > 0 ? ((dailyPnL.wins / dailyPnL.totalTradesCompleted) * 100).toFixed(1) : "0.0"}% Win Rate
+                      </p>
+                    </div>
+                    <div className="bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded text-xs font-mono font-bold" title="Profit Factor">
+                      PF: {(!dailyPnL?.grossLoss || dailyPnL.grossLoss === 0) ? "N/A" : ((dailyPnL.grossProfit || 0) / dailyPnL.grossLoss).toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
+                    Accumulative statistics based on automatically recorded Binance trade execution signals.
+                  </div>
+                </div>
+
+                {/* Session Breakdown Card */}
+                <div className="bg-[#0f0f0f] border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
+                  <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                    Session Distributions
+                  </span>
+                  <div className="space-y-1.5 mt-2 text-[11px] font-mono">
+                    <div className="flex justify-between items-center text-white/60">
+                      <span>London:</span>
+                      <span className="text-white/80">{(dailyPnL?.sessionWins?.London || 0)}W - {(dailyPnL?.sessionLosses?.London || 0)}L</span>
+                    </div>
+                    <div className="flex justify-between items-center text-white/60">
+                      <span>New York:</span>
+                      <span className="text-white/80">{(dailyPnL?.sessionWins?.["New York"] || 0)}W - {(dailyPnL?.sessionLosses?.["New York"] || 0)}L</span>
+                    </div>
+                    <div className="flex justify-between items-center text-white/60">
+                      <span>Asian:</span>
+                      <span className="text-white/50">{(dailyPnL?.sessionWins?.Asian || 0)}W - {(dailyPnL?.sessionLosses?.Asian || 0)}L</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
+                    Completed trades segregated by global volatility windows.
+                  </div>
+                </div>
+
+                {/* Extremes (Best/Worst) */}
+                <div className="bg-[#0f0f0f] border border-white/5 p-4 rounded-xl flex flex-col justify-between shadow-inner">
+                  <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest">
+                    Extremes & Limits
+                  </span>
+                  <div className="space-y-1 mt-2 text-[11px] font-mono">
+                    <div className="flex justify-between items-center font-mono">
+                      <span className="text-white/40">Best Trade:</span>
+                      <span className="text-emerald-400 font-bold">
+                        {dailyPnL?.bestTrade && dailyPnL.bestTrade !== -9999 ? `${dailyPnL.bestTrade >= 0 ? '+' : ''}${dailyPnL.bestTrade.toFixed(2)}%` : "N/A"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center font-mono">
+                      <span className="text-white/40">Worst Trade:</span>
+                      <span className="text-rose-400 font-bold">
+                        {dailyPnL?.worstTrade && dailyPnL.worstTrade !== 9999 ? `${dailyPnL.worstTrade >= 0 ? '+' : ''}${dailyPnL.worstTrade.toFixed(2)}%` : "N/A"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] font-mono">
+                      <span className="text-white/30">Signals Live:</span>
+                      <span className="text-white/50">{dailyPnL?.signalsGenerated || 0} alerts</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[10px] font-sans text-white/50 leading-relaxed border-t border-white/[0.03] pt-2">
+                    Peak trade returns logged since rollover. Perfect for auditing drawdowns.
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Middle Panel: ENDELLION-TRADE */}

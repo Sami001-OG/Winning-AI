@@ -299,7 +299,16 @@ ${sessionStr}
 Time: 00:00 BST`;
            
            if (botToken && chatId) {
-              sendTelegramSignal(botToken, chatId, msg).catch(console.error);
+              const externalUrl = process.env.RENDER_EXTERNAL_URL;
+              const replyMarkup = externalUrl ? {
+                 inline_keyboard: [[
+                    {
+                       text: "📊 Open Interactive PnL Dashboard",
+                       url: externalUrl
+                    }
+                  ]]
+              } : undefined;
+              sendTelegramSignal(botToken, chatId, msg, undefined, 15, replyMarkup).catch(console.error);
            }
         }
         
@@ -357,7 +366,8 @@ async function sendTelegramSignal(
   chatId: string,
   message: string,
   imageUrl?: string,
-  retries = 15
+  retries = 15,
+  replyMarkup?: any
 ) {
   if (!botToken || !chatId) return false;
 
@@ -391,6 +401,10 @@ async function sendTelegramSignal(
       caption: message,
       parse_mode: "HTML",
     };
+  }
+
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
   }
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -951,6 +965,11 @@ async function startServer() {
       lastScanMetrics,
       sizingModel: getSizingModel()
     });
+  });
+
+  app.get("/api/daily-pnl", (req, res) => {
+    loadDailyPnLState();
+    res.json(dailyPnLState);
   });
 
   app.post("/api/telegram/send", async (req, res) => {
