@@ -201,7 +201,7 @@ function recordPnLSegment(pnlPct: number, portion: number, isWinOrLossSegment: "
        dailyPnLState.totalTradesCompleted++;
        
        if (activeTrade) {
-          const tradeNetPnl = (activeTrade as any)._accumulatedPnl ? ((activeTrade as any)._accumulatedPnl + realizedPnl) : realizedPnl;
+          const tradeNetPnl = (activeTrade as any)._accumulatedPnl !== undefined ? ((activeTrade as any)._accumulatedPnl + realizedPnl) : realizedPnl;
           
           if (tradeNetPnl > dailyPnLState.bestTrade || dailyPnLState.bestTrade === -9999) dailyPnLState.bestTrade = tradeNetPnl;
           if (tradeNetPnl < dailyPnLState.worstTrade || dailyPnLState.worstTrade === 9999) dailyPnLState.worstTrade = tradeNetPnl;
@@ -1000,6 +1000,7 @@ async function startServer() {
              symbol: trade.symbol,
              direction: trade.type || trade.direction,
              entry: entryPrice,
+             initialEntry: entryPrice,
              tp: tpPrice,
              tp1,
              tp2,
@@ -1462,7 +1463,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
                       ).catch(console.error);
-                    } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentHigh >= activeTrade.tp2) {
+                    } 
+                    if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentHigh >= activeTrade.tp2) {
                       activeTrade.hasHitTp2 = true;
                       activeTrade.achieved = 3;
 
@@ -1473,7 +1475,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📈 <b>Direction:</b> LONG\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
                       ).catch(console.error);
-                    } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentHigh >= activeTrade.tp3) {
+                    } 
+                    if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentHigh >= activeTrade.tp3) {
                       activeTrade.hasHitTp3 = true;
                       activeTrade.achieved = 4;
 
@@ -1506,7 +1509,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🎯 <b>TAKE PROFIT 1 ACHIEVED (50% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 1:</b> <code>${formatPrice(activeTrade.tp1)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 50% allocation)\n🛡 <b>Risk Management:</b> Stop Loss moved to Break-Even (<code>${formatPrice(activeTrade.entry)}</code>). Trade is now 100% risk-free!`,
                       ).catch(console.error);
-                    } else if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentLow <= activeTrade.tp2) {
+                    } 
+                    if (activeTrade.hasHitTp1 && !activeTrade.hasHitTp2 && currentLow <= activeTrade.tp2) {
                       activeTrade.hasHitTp2 = true;
                       activeTrade.achieved = 3;
 
@@ -1517,7 +1521,8 @@ ${directionIcon} Direction: ${activeTrade.direction}
                         chatId,
                         `🎯 <b>TAKE PROFIT 2 ACHIEVED (30% Booked)</b> 🎯\n\n🪙 <b>Pair:</b> #${symbol}\n📉 <b>Direction:</b> SHORT\n✅ <b>Target 2:</b> <code>${formatPrice(activeTrade.tp2)}</code>\n💰 <b>Secured Return:</b> ${pnlSegment} (on 30% allocation)\n🏃‍♂️ <b>Next:</b> Remaining 20% position running risk-free to TP3 target!`,
                       ).catch(console.error);
-                    } else if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentLow <= activeTrade.tp3) {
+                    } 
+                    if (activeTrade.hasHitTp2 && !activeTrade.hasHitTp3 && currentLow <= activeTrade.tp3) {
                       activeTrade.hasHitTp3 = true;
                       activeTrade.achieved = 4;
 
